@@ -3,10 +3,10 @@ name = "pco_pack"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-include = ["src/**/*.rs", "Cargo.toml", "README.md"]
 description = "Zero-config columnar compression"
 keywords = ["compression", "columnar", "timeseries"]
-repository = "https://github.com/pganalyze/pco_store"
+repository = "https://github.com/pganalyze/pco_pack"
+exclude = ["src/test*.rs", "src/test/*", "tests/*.rs", "benches/*.rs"]
 
 [workspace]
 members = [".", "pco_pack_derive"]
@@ -19,7 +19,7 @@ chrono = { version = "0.4", features = ["serde"] }
 half = "2.7"
 hex = "0.4"
 pco = "1.0"
-pco_pack_derive = { path = "pco_pack_derive" }
+pco_pack_derive = { version = "0.1.0", path = "pco_pack_derive" }
 rmp-serde = "1.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"

@@ -531,12 +531,12 @@ fn add_new_field_at_start() {
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].version, 0);
     assert_eq!(result[0].device_id, readings_v1[0].device_id);
-    assert!((result[0].temperature - readings_v1[0].temperature).abs() < 1e-10);
+    assert_eq!(result[0].temperature, readings_v1[0].temperature);
     assert_eq!(result[0].timestamp_ms, readings_v1[0].timestamp_ms);
 
     assert_eq!(result[1].version, 0);
     assert_eq!(result[1].device_id, readings_v1[1].device_id);
-    assert!((result[1].temperature - readings_v1[1].temperature).abs() < 1e-10);
+    assert_eq!(result[1].temperature, readings_v1[1].temperature);
 }
 
 #[test]
@@ -940,7 +940,7 @@ fn remove_field_in_middle() {
     let result = MeasurementV2::filter_bytes(&bytes, serde_json::json!({}), &[]).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].id, measurements_v1[0].id);
-    assert!((result[0].value - measurements_v1[0].value).abs() < 1e-10);
+    assert_eq!(result[0].value, measurements_v1[0].value);
     assert_eq!(result[0].unit, "C");
     assert_eq!(result[0].timestamp_ms, measurements_v1[0].timestamp_ms);
 }
@@ -1008,9 +1008,9 @@ fn reorder_swap_adjacent() {
 
     let result = PointV2::filter_bytes(&bytes, serde_json::json!({}), &[]).unwrap();
     assert_eq!(result.len(), 1);
-    assert!((result[0].x - points_v1[0].x).abs() < 1e-10);
-    assert!((result[0].y - points_v1[0].y).abs() < 1e-10);
-    assert!((result[0].z - points_v1[0].z).abs() < 1e-10);
+    assert_eq!(result[0].x, points_v1[0].x);
+    assert_eq!(result[0].y, points_v1[0].y);
+    assert_eq!(result[0].z, points_v1[0].z);
 }
 
 #[test]
@@ -1109,7 +1109,7 @@ fn reorder_and_add_field() {
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].unit, "F");
     assert_eq!(result[0].timestamp_ms, 0);
-    assert!((result[0].value - data_v1[0].value).abs() < 1e-10);
+    assert_eq!(result[0].value, data_v1[0].value);
     assert_eq!(result[0].id, data_v1[0].id);
 }
 

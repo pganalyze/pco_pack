@@ -96,7 +96,7 @@ fn tuple_remove_field_at_end() {
     let result = ReadingV2::filter_bytes(&bytes, serde_json::json!({}), &[]).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].value.0, data_v1[0].value.0);
-    assert!((result[0].value.1 - data_v1[0].value.1).abs() < 1e-10);
+    assert_eq!(result[0].value.1, data_v1[0].value.1);
 }
 
 #[test]

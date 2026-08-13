@@ -2,6 +2,10 @@
 name = "pco_pack_derive"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+description = "Derive macro for pco_pack"
+repository = "https://github.com/pganalyze/pco_pack"
+exclude = ["src/test*.rs", "src/test/*"]
 
 [lib]
 proc-macro = true
