@@ -230,6 +230,22 @@ fn main() {
         AllTypes::filter_bytes(b, json!({"id": 50_000, "int32_val": 50}), &[]).unwrap().len()
     });
 
+    // These pair a lazy-deserialized column with u8_val, which compresses smallest and so is
+    // filtered first. Filters on dynamically sized types are able to skip deserializing entire
+    // chunks of 128 values if previous filters didn't find any matches.
+    bench_filter(&mut rows, &bytes, "multi-field (bytes_val + u8_val)", 1_000, |b| {
+        AllTypes::filter_bytes(b, json!({"bytes_val": bytes_50_hex, "u8_val": 50}), &[]).unwrap().len()
+    });
+    bench_filter(&mut rows, &bytes, "multi-field (string_val + u8_val)", 1_000, |b| {
+        AllTypes::filter_bytes(b, json!({"string_val": "value_50", "u8_val": 50}), &[]).unwrap().len()
+    });
+    bench_filter(&mut rows, &bytes, "multi-field (json_val + u8_val)", 1_000, |b| {
+        AllTypes::filter_bytes(b, json!({"json_val": "tag_50", "u8_val": 50}), &[]).unwrap().len()
+    });
+    bench_filter(&mut rows, &bytes, "multi-field zero-match (id + int32_val + string_val)", 0, |b| {
+        AllTypes::filter_bytes(b, json!({"id": 50_000, "int32_val": 51, "string_val": "value_0"}), &[]).unwrap().len()
+    });
+
     println!("{}", as_table(&rows));
     println!();
 }

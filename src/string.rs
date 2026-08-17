@@ -76,6 +76,15 @@ impl PcoFilter for String {
         let mut pos: usize = 0;
         let mut row_idx: usize = 0;
         while row_idx < reader.total_rows && pos < bytes.len() {
+            // Skip chunks whose rows are already eliminated.
+            let chunk_end = (row_idx + self::CHUNK_SIZE).min(reader.total_rows);
+            if !matches.any_set_in_range(row_idx..chunk_end) {
+                if StringReader::skip_chunk(bytes, &mut pos).is_none() {
+                    break;
+                }
+                row_idx = chunk_end;
+                continue;
+            }
             if let Some(chunk) = StringReader::deserialize_chunk(bytes, &mut pos) {
                 matches.build_into(row_idx, &chunk, |val| Self::filter_match(val, filter));
                 row_idx += chunk.len();
@@ -154,6 +163,15 @@ impl PcoFilter for smol_str::SmolStr {
         let mut pos: usize = 0;
         let mut row_idx: usize = 0;
         while row_idx < reader.total_rows && pos < bytes.len() {
+            // Skip chunks whose rows are already eliminated.
+            let chunk_end = (row_idx + self::CHUNK_SIZE).min(reader.total_rows);
+            if !matches.any_set_in_range(row_idx..chunk_end) {
+                if SmolStrReader::skip_chunk(bytes, &mut pos).is_none() {
+                    break;
+                }
+                row_idx = chunk_end;
+                continue;
+            }
             if let Some(chunk) = SmolStrReader::deserialize_chunk(bytes, &mut pos) {
                 matches.build_into(row_idx, &chunk, |val| Self::filter_match(val, filter));
                 row_idx += chunk.len();

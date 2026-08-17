@@ -1,4 +1,4 @@
-use super::parse::StructGen;
+use super::parse::{FieldRole, StructGen};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -52,6 +52,19 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
             }
         })
         .collect();
+
+    // Sort keys for the filter plan: compressed size per column.
+    // Index fields are stored uncompressed (size 0) and thus sort first.
+    let mut size_keys: Vec<TokenStream2> = Vec::new();
+    for fi in &sg.field_infos {
+        match fi.role {
+            FieldRole::Index => size_keys.push(quote! { 0 }),
+            _ => {
+                let ident = &fi.ident;
+                size_keys.push(quote! { self.#ident.len() });
+            }
+        }
+    }
 
     // Build the compute_row_count helper function body.
     // Checks payload columns in reverse declaration order (most likely to be populated),
@@ -178,8 +191,16 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
                 };
                 let row_count = Self::compute_row_count(&mut reader, &fields)?;
                 let mut matches = pco_pack::FilterMask::ones(row_count);
-                for step in &execution_plan {
-                    <#name as pco_pack::PcoFilter>::filter_step(&mut reader, &step.path, &step.filter, &mut matches)?;
+                // Run cheap filters (small columns, index fields) before expensive ones.
+                let mut plan: Vec<usize> = (0..execution_plan.len()).collect();
+                let sizes = [#(#size_keys),*];
+                plan.sort_by_key(|&i| sizes[execution_plan[i].path[0]]);
+                for i in plan {
+                    <#name as pco_pack::PcoFilter>::filter_step(&mut reader, &execution_plan[i].path, &execution_plan[i].filter, &mut matches)?;
+                    // Early exit: previous filters invalidated the entire chunk.
+                    if !matches.any_set_in_range(0..row_count) {
+                        return Ok(Vec::new());
+                    }
                 }
                 let mut results = Vec::with_capacity(matches.count_ones());
                 let raw_chunks = matches.as_raw_slice();
