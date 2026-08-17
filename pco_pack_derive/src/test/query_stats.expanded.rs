@@ -20,9 +20,9 @@ const _: () = {
         #[serde(with = "pco_pack::chrono::serde::ts_microseconds")]
         pub end_at: pco_pack::chrono::DateTime<pco_pack::chrono::Utc>,
         #[serde(default)]
-        pub fingerprint: serde_bytes::ByteBuf,
+        pub fingerprint: pco_pack::serde_bytes::ByteBuf,
         #[serde(default)]
-        pub collected_at: serde_bytes::ByteBuf,
+        pub collected_at: pco_pack::serde_bytes::ByteBuf,
     }
     #[derive(Clone, Default)]
     pub struct Reader {

@@ -14,9 +14,9 @@ const _: () = {
     pub struct Chunk {
         pub device_id: i64,
         #[serde(default)]
-        pub temperature: serde_bytes::ByteBuf,
+        pub temperature: pco_pack::serde_bytes::ByteBuf,
         #[serde(default)]
-        pub humidity: serde_bytes::ByteBuf,
+        pub humidity: pco_pack::serde_bytes::ByteBuf,
     }
     #[derive(Clone, Default)]
     pub struct Reader {
