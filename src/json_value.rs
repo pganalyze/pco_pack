@@ -253,6 +253,15 @@ impl super::PcoFilter for serde_json::Value {
         let mut pos: usize = 0;
         let mut row_idx: usize = 0;
         while row_idx < reader.total_rows && pos < bytes.len() {
+            // Skip chunks whose rows are already eliminated.
+            let chunk_end = (row_idx + CHUNK_SIZE).min(reader.total_rows);
+            if !matches.any_set_in_range(row_idx..chunk_end) {
+                if JsonValueReader::skip_chunk(bytes, &mut pos).is_none() {
+                    break;
+                }
+                row_idx = chunk_end;
+                continue;
+            }
             if let Some(chunk) = JsonValueReader::deserialize_chunk(bytes, &mut pos) {
                 matches.build_into(row_idx, &chunk, |val| matches_json_value(val, filter));
                 row_idx += chunk.len();

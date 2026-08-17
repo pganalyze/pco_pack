@@ -496,6 +496,10 @@ pub fn generate_enum_tokens(
                             &step.filter,
                             &mut matches,
                         )?;
+                        // Early exit if no rows match anymore.
+                        if !matches.any_set_in_range(0..row_count) {
+                            return Ok(Vec::new());
+                        }
                     }
 
                     let mut result = Vec::with_capacity(matches.count_ones());

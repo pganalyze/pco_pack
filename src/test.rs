@@ -6,6 +6,7 @@ mod datetime;
 mod r#enum;
 mod filter;
 mod filter_boundary;
+mod filter_mask;
 mod float_round_basic;
 mod float_round_containers;
 mod float_round_enum;

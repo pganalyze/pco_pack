@@ -634,13 +634,19 @@ const _: () = {
             };
             let row_count = Self::compute_row_count(&mut reader, &fields)?;
             let mut matches = pco_pack::FilterMask::ones(row_count);
-            for step in &execution_plan {
+            let mut plan: Vec<usize> = (0..execution_plan.len()).collect();
+            let sizes = [0, self.temperature.len(), self.humidity.len()];
+            plan.sort_by_key(|&i| sizes[execution_plan[i].path[0]]);
+            for i in plan {
                 <DeviceTelemetry as pco_pack::PcoFilter>::filter_step(
                     &mut reader,
-                    &step.path,
-                    &step.filter,
+                    &execution_plan[i].path,
+                    &execution_plan[i].filter,
                     &mut matches,
                 )?;
+                if !matches.any_set_in_range(0..row_count) {
+                    return Ok(Vec::new());
+                }
             }
             let mut results = Vec::with_capacity(matches.count_ones());
             let raw_chunks = matches.as_raw_slice();

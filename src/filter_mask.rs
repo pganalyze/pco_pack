@@ -5,7 +5,7 @@ use bitvec::prelude::*;
 /// Wraps `BitVec<u64, Lsb0>` and provides chunked operations for building filters.
 /// Constructs full u64 words at a time instead of setting bits individually.
 #[derive(Clone)]
-pub struct FilterMask(BitVec<u64, Lsb0>);
+pub struct FilterMask(pub(crate) BitVec<u64, Lsb0>);
 
 impl FilterMask {
     /// Creates a new bitmask with all bits set to true (all rows matching).
@@ -51,6 +51,46 @@ impl FilterMask {
         self.0.as_raw_slice()
     }
 
+    /// Returns true if any valid bit is set, i.e. some row still matches.
+    #[inline]
+    pub fn any_set(&self) -> bool {
+        self.any_set_in_range(0..self.0.len())
+    }
+
+    /// Returns true if any bit in `range` is set (padding ignored).
+    #[inline]
+    pub fn any_set_in_range(&self, range: std::ops::Range<usize>) -> bool {
+        let len = self.0.len();
+        if range.start >= len || range.end <= range.start {
+            return false;
+        }
+        let start = range.start.min(len);
+        let end = range.end.min(len);
+        let raw = self.0.as_raw_slice();
+        let first_word = start / 64;
+        let last_word = (end - 1) / 64;
+        if first_word == last_word {
+            let off = start - first_word * 64;
+            return raw[first_word] & Self::in_word_mask(off, end - first_word * 64) != 0;
+        }
+        if raw[first_word] & Self::in_word_mask(start - first_word * 64, 64) != 0 {
+            return true;
+        }
+        // Middle words need no masking.
+        if raw[first_word + 1..last_word].iter().any(|&w| w != 0) {
+            return true;
+        }
+        raw[last_word] & Self::in_word_mask(0, end - last_word * 64) != 0
+    }
+
+    /// Mask for bits `[start, end)` within one 64-bit word (0 <= start <= end <= 64).
+    #[inline]
+    fn in_word_mask(start: usize, end: usize) -> u64 {
+        let hi = if end >= 64 { u64::MAX } else { (1u64 << end) - 1 };
+        let lo = if start == 0 { 0 } else { (1u64 << start) - 1 };
+        hi & !lo
+    }
+
     /// Handle an empty column during filtering (e.g., missing field from old data in schema evolution).
     /// Treats all rows as having the default value; if it doesn't match, excludes them.
     #[inline]
@@ -65,8 +105,6 @@ impl FilterMask {
     }
 
     /// Build a predicate mask from `values` and intersect it with this mask in-place.
-    /// Builds chunked u64 words directly and ANDs them into existing bits.
-    /// This avoids allocating a temporary FilterMask.
     #[inline]
     pub fn build_with_and<T, F>(&mut self, values: &[T], mut pred: F)
     where
@@ -78,28 +116,44 @@ impl FilterMask {
             self.handle_empty_column(&mut pred);
             return;
         }
-        let mut words = vec![0; (len + 63) / 64];
-        Self::build_words(&values[..len], pred, &mut words);
-        for (i, &word) in words.iter().enumerate() {
-            let start = i * 64;
-            let end = core::cmp::min(start + 64, len);
-            let word_bits = self.0.get_mut(start..end).unwrap();
-            word_bits.store_le(word_bits.load_le::<u64>() & word);
+        // Skip groups with no set bits — ANDing them is a no-op and pred need not run.
+        let raw = self.0.as_raw_mut_slice();
+        for (w, chunk) in values[..len].chunks(64).enumerate() {
+            let mask = if chunk.len() == 64 { u64::MAX } else { (1u64 << chunk.len()) - 1 };
+            let word = raw[w];
+            if word & mask == 0 {
+                continue;
+            }
+            let mut pred_word: u64 = 0;
+            for (i, val) in chunk.iter().enumerate() {
+                pred_word |= (pred(val) as u64) << i;
+            }
+            // AND the predicate in, preserving any bits above the valid range.
+            raw[w] = (word & pred_word) | (word & !mask);
         }
     }
 
-    /// Specialized builder for boolean arrays. For each chunk of 64 bools, sets bit i IFF the i-th element is true.
-    /// Fully unrolled per-chunk loop; produces one word at a time without intermediate Vec allocations.
     #[inline]
     pub fn from_bool_slice(slice: &[bool]) -> Self {
-        let mut words = vec![0; (slice.len() + 63) / 64];
-        Self::build_words(slice, |&v| v, &mut words);
-        Self(BitVec::from_slice(&words))
+        let len = slice.len();
+        if len == 0 {
+            return Self(BitVec::new());
+        }
+        let mut words = Vec::with_capacity((len + 63) / 64);
+        for chunk in slice.chunks(64) {
+            let mut word = 0u64;
+            for (i, &b) in chunk.iter().enumerate() {
+                word |= (b as u64) << i;
+            }
+            words.push(word);
+        }
+        let mut bits = BitVec::from_vec(words);
+        bits.truncate(len);
+        Self(bits)
     }
 
-    /// Builds a mask into the specified range of bits in this FilterMask.
-    /// Each value corresponds to one bit starting at `start_bit`, using chunked u64 construction.
-    /// Intersects with existing bits so each filter step narrows results.
+    /// Intersects a predicate mask built from `values` into bits starting at `start_bit`.
+    /// Skips groups with no set bits; uses raw-word writes when aligned, bit-slice otherwise.
     #[inline]
     pub fn build_into<T, F>(&mut self, start_bit: usize, values: &[T], mut pred: F)
     where
@@ -115,55 +169,46 @@ impl FilterMask {
         }
         let end = (start_bit + values.len()).min(self.0.len());
         let effective_len = end.saturating_sub(start_bit);
-        let mut words = vec![0; (effective_len + 63) / 64];
-        // Build predicate words from the relevant slice of values.
-        Self::build_words(&values[..effective_len], pred, &mut words);
-        // Write constructed words into self at the correct offset,
-        // masking out any bits that fall beyond effective_len.
-        let view = self.0.get_mut(start_bit..end).unwrap();
-        for (i, &word) in words.iter().enumerate() {
-            let word_start = i * 64;
-            let bits_to_write = core::cmp::min(64usize, effective_len.saturating_sub(word_start));
-            if bits_to_write == 0 || word_start >= view.len() {
-                continue;
-            }
-            let mask = if bits_to_write < 64 { (1 << bits_to_write) - 1 } else { u64::MAX };
-            let predicate_word = word & mask;
-            let slice = view.get_mut(word_start..word_start + bits_to_write).unwrap();
-            slice.store_le(slice.load_le::<u64>() & predicate_word);
-        }
-    }
-
-    /// Core helper: builds chunked u64 predicate words into the provided buffer.
-    /// Each word holds up to 64 bits; bit i is set IFF pred(values[i]) is true.
-    #[inline(always)]
-    fn build_words<T, F>(values: &[T], mut pred: F, out: &mut [u64])
-    where
-        F: FnMut(&T) -> bool,
-    {
-        let len = values.len();
-        if len == 0 || out.is_empty() {
+        if effective_len == 0 {
             return;
         }
-        let mut chunk_iter = values.chunks_exact(64);
-        for (c, chunk) in chunk_iter.by_ref().enumerate() {
-            if c >= out.len() {
-                break;
-            }
-            let mut word: u64 = 0;
-            for (bit_pos, val) in chunk.iter().enumerate() {
-                if pred(val) {
-                    word |= 1 << bit_pos;
+        // Skip groups with no set bits — ANDing them is a no-op and pred need not run.
+        if (start_bit & 63) == 0 {
+            // Word-aligned fast path: every group is a single backing word.
+            let raw = self.0.as_raw_mut_slice();
+            let mut w = start_bit / 64;
+            let mut i = 0usize;
+            while i < effective_len {
+                let bits = core::cmp::min(64usize, effective_len - i);
+                let word = raw[w];
+                let mask = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
+                if word & mask != 0 {
+                    let mut pred_word: u64 = 0;
+                    for (j, val) in values[i..i + bits].iter().enumerate() {
+                        pred_word |= (pred(val) as u64) << j;
+                    }
+                    // AND the predicate in, preserving any bits above the valid range.
+                    raw[w] = (word & pred_word) | (word & !mask);
                 }
+                w += 1;
+                i += 64;
             }
-            out[c] = word;
-        }
-        let full_chunks = len / 64;
-        if full_chunks < out.len() {
-            for (bit_pos, val) in chunk_iter.remainder().iter().enumerate() {
-                if pred(val) {
-                    out[full_chunks] |= 1 << bit_pos;
+        } else {
+            // Unaligned start: each group may straddle two words; bit-slice stores handle it.
+            let mut i = 0usize;
+            while i < effective_len {
+                let bits = core::cmp::min(64usize, effective_len - i);
+                let abs_start = start_bit + i;
+                if self.any_set_in_range(abs_start..abs_start + bits) {
+                    let mut word: u64 = 0;
+                    for (j, val) in values[i..i + bits].iter().enumerate() {
+                        word |= (pred(val) as u64) << j;
+                    }
+                    let mask = if bits < 64 { (1u64 << bits) - 1 } else { u64::MAX };
+                    let slice = self.0.get_mut(abs_start..abs_start + bits).unwrap();
+                    slice.store_le(slice.load_le::<u64>() & (word & mask));
                 }
+                i += 64;
             }
         }
     }
