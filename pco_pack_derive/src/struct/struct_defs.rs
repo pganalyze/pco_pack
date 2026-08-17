@@ -30,12 +30,12 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
     for fi in &sg.field_infos {
         if !matches!(fi.role, FieldRole::Index) && !matches!(fi.role, FieldRole::Timestamp) {
             let ident = &fi.ident;
-            chunk_fields.push(quote! { #[serde(default)] pub #ident: serde_bytes::ByteBuf, });
+            chunk_fields.push(quote! { #[serde(default)] pub #ident: pco_pack::serde_bytes::ByteBuf, });
         }
     }
     if let Some(rf) = sg.timestamp_field() {
         let ident = &rf.ident;
-        chunk_fields.push(quote! { #[serde(default)] pub #ident: serde_bytes::ByteBuf, });
+        chunk_fields.push(quote! { #[serde(default)] pub #ident: pco_pack::serde_bytes::ByteBuf, });
     }
 
     // Group struct fields: index raw, timestamp/payload uses LazyReader, start_at/end_at i64

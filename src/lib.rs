@@ -47,6 +47,7 @@ pub use chrono;
 pub use half;
 pub use rmp_serde;
 pub use serde;
+pub use serde_bytes;
 pub use serde_json;
 pub use zstd;
 

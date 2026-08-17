@@ -12,9 +12,9 @@ const _: () = {
     #[derive(pco_pack::serde::Serialize, pco_pack::serde::Deserialize, Default, Clone)]
     pub struct Chunk {
         #[serde(default)]
-        pub name: serde_bytes::ByteBuf,
+        pub name: pco_pack::serde_bytes::ByteBuf,
         #[serde(default)]
-        pub inner: serde_bytes::ByteBuf,
+        pub inner: pco_pack::serde_bytes::ByteBuf,
     }
     #[derive(Clone, Default)]
     pub struct Reader {
@@ -592,9 +592,9 @@ const _: () = {
     #[derive(pco_pack::serde::Serialize, pco_pack::serde::Deserialize, Default, Clone)]
     pub struct Chunk {
         #[serde(default)]
-        pub x: serde_bytes::ByteBuf,
+        pub x: pco_pack::serde_bytes::ByteBuf,
         #[serde(default)]
-        pub label: serde_bytes::ByteBuf,
+        pub label: pco_pack::serde_bytes::ByteBuf,
     }
     #[derive(Clone, Default)]
     pub struct Reader {
