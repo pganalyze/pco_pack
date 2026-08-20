@@ -15,7 +15,6 @@ impl FallbackReader for StringReader {
         // Legacy format: raw zstd-compressed stream of msgpack items.
         let decompressed = zstd::decode_all(std::io::Cursor::new(raw))
             .map_err(|e| anyhow::anyhow!("fallback decompression failed: {}", e))?;
-        // Deserialize all msgpack items sequentially from the decompressed stream.
         let mut cursor = std::io::Cursor::new(&decompressed[..]);
         let mut values = Vec::new();
         while cursor.position() < decompressed.len() as u64 {
@@ -38,7 +37,7 @@ impl FallbackReader for StringReader {
             rmp_serde::encode::write(&mut buf, chunk as &[String])?;
         }
         Ok(StringReader {
-            msgpack_bytes: std::sync::Arc::<[u8]>::from(buf),
+            msgpack_bytes: buf.into(),
             total_rows,
             format_version: self::FORMAT_VERSION_CHUNKED,
             data_pos: 0,
@@ -120,17 +119,36 @@ impl FallbackReader for SmolStrReader {
         if raw.is_empty() {
             return Ok(Self::default());
         }
-        let value = rmp_serde::from_slice::<smol_str::SmolStr>(raw)
-            .map_err(|e| anyhow::anyhow!("fallback deserialization failed: {}", e))?;
-        let mut buf = Vec::with_capacity(2 + raw.len());
+        // Legacy format: raw zstd-compressed stream of msgpack items.
+        let decompressed = zstd::decode_all(std::io::Cursor::new(raw))
+            .map_err(|e| anyhow::anyhow!("fallback decompression failed: {}", e))?;
+        let mut cursor = std::io::Cursor::new(&decompressed[..]);
+        let mut values: Vec<smol_str::SmolStr> = Vec::new();
+        while cursor.position() < decompressed.len() as u64 {
+            let saved = cursor.position();
+            match rmp_serde::from_read::<_, smol_str::SmolStr>(&mut cursor) {
+                Ok(v) => values.push(v),
+                Err(_) => {
+                    cursor.set_position(saved);
+                    break;
+                }
+            }
+        }
+        let total_rows = values.len();
+        if total_rows == 0 {
+            return Ok(Self::default());
+        }
+        let mut buf = Vec::with_capacity(2 + decompressed.len());
         buf.push(self::FORMAT_VERSION_CHUNKED);
-        rmp_serde::encode::write(&mut buf, &vec![value.clone()] as &[smol_str::SmolStr])?;
+        for chunk in values.chunks(self::CHUNK_SIZE) {
+            rmp_serde::encode::write(&mut buf, chunk as &[smol_str::SmolStr])?;
+        }
         Ok(SmolStrReader {
             msgpack_bytes: buf.into(),
-            total_rows: 1,
+            total_rows,
             format_version: self::FORMAT_VERSION_CHUNKED,
             data_pos: 0,
-            cached_chunk: Some(vec![value]),
+            cached_chunk: None,
             cached_row_start: 0,
         })
     }

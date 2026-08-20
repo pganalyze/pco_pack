@@ -10,6 +10,7 @@ include!("../pco_pack_derive/src/test/float_round_map.expanded.rs");
 include!("../pco_pack_derive/src/test/index.expanded.rs");
 include!("../pco_pack_derive/src/test/nested.expanded.rs");
 include!("../pco_pack_derive/src/test/query_stats.expanded.rs");
+include!("../pco_pack_derive/src/test/string_index.expanded.rs");
 include!("../pco_pack_derive/src/test/timeline.expanded.rs");
 include!("../pco_pack_derive/src/test/timestamp.expanded.rs");
 

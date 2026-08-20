@@ -85,14 +85,14 @@ impl StructGen {
 
 fn index_filter_match(fi: &FieldInfo) -> TokenStream2 {
     let ident = &fi.ident;
-    if is_string_type(&fi.ty) {
+    if is_string_type(&fi.ty) || is_smol_str_type(&fi.ty) {
         quote! {
             match filter {
                 pco_pack::Filter::String(v) => {
                     (reader.#ident != *v).then(|| matches.fill(false));
                 }
                 pco_pack::Filter::InclusionString(values) => {
-                    (!values.contains(&reader.#ident)).then(|| matches.fill(false));
+                    (!values.iter().any(|v| v.as_str() == reader.#ident.as_str())).then(|| matches.fill(false));
                 }
                 _ => unreachable!("unexpected filter type {:?} for field {}", filter, stringify!(#ident)),
             }

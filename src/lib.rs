@@ -49,6 +49,7 @@ pub use rmp_serde;
 pub use serde;
 pub use serde_bytes;
 pub use serde_json;
+pub use smol_str;
 pub use zstd;
 
 #[cfg(test)]

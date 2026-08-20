@@ -17,6 +17,11 @@ pub fn is_string_type(ty: &syn::Type) -> bool {
     type_last_segment_matches(ty, "String").unwrap_or(false)
 }
 
+/// Check if a type is smol_str::SmolStr.
+pub fn is_smol_str_type(ty: &syn::Type) -> bool {
+    type_last_segment_matches(ty, "SmolStr").unwrap_or(false)
+}
+
 /// Check if a type is Uuid (from the uuid crate).
 pub fn is_uuid_type(ty: &syn::Type) -> bool {
     type_last_segment_matches(ty, "Uuid").unwrap_or(false)
