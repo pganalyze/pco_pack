@@ -593,6 +593,30 @@ impl<'a> From<&'a [&str]> for StringFilter {
     }
 }
 
+impl From<smol_str::SmolStr> for StringFilter {
+    fn from(v: smol_str::SmolStr) -> Self {
+        StringFilter::Equal(v.to_string())
+    }
+}
+
+impl<const N: usize> From<[smol_str::SmolStr; N]> for StringFilter {
+    fn from(arr: [smol_str::SmolStr; N]) -> Self {
+        StringFilter::Inclusion(arr.into_iter().map(|s| s.to_string()).collect())
+    }
+}
+
+impl From<Vec<smol_str::SmolStr>> for StringFilter {
+    fn from(v: Vec<smol_str::SmolStr>) -> Self {
+        StringFilter::Inclusion(v.into_iter().map(|s| s.to_string()).collect())
+    }
+}
+
+impl<'a> From<&'a [smol_str::SmolStr]> for StringFilter {
+    fn from(slice: &'a [smol_str::SmolStr]) -> Self {
+        StringFilter::Inclusion(slice.iter().map(|s| s.to_string()).collect())
+    }
+}
+
 impl From<bool> for BoolFilter {
     fn from(v: bool) -> Self {
         BoolFilter::Equal(v)
