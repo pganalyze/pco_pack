@@ -18,31 +18,23 @@ impl FallbackReader for StringReader {
         let mut cursor = std::io::Cursor::new(&decompressed[..]);
         let mut values = Vec::new();
         while cursor.position() < decompressed.len() as u64 {
-            let saved = cursor.position();
             match rmp_serde::from_read::<_, String>(&mut cursor) {
                 Ok(v) => values.push(v),
-                Err(_) => {
-                    cursor.set_position(saved);
-                    break;
-                }
+                Err(_) => break,
             }
         }
-        let total_rows = values.len();
-        if total_rows == 0 {
+        if values.is_empty() {
             return Ok(Self::default());
         }
-        let mut buf = Vec::with_capacity(2 + decompressed.len());
-        buf.push(self::FORMAT_VERSION_CHUNKED);
-        for chunk in values.chunks(self::CHUNK_SIZE) {
-            rmp_serde::encode::write(&mut buf, chunk as &[String])?;
-        }
+        let total_rows = values.len();
         Ok(StringReader {
-            msgpack_bytes: buf.into(),
+            msgpack_bytes: Default::default(),
             total_rows,
             format_version: self::FORMAT_VERSION_CHUNKED,
             data_pos: 0,
             cached_chunk: None,
             cached_row_start: 0,
+            predecoded: Some(values.into()),
         })
     }
 }
@@ -66,6 +58,11 @@ impl PcoFilter for String {
     }
 
     fn filter_bulk(reader: &mut Self::Reader, _field: usize, filter: &Filter, matches: &mut FilterMask) -> Result<()> {
+        // Legacy fallback data is fully decoded; apply the predicate directly.
+        if let Some(ref values) = reader.predecoded {
+            matches.build_into(0, values.as_ref(), |val| Self::filter_match(val, filter));
+            return Ok(());
+        }
         if reader.total_rows == 0 || reader.msgpack_bytes.is_empty() {
             matches.handle_empty_column::<String, _>(|val| Self::filter_match(val, filter));
             return Ok(());
@@ -125,31 +122,23 @@ impl FallbackReader for SmolStrReader {
         let mut cursor = std::io::Cursor::new(&decompressed[..]);
         let mut values: Vec<smol_str::SmolStr> = Vec::new();
         while cursor.position() < decompressed.len() as u64 {
-            let saved = cursor.position();
             match rmp_serde::from_read::<_, smol_str::SmolStr>(&mut cursor) {
                 Ok(v) => values.push(v),
-                Err(_) => {
-                    cursor.set_position(saved);
-                    break;
-                }
+                Err(_) => break,
             }
         }
-        let total_rows = values.len();
-        if total_rows == 0 {
+        if values.is_empty() {
             return Ok(Self::default());
         }
-        let mut buf = Vec::with_capacity(2 + decompressed.len());
-        buf.push(self::FORMAT_VERSION_CHUNKED);
-        for chunk in values.chunks(self::CHUNK_SIZE) {
-            rmp_serde::encode::write(&mut buf, chunk as &[smol_str::SmolStr])?;
-        }
+        let total_rows = values.len();
         Ok(SmolStrReader {
-            msgpack_bytes: buf.into(),
+            msgpack_bytes: Default::default(),
             total_rows,
             format_version: self::FORMAT_VERSION_CHUNKED,
             data_pos: 0,
             cached_chunk: None,
             cached_row_start: 0,
+            predecoded: Some(values.into()),
         })
     }
 }
@@ -173,6 +162,11 @@ impl PcoFilter for smol_str::SmolStr {
     }
 
     fn filter_bulk(reader: &mut Self::Reader, _field: usize, filter: &Filter, matches: &mut FilterMask) -> Result<()> {
+        // Legacy fallback data is fully decoded; apply the predicate directly.
+        if let Some(ref values) = reader.predecoded {
+            matches.build_into(0, values.as_ref(), |val| Self::filter_match(val, filter));
+            return Ok(());
+        }
         if reader.total_rows == 0 || reader.msgpack_bytes.is_empty() {
             matches.handle_empty_column::<smol_str::SmolStr, _>(|val| Self::filter_match(val, filter));
             return Ok(());

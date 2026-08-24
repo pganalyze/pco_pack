@@ -95,6 +95,8 @@ macro_rules! impl_lazy_msgpack {
             cached_chunk: Option<Vec<$ty>>,
             /// Row index where `cached_chunk` starts (0-based).
             cached_row_start: usize,
+            /// Fully decoded values for fallback readers.
+            predecoded: Option<std::sync::Arc<[$ty]>>,
         }
 
         impl Clone for $reader {
@@ -106,6 +108,7 @@ macro_rules! impl_lazy_msgpack {
                     data_pos: self.data_pos,
                     cached_chunk: None,
                     cached_row_start: self.cached_row_start,
+                    predecoded: self.predecoded.clone(),
                 }
             }
         }
@@ -119,6 +122,7 @@ macro_rules! impl_lazy_msgpack {
                     data_pos: 0,
                     cached_chunk: None,
                     cached_row_start: 0,
+                    predecoded: None,
                 }
             }
         }
@@ -157,6 +161,7 @@ macro_rules! impl_lazy_msgpack {
                         data_pos: 0,
                         cached_chunk: None,
                         cached_row_start: 0,
+                        predecoded: None,
                     });
                 }
                 let remaining = &buf[saved_pos as usize..];
@@ -180,6 +185,7 @@ macro_rules! impl_lazy_msgpack {
                                     data_pos: 0,
                                     cached_chunk: None::<Vec<$ty>>,
                                     cached_row_start: 0,
+                                    predecoded: None,
                                 });
                             }
                             Err(_) => {} // Decompress failed, try fallback
@@ -203,6 +209,10 @@ macro_rules! impl_lazy_msgpack {
             /// Get an item by index. Scans forward-only through chunks; retains the current
             /// deserialized chunk in the reader cache until index advances past that range.
             fn get(reader: &mut Self::Reader, index: usize) -> anyhow::Result<Option<Self>> {
+                // Fallback readers keep all values pre-decoded; read them directly.
+                if let Some(ref values) = reader.predecoded {
+                    return Ok(values.get(index).cloned());
+                }
                 use self::{CHUNK_SIZE, FORMAT_VERSION_CHUNKED, helpers};
                 let bytes = &reader.msgpack_bytes;
                 if index >= reader.total_rows || bytes.is_empty() {
