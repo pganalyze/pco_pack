@@ -268,7 +268,10 @@ impl<const RESOLUTION: i64> PcoFilter for Timeline<RESOLUTION> {
             if !arr.is_empty() {
                 let ints: Vec<i64> = arr.iter().filter_map(|v| v.as_i64()).collect();
                 if ints.len() == arr.len() {
-                    return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionI64(ints) });
+                    return Ok(ResolvedFilter {
+                        path: vec![0],
+                        filter: Filter::InclusionI64(ints.into_iter().collect()),
+                    });
                 }
             }
         }

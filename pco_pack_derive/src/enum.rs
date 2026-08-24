@@ -417,7 +417,7 @@ pub fn generate_enum_tokens(
                                 if ints.len() == arr.len() {
                                     return Ok(pco_pack::ResolvedFilter {
                                         path: vec![0],
-                                        filter: pco_pack::Filter::InclusionI64(ints),
+                                        filter: pco_pack::Filter::InclusionI64(ints.into_iter().collect()),
                                     });
                                 }
                             }

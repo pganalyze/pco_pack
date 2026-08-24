@@ -98,7 +98,7 @@ impl PcoFilter for bool {
                         _ => anyhow::bail!("Expected boolean value for field '{}'", path),
                     }
                 }
-                Filter::InclusionBool(bools)
+                Filter::InclusionBool(bools.into_iter().collect())
             }
             serde_json::Value::Bool(b) => Filter::Bool(*b),
             _ => anyhow::bail!("Expected boolean value for field '{}'", path),

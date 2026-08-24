@@ -61,7 +61,7 @@ impl PcoFilter for Uuid {
                             })
                     })
                     .collect::<anyhow::Result<_>>()?;
-                Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionUuid(uuids) })
+                Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionUuid(uuids.into_iter().collect()) })
             }
             _ => Err(anyhow::anyhow!("Expected string or array for UUID filter, got {}", json)),
         }

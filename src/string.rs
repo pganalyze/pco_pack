@@ -51,7 +51,7 @@ impl PcoFilter for String {
                 if strings.len() != arr.len() {
                     return Err(anyhow::anyhow!("String filter array must contain only strings"));
                 }
-                Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionString(strings) })
+                Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionString(strings.into_iter().collect()) })
             }
             _ => Err(anyhow::anyhow!("Expected string or array for string filter, got {}", json)),
         }
@@ -155,7 +155,7 @@ impl PcoFilter for smol_str::SmolStr {
                 if strings.len() != arr.len() {
                     return Err(anyhow::anyhow!("String filter array must contain only strings"));
                 }
-                Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionString(strings) })
+                Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionString(strings.into_iter().collect()) })
             }
             _ => Err(anyhow::anyhow!("Expected string or array for string filter, got {}", json)),
         }
@@ -203,7 +203,7 @@ impl PcoFilter for smol_str::SmolStr {
     fn filter_match(value: &Self, filter: &Filter) -> bool {
         match filter {
             Filter::String(target) => value.as_ref() == target,
-            Filter::InclusionString(targets) => targets.iter().any(|t| t == value.as_ref()),
+            Filter::InclusionString(targets) => targets.contains(value.as_ref()),
             _ => false,
         }
     }
