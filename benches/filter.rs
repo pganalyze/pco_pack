@@ -192,15 +192,16 @@ fn main() {
         AllTypes::filter_bytes(b, json!({"json_val": "tag_50"}), &[]).unwrap().len()
     });
 
-    bench_filter(&mut rows, &bytes, "uuid exact (nil)", 1_000, |b| {
-        AllTypes::filter_bytes(b, json!({"uuid_val": "00000000-0000-0000-0000-000000000000"}), &[]).unwrap().len()
+    let uuid_50 = uuid::Uuid::from_fields(50u32 << 24, 0, 0, &[50, 0, 0, 0, 0, 0, 0, 0]);
+    bench_filter(&mut rows, &bytes, "uuid exact (bucket 50)", 1_000, |b| {
+        AllTypes::filter_bytes(b, json!({"uuid_val": uuid_50.to_string()}), &[]).unwrap().len()
     });
     let uuid_inclusion_values: Vec<_> = (100..200)
         .map(|i| {
             let u = uuid::Uuid::from_fields((i as u32) << 24, 0, 0, &[i as u8, 0, 0, 0, 0, 0, 0, 0]);
             json!(u.to_string())
         })
-        .chain(std::iter::once(json!("00000000-0000-0000-0000-000000000000")))
+        .chain(std::iter::once(json!(uuid_50.to_string())))
         .collect();
     let uuid_inclusion_query = json!({"uuid_val": uuid_inclusion_values});
     bench_filter(&mut rows, &bytes, "uuid inclusion (100 values, 1 match)", 1_000, |b| {
@@ -291,11 +292,7 @@ fn generate_data(n: usize) -> Vec<AllTypes> {
                 status: Status::from_discriminant(bucket as u16),
                 option_val: Some(bucket as i32),
                 vec_val: vec![bucket as i32 * 100],
-                uuid_val: if bucket == 0 {
-                    uuid::Uuid::nil()
-                } else {
-                    uuid::Uuid::from_fields((bucket as u32) << 24, 0, 0, &[bucket as u8, 0, 0, 0, 0, 0, 0, 0])
-                },
+                uuid_val: uuid::Uuid::from_fields((bucket as u32) << 24, 0, 0, &[bucket as u8, 0, 0, 0, 0, 0, 0, 0]),
                 bytes_val: ByteBuf::from(vec![bucket as u8; 32]),
                 nested: NestedStruct { inner_id: (bucket as i64) * 1000, inner_name: format!("inner_{}", bucket) },
                 map_val: {

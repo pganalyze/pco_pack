@@ -1,5 +1,6 @@
 include!("bench_common.rs");
 
+use chrono::Duration;
 use markdown_tables::{MarkdownTableRow, as_table};
 use pco_pack::{PcoPack, Timeline};
 
@@ -7,22 +8,21 @@ fn main() {
     let num_records = 100_000;
     let uniqueness_pcts = [10, 20, 50, 80, 90];
 
-    println!("## Timeline vs DateTime\n");
+    println!("## Timeline\n");
 
     #[derive(Debug)]
-    struct TimelineRow {
+    struct TimeRow {
         uniqueness: String,
         timeline_ms: String,
         datetime_ms: String,
-        time_ratio: String,
-        timeline_size: String,
-        datetime_size: String,
-        size_ratio: String,
+        round_ms: String,
+        tl_vs_dt_ratio: String,
+        tr_vs_dt_ratio: String,
     }
 
-    impl MarkdownTableRow for TimelineRow {
+    impl MarkdownTableRow for TimeRow {
         fn column_names() -> Vec<&'static str> {
-            vec!["Uniqueness", "Timeline", "DateTime", "Time ratio", "Timeline", "DateTime", "Size ratio"]
+            vec!["Uniqueness", "Timeline", "DateTime", "time_round=1s", "Time ratio (TL/DT)", "Time ratio (TR/DT)"]
         }
 
         fn column_values(&self) -> Vec<String> {
@@ -30,53 +30,109 @@ fn main() {
                 self.uniqueness.clone(),
                 self.timeline_ms.clone(),
                 self.datetime_ms.clone(),
-                self.time_ratio.clone(),
-                self.timeline_size.clone(),
-                self.datetime_size.clone(),
-                self.size_ratio.clone(),
+                self.round_ms.clone(),
+                self.tl_vs_dt_ratio.clone(),
+                self.tr_vs_dt_ratio.clone(),
             ]
         }
     }
 
-    let mut rows = Vec::new();
+    #[derive(Debug)]
+    struct SizeRow {
+        uniqueness: String,
+        timeline_size: String,
+        datetime_size: String,
+        round_size: String,
+        tl_vs_dt_size_ratio: String,
+        tr_vs_dt_size_ratio: String,
+    }
 
-    for pct in &uniqueness_pcts {
-        let datetime_data = datetime_data(num_records, *pct);
-        let timeline_data = timeline_data_from_datetime(&datetime_data);
-
-        for rec in &timeline_data {
-            assert_eq!(rec.seen_at.len(), 1);
+    impl MarkdownTableRow for SizeRow {
+        fn column_names() -> Vec<&'static str> {
+            vec!["Uniqueness", "Timeline", "DateTime", "time_round=1s", "Size ratio (TL/DT)", "Size ratio (TR/DT)"]
         }
 
+        fn column_values(&self) -> Vec<String> {
+            vec![
+                self.uniqueness.clone(),
+                self.timeline_size.clone(),
+                self.datetime_size.clone(),
+                self.round_size.clone(),
+                self.tl_vs_dt_size_ratio.clone(),
+                self.tr_vs_dt_size_ratio.clone(),
+            ]
+        }
+    }
+
+    let mut time_rows = Vec::new();
+    let mut size_rows = Vec::new();
+
+    for pct in &uniqueness_pcts {
+        let total_seconds = num_records / 100; // 100 sensors reporting every second
+        let (dt_data, timeline_data) = generate_scenario(total_seconds, *pct);
+
+        let round_data: Vec<TimeRoundRecord> = dt_data
+            .iter()
+            .map(|r| TimeRoundRecord {
+                seen_at: r.seen_at,
+                sensor_id: r.sensor_id,
+                temperature: r.temperature,
+                humidity: r.humidity,
+                status: r.status,
+            })
+            .collect();
+
+        // Every input row's second must be covered by exactly one Timeline range.
+        let coverage: usize = timeline_data
+            .iter()
+            .flat_map(|r| r.seen_at.ranges())
+            .map(|&(s, e)| ((e - s + 1) / 1_000_000) as usize)
+            .sum();
+        assert_eq!(dt_data.len(), coverage);
+
         let tl_serial_ms = avg_ms(|| TimelineRecord::write(timeline_data.clone()).unwrap());
-        let dt_serial_ms = avg_ms(|| DateTimeRecord::write(datetime_data.clone()).unwrap());
+        let dt_serial_ms = avg_ms(|| DateTimeRecord::write(dt_data.clone()).unwrap());
+        let round_serial_ms = avg_ms(|| TimeRoundRecord::write(round_data.clone()).unwrap());
+
         let tl_compressed = TimelineRecord::write(timeline_data.clone()).unwrap();
-        let dt_compressed = DateTimeRecord::write(datetime_data.clone()).unwrap();
+        let dt_compressed = DateTimeRecord::write(dt_data.clone()).unwrap();
+        let round_compressed = TimeRoundRecord::write(round_data.clone()).unwrap();
+
         let tl_buf = TimelineRecord::to_bytes(&tl_compressed).unwrap();
         let dt_buf = DateTimeRecord::to_bytes(&dt_compressed).unwrap();
+        let round_buf = TimeRoundRecord::to_bytes(&round_compressed).unwrap();
 
-        let size_ratio = dt_buf.len() as f64 / tl_buf.len() as f64;
-        let time_ratio = dt_serial_ms as f64 / tl_serial_ms as f64;
-
-        rows.push(TimelineRow {
+        time_rows.push(TimeRow {
             uniqueness: format!("{}%", pct),
             timeline_ms: format_ms(tl_serial_ms as f64),
             datetime_ms: format_ms(dt_serial_ms as f64),
-            time_ratio: format!("{:.1}x", time_ratio),
+            round_ms: format_ms(round_serial_ms as f64),
+            tl_vs_dt_ratio: format!("{:.1}x", dt_serial_ms as f64 / tl_serial_ms as f64),
+            tr_vs_dt_ratio: format!("{:.2}x", dt_serial_ms as f64 / round_serial_ms as f64),
+        });
+
+        size_rows.push(SizeRow {
+            uniqueness: format!("{}%", pct),
             timeline_size: format_bytes(tl_buf.len()),
             datetime_size: format_bytes(dt_buf.len()),
-            size_ratio: format!("{:.1}x", size_ratio),
+            round_size: format_bytes(round_buf.len()),
+            tl_vs_dt_size_ratio: format!("{:.1}x", dt_buf.len() as f64 / tl_buf.len() as f64),
+            tr_vs_dt_size_ratio: format!("{:.2}x", dt_buf.len() as f64 / round_buf.len() as f64),
         });
     }
 
-    println!("{}", as_table(&rows));
+    println!("### Serialization time\n");
+    println!("{}", as_table(&time_rows));
+    println!();
+    println!("### Compressed size\n");
+    println!("{}", as_table(&size_rows));
     println!();
 }
 
 #[derive(Clone, PartialEq, PcoPack)]
 #[pco_pack(timestamp = seen_at)]
 struct TimelineRecord {
-    seen_at: Timeline<10_000_000>,
+    seen_at: Timeline<1_000_000>,
     sensor_id: u32,
     temperature: f32,
     humidity: f32,
@@ -84,6 +140,7 @@ struct TimelineRecord {
 }
 
 #[derive(Clone, PartialEq, PcoPack)]
+#[pco_pack(timestamp = seen_at)]
 struct DateTimeRecord {
     seen_at: chrono::DateTime<chrono::Utc>,
     sensor_id: u32,
@@ -92,90 +149,94 @@ struct DateTimeRecord {
     status: u8,
 }
 
-/// Generate `n` DateTimeRecord entries with timestamps clustered into groups.
-/// `uniqueness_pct` controls the fraction of records that become separate
-/// Timeline rows (i.e., don't merge). Higher % = more groups = more unique.
-///
-/// Each group has timestamps within 10 seconds of each other, so they will
-/// merge when converted to Timeline<10_000_000>.
-///
-/// Always generates exactly `n` records; the group count determines clustering density.
-fn datetime_data(n: usize, uniqueness_pct: usize) -> Vec<DateTimeRecord> {
-    let mut records = Vec::with_capacity(n);
-    // Number of groups = n * uniqueness_pct / 100
-    // e.g., 10% -> 10k groups (10 records each), 95% -> 95k groups (~1 record each)
-    let num_groups = n * uniqueness_pct / 100;
-    let per_group = n / num_groups;
-    let remainder = n % num_groups; // distribute leftover records across first `remainder` groups
+#[derive(Clone, PartialEq, PcoPack)]
+#[pco_pack(timestamp = seen_at, time_round = Duration::seconds(1))]
+struct TimeRoundRecord {
+    seen_at: chrono::DateTime<chrono::Utc>,
+    sensor_id: u32,
+    temperature: f32,
+    humidity: f32,
+    status: u8,
+}
 
-    for g in 0..num_groups {
-        let group_base: i64 = (g as i64) * 1_000_000_000; // 1 billion microsecond offset per group
-        // First `remainder` groups get one extra record to reach exactly n total
-        let group_size = per_group + if g < remainder { 1 } else { 0 };
-        for i in 0..group_size {
-            // Timestamps within 10 seconds of each other (will merge into same bucket with Timeline<10_000_000>)
-            let ts_us = group_base + (i as i64) * 50_000; // 50ms apart, well within 10s
-            let seen_at = chrono::DateTime::<chrono::Utc>::from_timestamp_micros(ts_us).unwrap_or_default();
-            records.push(DateTimeRecord {
+/// Simulate 100 sensors reporting every second, with persistent state across
+/// each second except for the `uniqueness_pct` rows whose values change.
+fn generate_scenario(total_seconds: usize, uniqueness_pct: usize) -> (Vec<DateTimeRecord>, Vec<TimelineRecord>) {
+    const NUM_SENSORS: u32 = 100;
+    const BASE_TS_S: i64 = 1_767_225_600; // 2026-01-01T00:00:00Z
+    let mut dt_data = Vec::with_capacity(total_seconds * NUM_SENSORS as usize);
+    struct SensorState {
+        temperature: f32,
+        humidity: f32,
+        status: u8,
+        timeline_row: Option<TimelineRecord>,
+    }
+    let mut sensors: Vec<SensorState> = (0..NUM_SENSORS)
+        .map(|id| SensorState {
+            temperature: random_temperature(id, 0),
+            humidity: random_humidity(id, 0),
+            status: random_status(id, 0),
+            timeline_row: None,
+        })
+        .collect();
+    let mut timeline_data = Vec::with_capacity(total_seconds * NUM_SENSORS as usize);
+    for s in 0..total_seconds {
+        let ts_s = BASE_TS_S + s as i64;
+        let us = splitmix64(ts_s as u64) % 5_000; // 0-5ms jitter
+        let seen_at = chrono::DateTime::<chrono::Utc>::from_timestamp(ts_s, us as u32).unwrap_or_default();
+        for (id, sensor) in sensors.iter_mut().enumerate() {
+            if splitmix64(id as u64 * 31 + s as u64) % 100 < uniqueness_pct as u64 {
+                if let Some(row) = sensor.timeline_row.take() {
+                    timeline_data.push(row);
+                }
+                let change_count = id * total_seconds + s;
+                sensor.temperature = random_temperature(id as u32, change_count);
+                sensor.humidity = random_humidity(id as u32, change_count);
+                sensor.status = random_status(id as u32, change_count);
+            }
+            let row = sensor.timeline_row.get_or_insert_with(|| TimelineRecord {
+                seen_at: Timeline::<1_000_000>::new(),
+                sensor_id: id as u32,
+                temperature: sensor.temperature,
+                humidity: sensor.humidity,
+                status: sensor.status,
+            });
+            row.seen_at.add(seen_at.timestamp_micros(), seen_at.timestamp_micros());
+            dt_data.push(DateTimeRecord {
                 seen_at,
-                sensor_id: (g % 10) as u32,
-                temperature: 20.0 + (i as f32) * 0.1,
-                humidity: 50.0 + (g as f32) * 0.5,
-                status: (i % 3) as u8,
+                sensor_id: id as u32,
+                temperature: sensor.temperature,
+                humidity: sensor.humidity,
+                status: sensor.status,
             });
         }
     }
-
-    records
+    for sensor in &mut sensors {
+        if let Some(row) = sensor.timeline_row.take() {
+            timeline_data.push(row);
+        }
+    }
+    (dt_data, timeline_data)
 }
 
-/// Construct TimelineRecord entries from DateTimeRecord data by grouping timestamps
-/// and calling Timeline.add() for each timestamp. Overlapping/close timestamps
-/// within the same group get merged, so the actual range count is much lower.
-/// Non-timestamp fields are aggregated from the source DateTimeRecord entries.
-fn timeline_data_from_datetime(dt_data: &[DateTimeRecord]) -> Vec<TimelineRecord> {
-    // Group DateTimeRecord entries by their time bucket (1 billion microsecond windows)
-    // Each group's timestamps fall within the same bucket, so they merge together.
-    // Also aggregate non-timestamp fields from the group.
-    struct GroupData {
-        ranges: Vec<(i64, i64)>,
-        sensor_ids: Vec<u32>,
-        temperatures: Vec<f32>,
-        humidities: Vec<f32>,
-        statuses: Vec<u8>,
-    }
-    let mut groups: std::collections::BTreeMap<i64, GroupData> = std::collections::BTreeMap::new();
-    for dt in dt_data {
-        let start = dt.seen_at.timestamp_micros();
-        let end = start + 999_000; // 1ms duration per timestamp
-        let group_key = start / 1_000_000_000; // bucket by billion-microsecond windows
-        let g = groups.entry(group_key).or_insert_with(|| GroupData {
-            ranges: Vec::new(),
-            sensor_ids: Vec::new(),
-            temperatures: Vec::new(),
-            humidities: Vec::new(),
-            statuses: Vec::new(),
-        });
-        g.ranges.push((start, end));
-        g.sensor_ids.push(dt.sensor_id);
-        g.temperatures.push(dt.temperature);
-        g.humidities.push(dt.humidity);
-        g.statuses.push(dt.status);
-    }
+fn random_temperature(sensor_id: u32, change_count: usize) -> f32 {
+    // [20, 25)
+    20.0 + (splitmix64(sensor_id as u64 * 1_000_003 + change_count as u64) % 1_000_000) as f32 / 200_000.0
+}
 
-    let mut records = Vec::with_capacity(groups.len());
-    for (_group_key, g) in groups {
-        let mut timeline = Timeline::<10_000_000>::new();
-        for (s, e) in g.ranges {
-            timeline.add(s, e);
-        }
-        // Aggregate non-timestamp fields: use median-like representative values
-        let sensor_id = g.sensor_ids[0]; // all sensors in a group are the same
-        let temperature = g.temperatures.iter().sum::<f32>() / g.temperatures.len() as f32;
-        let humidity = g.humidities.iter().sum::<f32>() / g.humidities.len() as f32;
-        let status = g.statuses.iter().max().copied().unwrap_or(0);
-        records.push(TimelineRecord { seen_at: timeline, sensor_id, temperature, humidity, status });
-    }
+fn random_humidity(sensor_id: u32, change_count: usize) -> f32 {
+    // [50, 100)
+    50.0 + (splitmix64(sensor_id as u64 * 1_000_003 + change_count as u64 + 7919) % 1_000_000) as f32 / 20_000.0
+}
 
-    records
+fn random_status(sensor_id: u32, change_count: usize) -> u8 {
+    (splitmix64(sensor_id as u64 * 1_000_003 + change_count as u64 + 104729) % 5) as u8
+}
+
+/// Generates pseudo-random values without sequential patterns
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
 }
