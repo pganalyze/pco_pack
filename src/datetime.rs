@@ -54,10 +54,7 @@ impl PcoFilter for chrono::DateTime<chrono::Utc> {
                 let end = *range.end() as i64;
                 matches.build_with_and(&reader.values, move |&val| start <= val && val <= end)
             }
-            Filter::InclusionI64(values) => {
-                let vals = values.as_slice();
-                matches.build_with_and(&reader.values, move |&val| vals.contains(&val))
-            }
+            Filter::InclusionI64(values) => matches.build_with_and(&reader.values, move |&val| values.contains(&val)),
             _ => unreachable!("unsupported chrono::DateTime filter: {filter:?}"),
         }
         Ok(())
@@ -106,12 +103,18 @@ impl PcoFilter for chrono::DateTime<chrono::Utc> {
                     match parse_datetime_value(v, &format!("{}[{}]", path, i)) {
                         Ok(val) => values.push(val),
                         Err(_) => {
-                            return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionI64(Vec::new()) });
+                            return Ok(ResolvedFilter {
+                                path: vec![0],
+                                filter: Filter::InclusionI64(Default::default()),
+                            });
                         }
                     }
                 }
                 if !values.is_empty() {
-                    return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionI64(values) });
+                    return Ok(ResolvedFilter {
+                        path: vec![0],
+                        filter: Filter::InclusionI64(values.into_iter().collect()),
+                    });
                 }
             }
         }

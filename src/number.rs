@@ -83,12 +83,9 @@ macro_rules! impl_pco_number {
                             <$t as RangeCoercibleNumberExt>::matches_range(val, &(start..=end))
                         })
                     }
-                    Filter::InclusionI64(values) => {
-                        let vals = values.as_slice();
-                        matches.build_with_and(&reader.values, move |val| {
-                            vals.contains(&{ <$t as RangeCoercibleNumber>::to_i64(val) })
-                        })
-                    }
+                    Filter::InclusionI64(values) => matches.build_with_and(&reader.values, move |val| {
+                        values.contains(&{ <$t as RangeCoercibleNumber>::to_i64(val) })
+                    }),
                     Filter::InclusionF64(values) => {
                         let vals = values.as_slice();
                         matches.build_with_and(&reader.values, move |val| {
@@ -149,7 +146,10 @@ macro_rules! impl_pco_number {
                     if !arr.is_empty() {
                         let ints: Vec<i64> = arr.iter().filter_map(|v| v.as_i64()).collect();
                         if ints.len() == arr.len() {
-                            return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionI64(ints) });
+                            return Ok(ResolvedFilter {
+                                path: vec![0],
+                                filter: Filter::InclusionI64(ints.into_iter().collect()),
+                            });
                         }
                         let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
                         if floats.len() == arr.len() {

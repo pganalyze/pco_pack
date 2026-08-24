@@ -139,53 +139,53 @@ PcoPack significantly outperforms when storing enums and timestamps because of t
 
 | Filter                                               | Time (ms) | Rows   |
 |------------------------------------------------------|-----------|--------|
-| no filter                                            | 40.1 ms   | 100000 |
-| empty filter                                         | 40.7 ms   | 100000 |
-| i64 exact (id == 50_000)                             | 6.2 ms    | 1000   |
-| i64 range (50_000..=50_999)                          | 6.2 ms    | 1000   |
-| i64 inclusion (100 values, 1 match)                  | 6.8 ms    | 1000   |
-| i32 exact (int32_val == 50)                          | 6.3 ms    | 1000   |
-| i32 range (50..=50.99)                               | 6.2 ms    | 1000   |
-| i32 inclusion (100 values, 1 match)                  | 6.7 ms    | 1000   |
-| i8 exact (int8_val == 50)                            | 6.1 ms    | 1000   |
+| no filter                                            | 40.5 ms   | 100000 |
+| empty filter                                         | 40.4 ms   | 100000 |
+| i64 exact (id == 50_000)                             | 6.1 ms    | 1000   |
+| i64 range (50_000..=50_999)                          | 6.1 ms    | 1000   |
+| i64 inclusion (100 values, 1 match)                  | 6.2 ms    | 1000   |
+| i32 exact (int32_val == 50)                          | 6.1 ms    | 1000   |
+| i32 range (50..=50.99)                               | 6.1 ms    | 1000   |
+| i32 inclusion (100 values, 1 match)                  | 6.2 ms    | 1000   |
+| i8 exact (int8_val == 50)                            | 6.2 ms    | 1000   |
 | i8 range (50..=50.99)                                | 6.1 ms    | 1000   |
-| i8 inclusion (100 values, 1 match)                   | 6.8 ms    | 1000   |
-| u8 exact (u8_val == 50)                              | 6.2 ms    | 1000   |
-| u8 range (50..=50.99)                                | 6.3 ms    | 1000   |
-| u8 inclusion (100 values, 1 match)                   | 6.8 ms    | 1000   |
+| i8 inclusion (100 values, 1 match)                   | 6.3 ms    | 1000   |
+| u8 exact (u8_val == 50)                              | 6.1 ms    | 1000   |
+| u8 range (50..=50.99)                                | 6.2 ms    | 1000   |
+| u8 inclusion (100 values, 1 match)                   | 6.3 ms    | 1000   |
 | f64 exact (float64_val == 50.0)                      | 6.2 ms    | 1000   |
-| f64 range (50.0..=50.99)                             | 6.3 ms    | 1000   |
-| f64 inclusion (100 values, 1 match)                  | 8.6 ms    | 1000   |
-| f32 exact (float32_val == 50.0)                      | 6.4 ms    | 1000   |
-| f32 range (50.0..=50.99)                             | 6.3 ms    | 1000   |
-| f32 inclusion (100 values, 1 match)                  | 8.9 ms    | 1000   |
-| f16 exact (f16_val == 50.0)                          | 6.3 ms    | 1000   |
-| f16 range (50.0..=50.99)                             | 6.3 ms    | 1000   |
+| f64 range (50.0..=50.99)                             | 6.2 ms    | 1000   |
+| f64 inclusion (100 values, 1 match)                  | 8.5 ms    | 1000   |
+| f32 exact (float32_val == 50.0)                      | 6.1 ms    | 1000   |
+| f32 range (50.0..=50.99)                             | 6.1 ms    | 1000   |
+| f32 inclusion (100 values, 1 match)                  | 8.8 ms    | 1000   |
+| f16 exact (f16_val == 50.0)                          | 6.2 ms    | 1000   |
+| f16 range (50.0..=50.99)                             | 6.2 ms    | 1000   |
 | f16 inclusion (100 values, 1 match)                  | 8.9 ms    | 1000   |
-| string exact                                         | 8.4 ms    | 1000   |
-| string inclusion (10 values)                         | 9.0 ms    | 10000  |
-| bool exact (bool_val == true)                        | 21.1 ms   | 1000   |
-| bool exact (bool_val == false)                       | 41.7 ms   | 99000  |
-| enum exact (status == V50)                           | 6.3 ms    | 1000   |
-| enum inclusion (status in 0..9)                      | 7.0 ms    | 10000  |
-| option exact (option_val == 50)                      | 6.3 ms    | 1000   |
-| option range (50..=50.99)                            | 6.3 ms    | 1000   |
-| option inclusion (100 values, 1 match)               | 6.9 ms    | 1000   |
-| vec contains (vec_val has 5000)                      | 6.4 ms    | 1000   |
-| vec contains inclusion (any of 10 values)            | 7.1 ms    | 10000  |
-| bytes exact (hex match)                              | 8.2 ms    | 1000   |
-| map exact (has key 'key_50')                         | 14.8 ms   | 1000   |
-| map inclusion (any of key_0..key_9)                  | 15.7 ms   | 10000  |
-| json exact (tag_50 string)                           | 8.5 ms    | 1000   |
+| string exact                                         | 7.9 ms    | 1000   |
+| string inclusion (10 values)                         | 8.6 ms    | 10000  |
+| bool exact (bool_val == true)                        | 20.8 ms   | 1000   |
+| bool exact (bool_val == false)                       | 40.5 ms   | 99000  |
+| enum exact (status == V50)                           | 6.1 ms    | 1000   |
+| enum inclusion (status in 0..9)                      | 6.9 ms    | 10000  |
+| option exact (option_val == 50)                      | 6.2 ms    | 1000   |
+| option range (50..=50.99)                            | 6.2 ms    | 1000   |
+| option inclusion (100 values, 1 match)               | 6.4 ms    | 1000   |
+| vec contains (vec_val has 5000)                      | 6.3 ms    | 1000   |
+| vec contains inclusion (any of 10 values)            | 7.0 ms    | 10000  |
+| bytes exact (hex match)                              | 8.0 ms    | 1000   |
+| map exact (has key 'key_50')                         | 14.3 ms   | 1000   |
+| map inclusion (any of key_0..key_9)                  | 15.5 ms   | 10000  |
+| json exact (tag_50 string)                           | 8.3 ms    | 1000   |
 | uuid exact (nil)                                     | 3.9 ms    | 1000   |
-| uuid inclusion (100 values, 1 match)                 | 6.6 ms    | 1000   |
-| nested (nested.inner_id == 50_000)                   | 6.2 ms    | 1000   |
+| uuid inclusion (100 values, 1 match)                 | 4.1 ms    | 1000   |
+| nested (nested.inner_id == 50_000)                   | 6.1 ms    | 1000   |
 | nested (nested.inner_id range 50_000..=50_000.99)    | 6.1 ms    | 1000   |
-| nested (nested.inner_name exact)                     | 8.1 ms    | 1000   |
-| nested (nested.inner_name inclusion, 10 values)      | 9.1 ms    | 10000  |
-| partial fields (id + string_val)                     | 0.8 ms    | 1000   |
-| multi-field (id + int32_val)                         | 6.2 ms    | 1000   |
-| multi-field (bytes_val + u8_val)                     | 6.9 ms    | 1000   |
-| multi-field (string_val + u8_val)                    | 7.1 ms    | 1000   |
-| multi-field (json_val + u8_val)                      | 6.9 ms    | 1000   |
+| nested (nested.inner_name exact)                     | 8.0 ms    | 1000   |
+| nested (nested.inner_name inclusion, 10 values)      | 8.7 ms    | 10000  |
+| partial fields (id + string_val)                     | 0.7 ms    | 1000   |
+| multi-field (id + int32_val)                         | 6.1 ms    | 1000   |
+| multi-field (bytes_val + u8_val)                     | 6.7 ms    | 1000   |
+| multi-field (string_val + u8_val)                    | 6.9 ms    | 1000   |
+| multi-field (json_val + u8_val)                      | 7.1 ms    | 1000   |
 | multi-field zero-match (id + int32_val + string_val) | 0.4 ms    | 0      |

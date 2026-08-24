@@ -201,11 +201,11 @@ pub enum Filter {
     Bytes(Vec<u8>),
     Range(RangeInclusive<i64>),
     FloatRange(RangeInclusive<f64>),
-    InclusionI64(Vec<i64>),
+    InclusionI64(ahash::HashSet<i64>),
     InclusionF64(Vec<f64>),
-    InclusionString(Vec<String>),
-    InclusionUuid(Vec<::uuid::Uuid>),
-    InclusionBool(Vec<bool>),
+    InclusionString(ahash::HashSet<String>),
+    InclusionUuid(ahash::HashSet<::uuid::Uuid>),
+    InclusionBool(ahash::HashSet<bool>),
 }
 
 impl Filter {
@@ -219,7 +219,7 @@ impl Filter {
                 *self = Filter::F64(*r.start());
             }
             Filter::InclusionI64(v) if v.len() == 1 => {
-                let x = v.remove(0);
+                let x = v.iter().next().unwrap().clone();
                 *self = Filter::I64(x);
             }
             Filter::InclusionF64(v) if v.len() == 1 => {
@@ -227,15 +227,15 @@ impl Filter {
                 *self = Filter::F64(x);
             }
             Filter::InclusionString(v) if v.len() == 1 => {
-                let s = v.remove(0);
-                *self = Filter::String(s);
+                let x = v.iter().next().unwrap().clone();
+                *self = Filter::String(x);
             }
             Filter::InclusionUuid(v) if v.len() == 1 => {
-                let u = v.remove(0);
+                let u = v.iter().next().unwrap().clone();
                 *self = Filter::Uuid(u);
             }
             Filter::InclusionBool(v) if v.len() == 1 => {
-                let b = v.remove(0);
+                let b = v.iter().next().unwrap().clone();
                 *self = Filter::Bool(b);
             }
             _ => {}
