@@ -24,6 +24,7 @@ impl FallbackReader for ByteBufReader {
             data_pos: 0,
             cached_chunk: Some(vec![value]),
             cached_row_start: 0,
+            predecoded: None,
         })
     }
 }
