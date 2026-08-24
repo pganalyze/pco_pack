@@ -71,17 +71,33 @@ PcoPack significantly outperforms when storing enums and timestamps because of t
 - `serde_columnar` has better compressed size than `columnar` because of per-field encoding (which users must manually set)
 - msgpack has the worst compressed size and roundtrip time when including filtering. This uses a traditional row-based layout instead of a columnar layout, highlighting why a columnar layout is beneficial
 
-## Timeline vs DateTime
+## Timeline
 
-| Uniqueness | Timeline | DateTime | Time ratio | Timeline | DateTime | Size ratio |
-|------------|----------|----------|------------|----------|----------|------------|
-| 10%        | 1.1 ms   | 3.7 ms   | 3.4x       | 938 B    | 50 KB    | 55.1x      |
-| 20%        | 1.5 ms   | 3.9 ms   | 2.6x       | 1 KB     | 63 KB    | 42.7x      |
-| 50%        | 3.9 ms   | 3.5 ms   | 0.9x       | 3 KB     | 81 KB    | 21.1x      |
-| 80%        | 6.5 ms   | 3.3 ms   | 0.5x       | 6 KB     | 47 KB    | 7.8x       |
-| 90%        | 7.4 ms   | 3.0 ms   | 0.4x       | 6 KB     | 27 KB    | 4.1x       |
+### Serialization time
 
-`Timeline` is a non-contiguous time range type that allows PcoPack to store a single row when all other fields in the struct are identical, significantly reducing time and size as long as your data has >50% duplicates. Smaller sizes can even be seen at 90% uniqueness, though the extra serialization time may not be worth it.
+| Uniqueness | Timeline | DateTime | time_round=1s | Time ratio (TL/DT) | Time ratio (TR/DT) |
+|------------|----------|----------|---------------|--------------------|--------------------|
+| 10%        | 1.7 ms   | 7.9 ms   | 7.6 ms        | 4.6x               | 1.04x              |
+| 20%        | 2.3 ms   | 8.3 ms   | 8.0 ms        | 3.6x               | 1.04x              |
+| 50%        | 5.6 ms   | 7.2 ms   | 6.9 ms        | 1.3x               | 1.04x              |
+| 80%        | 9.1 ms   | 5.4 ms   | 5.0 ms        | 0.6x               | 1.08x              |
+| 90%        | 10.0 ms  | 5.3 ms   | 5.0 ms        | 0.5x               | 1.06x              |
+
+### Compressed size
+
+| Uniqueness | Timeline | DateTime | time_round=1s | Size ratio (TL/DT) | Size ratio (TR/DT) |
+|------------|----------|----------|---------------|--------------------|--------------------|
+| 10%        | 67 KB    | 130 KB   | 102 KB        | 1.9x               | 1.27x              |
+| 20%        | 130 KB   | 194 KB   | 166 KB        | 1.5x               | 1.17x              |
+| 50%        | 319 KB   | 491 KB   | 463 KB        | 1.5x               | 1.06x              |
+| 80%        | 485 KB   | 600 KB   | 572 KB        | 1.2x               | 1.05x              |
+| 90%        | 533 KB   | 600 KB   | 572 KB        | 1.1x               | 1.05x              |
+
+Scenario: 100 sensors report every second for 1,000 seconds. All rows in a given second share one timestamp with sub-second jitter. Uniqueness is the probability that a sensor's readings differ from its previous second.
+
+Findings:
+- `Timeline` merges duplicate observations into time ranges, achieving smaller sizes depending on uniqueness. The benefit grows as readings stay stable longer (more duplicates to merge). However, it requires changing your struct field type and adds serialization overhead at high uniqueness, where the extra cost may not be worth it
+- `time_round = Duration::seconds(1)` consistently saves ~28 KB on the timestamp column across all scenarios. At low uniqueness this is a large fraction of total size (1.27x), but at high uniqueness the non-timestamp fields dominate and dilute the ratio to 1.05x
 
 ## float_round
 
@@ -139,53 +155,53 @@ PcoPack significantly outperforms when storing enums and timestamps because of t
 
 | Filter                                               | Time (ms) | Rows   |
 |------------------------------------------------------|-----------|--------|
-| no filter                                            | 40.5 ms   | 100000 |
-| empty filter                                         | 40.4 ms   | 100000 |
+| no filter                                            | 40.2 ms   | 100000 |
+| empty filter                                         | 40.0 ms   | 100000 |
 | i64 exact (id == 50_000)                             | 6.1 ms    | 1000   |
 | i64 range (50_000..=50_999)                          | 6.1 ms    | 1000   |
 | i64 inclusion (100 values, 1 match)                  | 6.2 ms    | 1000   |
 | i32 exact (int32_val == 50)                          | 6.1 ms    | 1000   |
 | i32 range (50..=50.99)                               | 6.1 ms    | 1000   |
 | i32 inclusion (100 values, 1 match)                  | 6.2 ms    | 1000   |
-| i8 exact (int8_val == 50)                            | 6.2 ms    | 1000   |
-| i8 range (50..=50.99)                                | 6.1 ms    | 1000   |
-| i8 inclusion (100 values, 1 match)                   | 6.3 ms    | 1000   |
-| u8 exact (u8_val == 50)                              | 6.1 ms    | 1000   |
-| u8 range (50..=50.99)                                | 6.2 ms    | 1000   |
-| u8 inclusion (100 values, 1 match)                   | 6.3 ms    | 1000   |
-| f64 exact (float64_val == 50.0)                      | 6.2 ms    | 1000   |
-| f64 range (50.0..=50.99)                             | 6.2 ms    | 1000   |
-| f64 inclusion (100 values, 1 match)                  | 8.5 ms    | 1000   |
+| i8 exact (int8_val == 50)                            | 6.0 ms    | 1000   |
+| i8 range (50..=50.99)                                | 6.0 ms    | 1000   |
+| i8 inclusion (100 values, 1 match)                   | 6.1 ms    | 1000   |
+| u8 exact (u8_val == 50)                              | 6.0 ms    | 1000   |
+| u8 range (50..=50.99)                                | 6.1 ms    | 1000   |
+| u8 inclusion (100 values, 1 match)                   | 6.2 ms    | 1000   |
+| f64 exact (float64_val == 50.0)                      | 6.1 ms    | 1000   |
+| f64 range (50.0..=50.99)                             | 6.1 ms    | 1000   |
+| f64 inclusion (100 values, 1 match)                  | 8.4 ms    | 1000   |
 | f32 exact (float32_val == 50.0)                      | 6.1 ms    | 1000   |
 | f32 range (50.0..=50.99)                             | 6.1 ms    | 1000   |
 | f32 inclusion (100 values, 1 match)                  | 8.8 ms    | 1000   |
-| f16 exact (f16_val == 50.0)                          | 6.2 ms    | 1000   |
+| f16 exact (f16_val == 50.0)                          | 6.1 ms    | 1000   |
 | f16 range (50.0..=50.99)                             | 6.2 ms    | 1000   |
 | f16 inclusion (100 values, 1 match)                  | 8.9 ms    | 1000   |
 | string exact                                         | 7.9 ms    | 1000   |
 | string inclusion (10 values)                         | 8.6 ms    | 10000  |
-| bool exact (bool_val == true)                        | 20.8 ms   | 1000   |
-| bool exact (bool_val == false)                       | 40.5 ms   | 99000  |
-| enum exact (status == V50)                           | 6.1 ms    | 1000   |
-| enum inclusion (status in 0..9)                      | 6.9 ms    | 10000  |
-| option exact (option_val == 50)                      | 6.2 ms    | 1000   |
+| bool exact (bool_val == true)                        | 20.3 ms   | 1000   |
+| bool exact (bool_val == false)                       | 40.1 ms   | 99000  |
+| enum exact (status == V50)                           | 6.2 ms    | 1000   |
+| enum inclusion (status in 0..9)                      | 6.8 ms    | 10000  |
+| option exact (option_val == 50)                      | 6.3 ms    | 1000   |
 | option range (50..=50.99)                            | 6.2 ms    | 1000   |
-| option inclusion (100 values, 1 match)               | 6.4 ms    | 1000   |
+| option inclusion (100 values, 1 match)               | 6.3 ms    | 1000   |
 | vec contains (vec_val has 5000)                      | 6.3 ms    | 1000   |
 | vec contains inclusion (any of 10 values)            | 7.0 ms    | 10000  |
-| bytes exact (hex match)                              | 8.0 ms    | 1000   |
-| map exact (has key 'key_50')                         | 14.3 ms   | 1000   |
-| map inclusion (any of key_0..key_9)                  | 15.5 ms   | 10000  |
-| json exact (tag_50 string)                           | 8.3 ms    | 1000   |
-| uuid exact (nil)                                     | 3.9 ms    | 1000   |
-| uuid inclusion (100 values, 1 match)                 | 4.1 ms    | 1000   |
-| nested (nested.inner_id == 50_000)                   | 6.1 ms    | 1000   |
-| nested (nested.inner_id range 50_000..=50_000.99)    | 6.1 ms    | 1000   |
-| nested (nested.inner_name exact)                     | 8.0 ms    | 1000   |
-| nested (nested.inner_name inclusion, 10 values)      | 8.7 ms    | 10000  |
-| partial fields (id + string_val)                     | 0.7 ms    | 1000   |
-| multi-field (id + int32_val)                         | 6.1 ms    | 1000   |
-| multi-field (bytes_val + u8_val)                     | 6.7 ms    | 1000   |
-| multi-field (string_val + u8_val)                    | 6.9 ms    | 1000   |
+| bytes exact (hex match)                              | 8.1 ms    | 1000   |
+| map exact (has key 'key_50')                         | 14.7 ms   | 1000   |
+| map inclusion (any of key_0..key_9)                  | 15.1 ms   | 10000  |
+| json exact (tag_50 string)                           | 8.4 ms    | 1000   |
+| uuid exact (bucket 50)                               | 6.3 ms    | 1000   |
+| uuid inclusion (100 values, 1 match)                 | 6.5 ms    | 1000   |
+| nested (nested.inner_id == 50_000)                   | 6.2 ms    | 1000   |
+| nested (nested.inner_id range 50_000..=50_000.99)    | 6.2 ms    | 1000   |
+| nested (nested.inner_name exact)                     | 8.1 ms    | 1000   |
+| nested (nested.inner_name inclusion, 10 values)      | 8.6 ms    | 10000  |
+| partial fields (id + string_val)                     | 0.8 ms    | 1000   |
+| multi-field (id + int32_val)                         | 6.2 ms    | 1000   |
+| multi-field (bytes_val + u8_val)                     | 7.1 ms    | 1000   |
+| multi-field (string_val + u8_val)                    | 7.1 ms    | 1000   |
 | multi-field (json_val + u8_val)                      | 7.1 ms    | 1000   |
-| multi-field zero-match (id + int32_val + string_val) | 0.4 ms    | 0      |
+| multi-field zero-match (id + int32_val + string_val) | 0.3 ms    | 0      |
