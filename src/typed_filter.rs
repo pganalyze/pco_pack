@@ -144,12 +144,71 @@ impl UuidFilter {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Truncates a timestamp to microsecond precision, the resolution pco_pack
+/// stores timestamps at. On systems with nanosecond clock resolution
+/// (e.g., Linux), sub-microsecond digits are dropped.
+fn truncate_to_micros(v: ::chrono::DateTime<::chrono::Utc>) -> ::chrono::DateTime<::chrono::Utc> {
+    from_micros(v.timestamp_micros())
+}
+
+/// Reconstructs a timestamp from microseconds since epoch.
+fn from_micros(micros: i64) -> ::chrono::DateTime<::chrono::Utc> {
+    ::chrono::DateTime::<::chrono::Utc>::from_timestamp_micros(micros).unwrap_or_else(|| {
+        if micros < 0 {
+            ::chrono::DateTime::<::chrono::Utc>::MIN_UTC
+        } else {
+            ::chrono::DateTime::<::chrono::Utc>::MAX_UTC
+        }
+    })
+}
+
+/// Filter for `DateTime<Utc>` fields.
+///
+/// Values are held at microsecond precision, the resolution pco_pack stores
+/// timestamps at. Truncation is applied both when converting from other types
+/// (via `From`) and when deserializing from JSON, so on systems with
+/// nanosecond clock resolution (e.g., Linux) sub-microsecond digits are never
+/// observable through this type.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum DateTimeFilter {
     Equal(::chrono::DateTime<::chrono::Utc>),
     Inclusion(Vec<::chrono::DateTime<::chrono::Utc>>),
     Range { start: ::chrono::DateTime<::chrono::Utc>, end: ::chrono::DateTime<::chrono::Utc> },
+}
+
+impl<'de> Deserialize<'de> for DateTimeFilter {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let parse_one = |v: &serde_json::Value, path: &str| -> Result<::chrono::DateTime<::chrono::Utc>, D::Error> {
+            super::datetime::parse_datetime_value(v, path).map_err(|e| D::Error::custom(e.to_string())).map(from_micros)
+        };
+        match &value {
+            serde_json::Value::Object(obj) => {
+                let (Some(start), Some(end)) = (obj.get("start"), obj.get("end")) else {
+                    return Err(D::Error::custom("Timestamp range filter requires 'start' and 'end' keys".to_string()));
+                };
+                Ok(DateTimeFilter::Range { start: parse_one(start, "start")?, end: parse_one(end, "end")? })
+            }
+            serde_json::Value::Array(items) => {
+                let mut values = Vec::with_capacity(items.len());
+                for (i, item) in items.iter().enumerate() {
+                    values.push(parse_one(item, &format!("[{i}]"))?);
+                }
+                Ok(DateTimeFilter::Inclusion(values))
+            }
+            serde_json::Value::String(_) | serde_json::Value::Number(_) => {
+                Ok(DateTimeFilter::Equal(parse_one(&value, "")?))
+            }
+            _ => Err(D::Error::custom(
+                "Expected an RFC 3339 string or integer microseconds for a timestamp filter".to_string(),
+            )),
+        }
+    }
 }
 
 impl DateTimeFilter {
@@ -679,36 +738,36 @@ impl<'a> From<&'a [::uuid::Uuid]> for UuidFilter {
 
 impl From<::chrono::DateTime<::chrono::Utc>> for DateTimeFilter {
     fn from(v: ::chrono::DateTime<::chrono::Utc>) -> Self {
-        DateTimeFilter::Equal(v)
+        DateTimeFilter::Equal(truncate_to_micros(v))
     }
 }
 
 impl<const N: usize> From<[::chrono::DateTime<::chrono::Utc>; N]> for DateTimeFilter {
     fn from(arr: [::chrono::DateTime<::chrono::Utc>; N]) -> Self {
-        DateTimeFilter::Inclusion(Vec::from(arr))
+        DateTimeFilter::Inclusion(arr.into_iter().map(truncate_to_micros).collect())
     }
 }
 
 impl From<Vec<::chrono::DateTime<::chrono::Utc>>> for DateTimeFilter {
     fn from(v: Vec<::chrono::DateTime<::chrono::Utc>>) -> Self {
-        DateTimeFilter::Inclusion(v)
+        DateTimeFilter::Inclusion(v.into_iter().map(truncate_to_micros).collect())
     }
 }
 
 impl<'a> From<&'a Vec<::chrono::DateTime<::chrono::Utc>>> for DateTimeFilter {
     fn from(v: &'a Vec<::chrono::DateTime<::chrono::Utc>>) -> Self {
-        DateTimeFilter::Inclusion(v.clone())
+        DateTimeFilter::Inclusion(v.iter().copied().map(truncate_to_micros).collect())
     }
 }
 
 impl<'a> From<&'a [::chrono::DateTime<::chrono::Utc>]> for DateTimeFilter {
     fn from(slice: &'a [::chrono::DateTime<::chrono::Utc>]) -> Self {
-        DateTimeFilter::Inclusion(slice.to_vec())
+        DateTimeFilter::Inclusion(slice.iter().copied().map(truncate_to_micros).collect())
     }
 }
 
 impl From<RangeInclusive<::chrono::DateTime<::chrono::Utc>>> for DateTimeFilter {
     fn from(r: RangeInclusive<::chrono::DateTime<::chrono::Utc>>) -> Self {
-        DateTimeFilter::Range { start: *r.start(), end: *r.end() }
+        DateTimeFilter::Range { start: truncate_to_micros(*r.start()), end: truncate_to_micros(*r.end()) }
     }
 }
