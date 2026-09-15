@@ -10,6 +10,12 @@ Zero-config columnar compression for Rust
 - [Advanced schema evolution](#schema-evolution)
 - [Novel timeseries compression](#timeline)
 
+Choose PcoPack when:
+- compressed size is the most important metric (optimizing for expensive cloud storage and high network latency)
+- you plan to write data to an indexed storage layer, using the `index` and `timestamp` features
+- you want to use native Rust types with zero configuration needed
+- you want to automatically discard unimportant precision to improve compression, using the `float_round` and `time_round` features
+
 ## Benchmarks
 
 Detailed benchmarks are available in [benches/README.md](benches/README.md). See also [rust_serialization_benchmark](https://github.com/djkoloski/rust_serialization_benchmark) for an ecosystem-wide comparison.
