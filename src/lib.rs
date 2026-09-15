@@ -62,8 +62,8 @@ mod test;
 /// chunks of at most `CHUNK_SIZE` rows.
 pub trait PcoPack: PcoFilter + Sized {
     /// Maximum rows per chunk. Larger chunks improve compression but use more memory
-    /// during columnar conversion. 32,768 is a power of 2 to avoid excess Vec capacity.
-    const CHUNK_SIZE: usize = 32_768;
+    /// during columnar conversion.
+    const CHUNK_SIZE: usize = 262_144;
 
     /// Decompression state for reading columnar data back into row structs.
     type Reader;

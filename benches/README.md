@@ -121,7 +121,9 @@ Findings:
 
 ## chunk_size
 
-`Write peak` is the peak memory used while serializing, and `Read peak` is the peak while deserializing and materializing all rows.
+`chunk_size` helps avoid out of memory crashes when converting between a columnar and row-based layout. Larger chunks naturally provide better compression and faster serialization, though require more memory. The crate's default 2^18 chunk size provides optimal performance while using a reasonable amount of memory. For very large structs or when running on memory-constrainted systems, you may want to use a smaller chunk size.
+
+`Write peak` is the peak memory used while serializing, and `Read peak` is the peak while deserializing. Filtering to a small subset of the rows is significantly faster and uses less memory, as seen in the Filters benchmark.
 
 ### SmallStruct (32 bytes/row)
 

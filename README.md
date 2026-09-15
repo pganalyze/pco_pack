@@ -58,7 +58,7 @@ Recommendations:
 - `timestamp = field` marks a field as a timestamp for timeseries data. Before compression the data is sorted by this field for ideal pco compression. The serialized format includes `start_at` and `end_at` per chunk, enabling efficient range filtering. The timestamp field (and all other timestamps) are stored as `i64` microseconds internally.
 - `float_round = N` reduces precision of float fields by rounding to `N` decimal places, improving compression when you don't need full float precision.
 - `time_round = chrono::Duration::seconds(N)` rounds timestamps to the nearest multiple of the given duration (e.g. 10 seconds), reducing microsecond-level noise for better compression
-- `chunk_size = N` sets the chunk size (default 32,768) used for serialization. This is mostly intended for testing; the benchmarks suggest that there isn't much benefit to changing the chunk size based on the size of your struct
+- `chunk_size = N` sets the chunk size used for serialization. The default (2^18, 262k) optimizes for runtime and compressed size; read the benchmark for more information.
 
 Note: `float_round` and `time_round` are applied to nested types (e.g. collections), but must be explicitly set on nested structs or enums because they do not inherit the parent's settings.
 
