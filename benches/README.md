@@ -121,35 +121,43 @@ Findings:
 
 ## chunk_size
 
+`Write peak` is the peak memory used while serializing, and `Read peak` is the peak while deserializing and materializing all rows.
+
 ### SmallStruct (32 bytes/row)
 
-| Chunk size    | Serialize | Deserialize | Size  | Chunks | Memory per chunk |
-|---------------|-----------|-------------|-------|--------|------------------|
-| 2^13 = 8192   | 13.2 ms   | 4.5 ms      | 78 KB | 32     | 256 KB           |
-| 2^14 = 16384  | 10.3 ms   | 4.4 ms      | 73 KB | 16     | 512 KB           |
-| 2^15 = 32768  | 9.0 ms    | 4.4 ms      | 71 KB | 8      | 1.0 MB           |
-| 2^16 = 65536  | 8.2 ms    | 4.2 ms      | 69 KB | 4      | 2.0 MB           |
-| 2^17 = 131072 | 7.8 ms    | 4.2 ms      | 69 KB | 2      | 4.0 MB           |
+| Chunk size    | Serialize | Deserialize | Size   | Chunks | Write peak | Read peak |
+|---------------|-----------|-------------|--------|--------|------------|-----------|
+| 2^13 = 8192   | 25.9 ms   | 8.3 ms      | 157 KB | 64     | 6.0 MB     | 24.4 MB   |
+| 2^14 = 16384  | 20.7 ms   | 8.2 ms      | 147 KB | 32     | 6.0 MB     | 24.6 MB   |
+| 2^15 = 32768  | 18.2 ms   | 7.9 ms      | 142 KB | 16     | 6.5 MB     | 25.1 MB   |
+| 2^16 = 65536  | 16.6 ms   | 7.7 ms      | 139 KB | 8      | 8.8 MB     | 26.1 MB   |
+| 2^17 = 131072 | 15.7 ms   | 7.7 ms      | 138 KB | 4      | 13.4 MB    | 28.1 MB   |
+| 2^18 = 262144 | 16.4 ms   | 7.7 ms      | 138 KB | 2      | 22.6 MB    | 32.1 MB   |
+| 2^19 = 524288 | 16.4 ms   | 7.7 ms      | 137 KB | 1      | 27.1 MB    | 32.1 MB   |
 
 ### MediumStruct (80 bytes/row)
 
-| Chunk size    | Serialize | Deserialize | Size   | Chunks | Memory per chunk |
-|---------------|-----------|-------------|--------|--------|------------------|
-| 2^13 = 8192   | 40.6 ms   | 24.5 ms     | 342 KB | 32     | 800 KB           |
-| 2^14 = 16384  | 39.1 ms   | 24.3 ms     | 419 KB | 16     | 1.6 MB           |
-| 2^15 = 32768  | 36.8 ms   | 23.8 ms     | 387 KB | 8      | 3.1 MB           |
-| 2^16 = 65536  | 35.5 ms   | 23.7 ms     | 371 KB | 4      | 6.2 MB           |
-| 2^17 = 131072 | 34.9 ms   | 23.5 ms     | 364 KB | 2      | 12.5 MB          |
+| Chunk size    | Serialize | Deserialize | Size   | Chunks | Write peak | Read peak |
+|---------------|-----------|-------------|--------|--------|------------|-----------|
+| 2^13 = 8192   | 84.3 ms   | 49.2 ms     | 683 KB | 64     | 6.0 MB     | 65.9 MB   |
+| 2^14 = 16384  | 80.1 ms   | 50.3 ms     | 836 KB | 32     | 7.3 MB     | 66.8 MB   |
+| 2^15 = 32768  | 80.1 ms   | 49.7 ms     | 773 KB | 16     | 9.5 MB     | 68.3 MB   |
+| 2^16 = 65536  | 73.1 ms   | 48.7 ms     | 742 KB | 8      | 14.2 MB    | 71.3 MB   |
+| 2^17 = 131072 | 73.5 ms   | 48.1 ms     | 726 KB | 4      | 23.6 MB    | 77.4 MB   |
+| 2^18 = 262144 | 71.8 ms   | 47.0 ms     | 718 KB | 2      | 42.4 MB    | 89.6 MB   |
+| 2^19 = 524288 | 71.9 ms   | 49.8 ms     | 714 KB | 1      | 79.9 MB    | 89.6 MB   |
 
 ### LargeStruct (176 bytes/row)
 
-| Chunk size    | Serialize | Deserialize | Size   | Chunks | Memory per chunk |
-|---------------|-----------|-------------|--------|--------|------------------|
-| 2^13 = 8192   | 99.7 ms   | 52.1 ms     | 655 KB | 32     | 1.8 MB           |
-| 2^14 = 16384  | 91.2 ms   | 49.9 ms     | 624 KB | 16     | 3.6 MB           |
-| 2^15 = 32768  | 85.2 ms   | 50.3 ms     | 610 KB | 8      | 7.1 MB           |
-| 2^16 = 65536  | 84.2 ms   | 49.8 ms     | 603 KB | 4      | 14.2 MB          |
-| 2^17 = 131072 | 81.4 ms   | 50.7 ms     | 602 KB | 2      | 28.5 MB          |
+| Chunk size    | Serialize | Deserialize | Size    | Chunks | Write peak | Read peak |
+|---------------|-----------|-------------|---------|--------|------------|-----------|
+| 2^13 = 8192   | 204.1 ms  | 102.7 ms    | 1309 KB | 64     | 7.6 MB     | 146.7 MB  |
+| 2^14 = 16384  | 185.3 ms  | 101.7 ms    | 1246 KB | 32     | 9.6 MB     | 148.4 MB  |
+| 2^15 = 32768  | 174.8 ms  | 100.6 ms    | 1216 KB | 16     | 13.9 MB    | 151.8 MB  |
+| 2^16 = 65536  | 171.0 ms  | 101.1 ms    | 1202 KB | 8      | 22.5 MB    | 158.7 MB  |
+| 2^17 = 131072 | 167.4 ms  | 98.8 ms     | 1197 KB | 4      | 39.8 MB    | 172.6 MB  |
+| 2^18 = 262144 | 168.4 ms  | 98.3 ms     | 1194 KB | 2      | 74.3 MB    | 200.5 MB  |
+| 2^19 = 524288 | 167.6 ms  | 99.8 ms     | 1193 KB | 1      | 143.3 MB   | 200.5 MB  |
 
 ## Filters
 

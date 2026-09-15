@@ -2,10 +2,35 @@ include!("bench_common.rs");
 
 use markdown_tables::{MarkdownTableRow, as_table};
 use pco_pack::PcoPack;
+use peak_alloc::PeakAlloc;
 use serde_json::json;
 
-/// Number of rows per test. Large enough for chunk boundaries to affect behavior.
-const N_ROWS: usize = 262_144;
+/// Global allocator that tracks the current and peak live Rust heap.
+/// Note: C allocations (zstd compression contexts) are not tracked.
+#[global_allocator]
+static PEAK: PeakAlloc = PeakAlloc;
+
+fn peak_of<T, F: FnOnce() -> T>(f: F) -> (T, usize) {
+    let baseline = PEAK.current_usage();
+    PEAK.reset_peak_usage();
+    let out = f();
+    let peak = PEAK.peak_usage();
+    (out, peak.saturating_sub(baseline))
+}
+
+fn measure_peaks<T: PcoPack + Clone>(data: &[T]) -> (Vec<T::Chunk>, Vec<u8>, usize, usize) {
+    let input = data.to_vec(); // excluded from peak measurement
+    let (chunks, write_peak) = peak_of(|| <T as PcoPack>::write(input).unwrap());
+    let buf = T::to_bytes(&chunks).unwrap();
+    let (_, read_peak) = peak_of(|| {
+        let c = T::from_bytes(&buf).unwrap();
+        let r = T::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+        assert_eq!(r.len(), data.len());
+    });
+    (chunks, buf, write_peak, read_peak)
+}
+
+const N_ROWS: usize = 524_288; // 2^19
 
 /// Small struct (~32 bytes): pure scalars + Option<i32>
 macro_rules! small_struct {
@@ -26,6 +51,8 @@ small_struct!(Small14, 16384);
 small_struct!(Small15, 32768);
 small_struct!(Small16, 65536);
 small_struct!(Small17, 131072);
+small_struct!(Small18, 262144);
+small_struct!(Small19, 524288);
 
 /// Medium struct (~96 bytes): String + Vec<i32> + scalars
 macro_rules! medium_struct {
@@ -49,6 +76,8 @@ medium_struct!(Medium14, 16384);
 medium_struct!(Medium15, 32768);
 medium_struct!(Medium16, 65536);
 medium_struct!(Medium17, 131072);
+medium_struct!(Medium18, 262144);
+medium_struct!(Medium19, 524288);
 
 /// Large struct (~184 bytes): Strings + multiple Vecs + Options
 macro_rules! large_struct {
@@ -78,179 +107,8 @@ large_struct!(Large14, 16384);
 large_struct!(Large15, 32768);
 large_struct!(Large16, 65536);
 large_struct!(Large17, 131072);
-
-/// Estimate the total memory footprint (stack + heap) of a single instance.
-/// Uses `.capacity()` on String/Vec fields so we count what's actually allocated,
-/// not just what's used. This gives a more realistic upper-bound per-row cost
-/// for structs with heap-allocated fields.
-trait ApproxHeapSize {
-    fn approx_total_size(&self) -> usize;
-}
-
-// Small variants: no heap fields, so stack-only is exact
-impl ApproxHeapSize for Small13 {
-    fn approx_total_size(&self) -> usize {
-        std::mem::size_of::<Small13>()
-    }
-}
-impl ApproxHeapSize for Small14 {
-    fn approx_total_size(&self) -> usize {
-        std::mem::size_of::<Small14>()
-    }
-}
-impl ApproxHeapSize for Small15 {
-    fn approx_total_size(&self) -> usize {
-        std::mem::size_of::<Small15>()
-    }
-}
-impl ApproxHeapSize for Small16 {
-    fn approx_total_size(&self) -> usize {
-        std::mem::size_of::<Small16>()
-    }
-}
-impl ApproxHeapSize for Small17 {
-    fn approx_total_size(&self) -> usize {
-        std::mem::size_of::<Small17>()
-    }
-}
-
-// Medium variants: String + Vec<i32>
-impl ApproxHeapSize for Medium13 {
-    #[inline]
-    fn approx_total_size(&self) -> usize {
-        let mut size = std::mem::size_of::<Medium13>();
-        size += self.label.capacity();
-        size += self.tags.capacity() * std::mem::size_of::<i32>();
-        size
-    }
-}
-impl ApproxHeapSize for Medium14 {
-    #[inline]
-    fn approx_total_size(&self) -> usize {
-        let mut size = std::mem::size_of::<Medium14>();
-        size += self.label.capacity();
-        size += self.tags.capacity() * std::mem::size_of::<i32>();
-        size
-    }
-}
-impl ApproxHeapSize for Medium15 {
-    #[inline]
-    fn approx_total_size(&self) -> usize {
-        let mut size = std::mem::size_of::<Medium15>();
-        size += self.label.capacity();
-        size += self.tags.capacity() * std::mem::size_of::<i32>();
-        size
-    }
-}
-impl ApproxHeapSize for Medium16 {
-    #[inline]
-    fn approx_total_size(&self) -> usize {
-        let mut size = std::mem::size_of::<Medium16>();
-        size += self.label.capacity();
-        size += self.tags.capacity() * std::mem::size_of::<i32>();
-        size
-    }
-}
-impl ApproxHeapSize for Medium17 {
-    #[inline]
-    fn approx_total_size(&self) -> usize {
-        let mut size = std::mem::size_of::<Medium17>();
-        size += self.label.capacity();
-        size += self.tags.capacity() * std::mem::size_of::<i32>();
-        size
-    }
-}
-
-// Large variants: multiple Strings + Vecs + Options
-impl ApproxHeapSize for Large13 {
-    #[inline]
-    fn approx_total_size(&self) -> usize {
-        let mut size = std::mem::size_of::<Large13>();
-        size += self.name.capacity();
-        if let Some(ref s) = self.tag {
-            size += s.capacity();
-        }
-        size += self.tags.capacity() * std::mem::size_of::<i32>();
-        size += self.scores.capacity() * std::mem::size_of::<f64>();
-        if let Some(ref v) = self.metadata {
-            size += v.capacity();
-        }
-        size
-    }
-}
-impl ApproxHeapSize for Large14 {
-    #[inline]
-    fn approx_total_size(&self) -> usize {
-        let mut size = std::mem::size_of::<Large14>();
-        size += self.name.capacity();
-        if let Some(ref s) = self.tag {
-            size += s.capacity();
-        }
-        size += self.tags.capacity() * std::mem::size_of::<i32>();
-        size += self.scores.capacity() * std::mem::size_of::<f64>();
-        if let Some(ref v) = self.metadata {
-            size += v.capacity();
-        }
-        size
-    }
-}
-impl ApproxHeapSize for Large15 {
-    #[inline]
-    fn approx_total_size(&self) -> usize {
-        let mut size = std::mem::size_of::<Large15>();
-        size += self.name.capacity();
-        if let Some(ref s) = self.tag {
-            size += s.capacity();
-        }
-        size += self.tags.capacity() * std::mem::size_of::<i32>();
-        size += self.scores.capacity() * std::mem::size_of::<f64>();
-        if let Some(ref v) = self.metadata {
-            size += v.capacity();
-        }
-        size
-    }
-}
-impl ApproxHeapSize for Large16 {
-    #[inline]
-    fn approx_total_size(&self) -> usize {
-        let mut size = std::mem::size_of::<Large16>();
-        size += self.name.capacity();
-        if let Some(ref s) = self.tag {
-            size += s.capacity();
-        }
-        size += self.tags.capacity() * std::mem::size_of::<i32>();
-        size += self.scores.capacity() * std::mem::size_of::<f64>();
-        if let Some(ref v) = self.metadata {
-            size += v.capacity();
-        }
-        size
-    }
-}
-impl ApproxHeapSize for Large17 {
-    #[inline]
-    fn approx_total_size(&self) -> usize {
-        let mut size = std::mem::size_of::<Large17>();
-        size += self.name.capacity();
-        if let Some(ref s) = self.tag {
-            size += s.capacity();
-        }
-        size += self.tags.capacity() * std::mem::size_of::<i32>();
-        size += self.scores.capacity() * std::mem::size_of::<f64>();
-        if let Some(ref v) = self.metadata {
-            size += v.capacity();
-        }
-        size
-    }
-}
-
-/// Compute the average total (stack + heap) size per instance from generated data.
-fn avg_total_size<T: ApproxHeapSize>(data: &[T]) -> usize {
-    if data.is_empty() {
-        return 0;
-    }
-    let sum = data.iter().map(|r| r.approx_total_size()).sum::<usize>();
-    sum / data.len()
-}
+large_struct!(Large18, 262144);
+large_struct!(Large19, 524288);
 
 trait FromIndex {
     fn from_index(i: usize) -> Self;
@@ -304,6 +162,28 @@ impl FromIndex for Small16 {
 impl FromIndex for Small17 {
     fn from_index(i: usize) -> Self {
         Small17 {
+            id: (i as i64 / 1000) * 1000,
+            value: (i as f64) / 100.0 + ((i % 37) as f64) / 100.0,
+            active: i % 3 != 0,
+            tag: if i % 2 == 0 { Some((i % 500) as i32) } else { None },
+            color: (i % 4) as u8,
+        }
+    }
+}
+impl FromIndex for Small18 {
+    fn from_index(i: usize) -> Self {
+        Small18 {
+            id: (i as i64 / 1000) * 1000,
+            value: (i as f64) / 100.0 + ((i % 37) as f64) / 100.0,
+            active: i % 3 != 0,
+            tag: if i % 2 == 0 { Some((i % 500) as i32) } else { None },
+            color: (i % 4) as u8,
+        }
+    }
+}
+impl FromIndex for Small19 {
+    fn from_index(i: usize) -> Self {
+        Small19 {
             id: (i as i64 / 1000) * 1000,
             value: (i as f64) / 100.0 + ((i % 37) as f64) / 100.0,
             active: i % 3 != 0,
@@ -371,6 +251,34 @@ impl FromIndex for Medium16 {
     }
 }
 impl FromIndex for Medium17 {
+    fn from_index(i: usize) -> Self {
+        Self {
+            id: (i as i64 / 100) * 100,
+            label: format!("item_{}", i % 500),
+            value1: (i as f64) / 10.0 + ((i % 7) as f64) / 100.0,
+            value2: ((i * 3) % 1000) as f32 / 10.0,
+            active: i % 5 != 0,
+            tag: if i % 3 == 0 { Some(i as i32 % 100) } else { None },
+            tags: (0..((i % 4) + 1)).map(|j| (i * 10 + j) as i32).collect(),
+            color: (i % 8) as u8,
+        }
+    }
+}
+impl FromIndex for Medium18 {
+    fn from_index(i: usize) -> Self {
+        Self {
+            id: (i as i64 / 100) * 100,
+            label: format!("item_{}", i % 500),
+            value1: (i as f64) / 10.0 + ((i % 7) as f64) / 100.0,
+            value2: ((i * 3) % 1000) as f32 / 10.0,
+            active: i % 5 != 0,
+            tag: if i % 3 == 0 { Some(i as i32 % 100) } else { None },
+            tags: (0..((i % 4) + 1)).map(|j| (i * 10 + j) as i32).collect(),
+            color: (i % 8) as u8,
+        }
+    }
+}
+impl FromIndex for Medium19 {
     fn from_index(i: usize) -> Self {
         Self {
             id: (i as i64 / 100) * 100,
@@ -486,6 +394,46 @@ impl FromIndex for Large17 {
         }
     }
 }
+impl FromIndex for Large18 {
+    fn from_index(i: usize) -> Self {
+        Self {
+            id: i as i64,
+            name: format!("record_{}_{}", i % 200, i % 5),
+            score: (i as f64) / 50.0 + ((i % 11) as f64) / 100.0,
+            weight: ((i * 7) % 1000) as f32 / 100.0,
+            active: i % 7 != 0,
+            created_at: 1_700_000_000 + (i as i64 * 60),
+            updated_at: if i % 4 != 0 { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
+            category_id: (i / 50) as i64,
+            tag: if i % 2 == 0 { Some(format!("tag_{}", i % 20)) } else { None },
+            tags: (0..((i % 6) + 1)).map(|j| (i * 7 + j * 3) as i32).collect(),
+            scores: vec![(i as f64 / 10.0), ((i + 1) as f64 / 10.0)],
+            metadata: if i % 5 != 0 { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
+            color: (i % 16) as u8,
+            priority: ((i % 10) + 1) as i16,
+        }
+    }
+}
+impl FromIndex for Large19 {
+    fn from_index(i: usize) -> Self {
+        Self {
+            id: i as i64,
+            name: format!("record_{}_{}", i % 200, i % 5),
+            score: (i as f64) / 50.0 + ((i % 11) as f64) / 100.0,
+            weight: ((i * 7) % 1000) as f32 / 100.0,
+            active: i % 7 != 0,
+            created_at: 1_700_000_000 + (i as i64 * 60),
+            updated_at: if i % 4 != 0 { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
+            category_id: (i / 50) as i64,
+            tag: if i % 2 == 0 { Some(format!("tag_{}", i % 20)) } else { None },
+            tags: (0..((i % 6) + 1)).map(|j| (i * 7 + j * 3) as i32).collect(),
+            scores: vec![(i as f64 / 10.0), ((i + 1) as f64 / 10.0)],
+            metadata: if i % 5 != 0 { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
+            color: (i % 16) as u8,
+            priority: ((i % 10) + 1) as i16,
+        }
+    }
+}
 
 // Generic generator using FromIndex trait
 fn generate<T: FromIndex>() -> Vec<T> {
@@ -499,8 +447,11 @@ struct ChunkResult {
     deserial_ms: f64,
     size_bytes: usize,
     num_chunks: usize,
-    /// Estimated total in-memory footprint of one chunk's worth of rows (stack + heap)
-    memory_footprint: usize,
+    /// Peak additional heap (bytes) while serializing; excludes the resident input rows
+    write_peak: usize,
+    /// Peak additional heap (bytes) while deserializing and materializing all rows;
+    /// excludes the resident serialized bytes
+    read_peak: usize,
 }
 
 struct ResultRow<'a> {
@@ -509,7 +460,7 @@ struct ResultRow<'a> {
 
 impl MarkdownTableRow for ResultRow<'_> {
     fn column_names() -> Vec<&'static str> {
-        vec!["Chunk size", "Serialize", "Deserialize", "Size", "Chunks", "Memory per chunk"]
+        vec!["Chunk size", "Serialize", "Deserialize", "Size", "Chunks", "Write peak", "Read peak"]
     }
 
     fn column_values(&self) -> Vec<String> {
@@ -519,7 +470,8 @@ impl MarkdownTableRow for ResultRow<'_> {
             format_ms(self.r.deserial_ms),
             format_bytes(self.r.size_bytes),
             self.r.num_chunks.to_string(),
-            format_bytes(self.r.memory_footprint),
+            format_bytes(self.r.write_peak),
+            format_bytes(self.r.read_peak),
         ]
     }
 }
@@ -544,9 +496,7 @@ fn main() {
 
     {
         let data = generate::<Small13>();
-        let row_memory_s13 = avg_total_size(&data);
-        let chunks_c = Small13::write(data.clone()).unwrap();
-        let buf = Small13::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small13>(&data);
         let serial_ms = avg_ms(|| Small13::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Small13::from_bytes(&buf).unwrap();
@@ -560,15 +510,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_s13 * Small13::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Small14>();
-        let row_memory_s14 = avg_total_size(&data);
-        let chunks_c = Small14::write(data.clone()).unwrap();
-        let buf = Small14::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small14>(&data);
         let serial_ms = avg_ms(|| Small14::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Small14::from_bytes(&buf).unwrap();
@@ -582,15 +531,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_s14 * Small14::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Small15>();
-        let row_memory_s15 = avg_total_size(&data);
-        let chunks_c = Small15::write(data.clone()).unwrap();
-        let buf = Small15::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small15>(&data);
         let serial_ms = avg_ms(|| Small15::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Small15::from_bytes(&buf).unwrap();
@@ -604,15 +552,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_s15 * Small15::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Small16>();
-        let row_memory_s16 = avg_total_size(&data);
-        let chunks_c = Small16::write(data.clone()).unwrap();
-        let buf = Small16::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small16>(&data);
         let serial_ms = avg_ms(|| Small16::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Small16::from_bytes(&buf).unwrap();
@@ -626,15 +573,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_s16 * Small16::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Small17>();
-        let row_memory_s17 = avg_total_size(&data);
-        let chunks_c = Small17::write(data.clone()).unwrap();
-        let buf = Small17::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small17>(&data);
         let serial_ms = avg_ms(|| Small17::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Small17::from_bytes(&buf).unwrap();
@@ -648,7 +594,50 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_s17 * Small17::CHUNK_SIZE,
+            write_peak,
+            read_peak,
+        });
+    }
+
+    {
+        let data = generate::<Small18>();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small18>(&data);
+        let serial_ms = avg_ms(|| Small18::write(data.clone()));
+        let deserial_ms = avg_ms(|| {
+            let c = Small18::from_bytes(&buf).unwrap();
+            let r = Small18::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            assert_eq!(r.len(), data.len());
+        });
+        small_results.push(ChunkResult {
+            power: 18,
+            chunk_size: Small18::CHUNK_SIZE,
+            serial_ms,
+            deserial_ms,
+            size_bytes: buf.len(),
+            num_chunks: chunks_c.len(),
+            write_peak,
+            read_peak,
+        });
+    }
+
+    {
+        let data = generate::<Small19>();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small19>(&data);
+        let serial_ms = avg_ms(|| Small19::write(data.clone()));
+        let deserial_ms = avg_ms(|| {
+            let c = Small19::from_bytes(&buf).unwrap();
+            let r = Small19::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            assert_eq!(r.len(), data.len());
+        });
+        small_results.push(ChunkResult {
+            power: 19,
+            chunk_size: Small19::CHUNK_SIZE,
+            serial_ms,
+            deserial_ms,
+            size_bytes: buf.len(),
+            num_chunks: chunks_c.len(),
+            write_peak,
+            read_peak,
         });
     }
 
@@ -659,9 +648,7 @@ fn main() {
 
     {
         let data = generate::<Medium13>();
-        let row_memory_m13 = avg_total_size(&data);
-        let chunks_c = Medium13::write(data.clone()).unwrap();
-        let buf = Medium13::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium13>(&data);
         let serial_ms = avg_ms(|| Medium13::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Medium13::from_bytes(&buf).unwrap();
@@ -675,15 +662,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_m13 * Medium13::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Medium14>();
-        let row_memory_m14 = avg_total_size(&data);
-        let chunks_c = Medium14::write(data.clone()).unwrap();
-        let buf = Medium14::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium14>(&data);
         let serial_ms = avg_ms(|| Medium14::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Medium14::from_bytes(&buf).unwrap();
@@ -697,15 +683,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_m14 * Medium14::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Medium15>();
-        let row_memory_m15 = avg_total_size(&data);
-        let chunks_c = Medium15::write(data.clone()).unwrap();
-        let buf = Medium15::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium15>(&data);
         let serial_ms = avg_ms(|| Medium15::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Medium15::from_bytes(&buf).unwrap();
@@ -719,15 +704,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_m15 * Medium15::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Medium16>();
-        let row_memory_m16 = avg_total_size(&data);
-        let chunks_c = Medium16::write(data.clone()).unwrap();
-        let buf = Medium16::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium16>(&data);
         let serial_ms = avg_ms(|| Medium16::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Medium16::from_bytes(&buf).unwrap();
@@ -741,15 +725,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_m16 * Medium16::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Medium17>();
-        let row_memory_m17 = avg_total_size(&data);
-        let chunks_c = Medium17::write(data.clone()).unwrap();
-        let buf = Medium17::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium17>(&data);
         let serial_ms = avg_ms(|| Medium17::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Medium17::from_bytes(&buf).unwrap();
@@ -763,7 +746,50 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_m17 * Medium17::CHUNK_SIZE,
+            write_peak,
+            read_peak,
+        });
+    }
+
+    {
+        let data = generate::<Medium18>();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium18>(&data);
+        let serial_ms = avg_ms(|| Medium18::write(data.clone()));
+        let deserial_ms = avg_ms(|| {
+            let c = Medium18::from_bytes(&buf).unwrap();
+            let r = Medium18::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            assert_eq!(r.len(), data.len());
+        });
+        medium_results.push(ChunkResult {
+            power: 18,
+            chunk_size: Medium18::CHUNK_SIZE,
+            serial_ms,
+            deserial_ms,
+            size_bytes: buf.len(),
+            num_chunks: chunks_c.len(),
+            write_peak,
+            read_peak,
+        });
+    }
+
+    {
+        let data = generate::<Medium19>();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium19>(&data);
+        let serial_ms = avg_ms(|| Medium19::write(data.clone()));
+        let deserial_ms = avg_ms(|| {
+            let c = Medium19::from_bytes(&buf).unwrap();
+            let r = Medium19::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            assert_eq!(r.len(), data.len());
+        });
+        medium_results.push(ChunkResult {
+            power: 19,
+            chunk_size: Medium19::CHUNK_SIZE,
+            serial_ms,
+            deserial_ms,
+            size_bytes: buf.len(),
+            num_chunks: chunks_c.len(),
+            write_peak,
+            read_peak,
         });
     }
 
@@ -774,9 +800,7 @@ fn main() {
 
     {
         let data = generate::<Large13>();
-        let row_memory_l13 = avg_total_size(&data);
-        let chunks_c = Large13::write(data.clone()).unwrap();
-        let buf = Large13::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large13>(&data);
         let serial_ms = avg_ms(|| Large13::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Large13::from_bytes(&buf).unwrap();
@@ -790,15 +814,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_l13 * Large13::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Large14>();
-        let row_memory_l14 = avg_total_size(&data);
-        let chunks_c = Large14::write(data.clone()).unwrap();
-        let buf = Large14::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large14>(&data);
         let serial_ms = avg_ms(|| Large14::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Large14::from_bytes(&buf).unwrap();
@@ -812,15 +835,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_l14 * Large14::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Large15>();
-        let row_memory_l15 = avg_total_size(&data);
-        let chunks_c = Large15::write(data.clone()).unwrap();
-        let buf = Large15::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large15>(&data);
         let serial_ms = avg_ms(|| Large15::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Large15::from_bytes(&buf).unwrap();
@@ -834,15 +856,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_l15 * Large15::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Large16>();
-        let row_memory_l16 = avg_total_size(&data);
-        let chunks_c = Large16::write(data.clone()).unwrap();
-        let buf = Large16::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large16>(&data);
         let serial_ms = avg_ms(|| Large16::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Large16::from_bytes(&buf).unwrap();
@@ -856,15 +877,14 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_l16 * Large16::CHUNK_SIZE,
+            write_peak,
+            read_peak,
         });
     }
 
     {
         let data = generate::<Large17>();
-        let row_memory_l17 = avg_total_size(&data);
-        let chunks_c = Large17::write(data.clone()).unwrap();
-        let buf = Large17::to_bytes(&chunks_c).unwrap();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large17>(&data);
         let serial_ms = avg_ms(|| Large17::write(data.clone()));
         let deserial_ms = avg_ms(|| {
             let c = Large17::from_bytes(&buf).unwrap();
@@ -878,7 +898,50 @@ fn main() {
             deserial_ms,
             size_bytes: buf.len(),
             num_chunks: chunks_c.len(),
-            memory_footprint: row_memory_l17 * Large17::CHUNK_SIZE,
+            write_peak,
+            read_peak,
+        });
+    }
+
+    {
+        let data = generate::<Large18>();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large18>(&data);
+        let serial_ms = avg_ms(|| Large18::write(data.clone()));
+        let deserial_ms = avg_ms(|| {
+            let c = Large18::from_bytes(&buf).unwrap();
+            let r = Large18::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            assert_eq!(r.len(), data.len());
+        });
+        large_results.push(ChunkResult {
+            power: 18,
+            chunk_size: Large18::CHUNK_SIZE,
+            serial_ms,
+            deserial_ms,
+            size_bytes: buf.len(),
+            num_chunks: chunks_c.len(),
+            write_peak,
+            read_peak,
+        });
+    }
+
+    {
+        let data = generate::<Large19>();
+        let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large19>(&data);
+        let serial_ms = avg_ms(|| Large19::write(data.clone()));
+        let deserial_ms = avg_ms(|| {
+            let c = Large19::from_bytes(&buf).unwrap();
+            let r = Large19::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            assert_eq!(r.len(), data.len());
+        });
+        large_results.push(ChunkResult {
+            power: 19,
+            chunk_size: Large19::CHUNK_SIZE,
+            serial_ms,
+            deserial_ms,
+            size_bytes: buf.len(),
+            num_chunks: chunks_c.len(),
+            write_peak,
+            read_peak,
         });
     }
 

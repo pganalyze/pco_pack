@@ -31,7 +31,7 @@ pub fn avg_ms_pair<T, F: Fn() -> T>(f: F) -> (f64, T) {
 pub fn format_bytes(bytes: usize) -> String {
     if bytes >= 1024 * 1024 * 1024 {
         format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    } else if bytes >= 1024 * 1024 {
+    } else if bytes >= 1024 * 1024 * 3 / 2 {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     } else if bytes >= 1024 {
         format!("{} KB", bytes / 1024)
