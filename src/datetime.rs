@@ -128,7 +128,7 @@ impl PcoFilter for chrono::DateTime<chrono::Utc> {
 /// Supports:
 /// - Integer (microseconds since epoch)
 /// - String (RFC 3339 datetime format)
-fn parse_datetime_value(json: &serde_json::Value, field_path: &str) -> Result<i64> {
+pub(crate) fn parse_datetime_value(json: &serde_json::Value, field_path: &str) -> Result<i64> {
     if let Some(val) = json.as_i64() {
         return Ok(val);
     }

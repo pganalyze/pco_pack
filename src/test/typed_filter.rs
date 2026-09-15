@@ -58,9 +58,15 @@ type EventFilter = <Event as PcoPack>::Filter;
 type NamedItemFilter = <NamedItem as PcoPack>::Filter;
 type UuidRecordFilter = <UuidRecord as PcoPack>::Filter;
 
+/// Align a timestamp to microsecond precision, the resolution pco_pack stores at,
+/// so exact-equality assertions don't depend on sub-microsecond clock digits.
+fn to_micros(dt: DateTime<Utc>) -> DateTime<Utc> {
+    DateTime::from_timestamp_micros(dt.timestamp_micros()).unwrap()
+}
+
 #[test]
 fn filter_new_with_index_and_timestamp() {
-    let now = Utc::now();
+    let now = to_micros(Utc::now());
     let range = (now - Duration::minutes(10))..=now;
 
     let filter = SensorFilter::new(I64Filter::Equal(1), range.clone());
@@ -388,7 +394,7 @@ fn datetime_filter_range() {
 
 #[test]
 fn datetime_filter_from_range_inclusive() {
-    let start = Utc::now();
+    let start = to_micros(Utc::now());
     let end = start + Duration::hours(1);
     let range: std::ops::RangeInclusive<DateTime<Utc>> = start..=end;
     let f: DateTimeFilter = range.into();
@@ -400,6 +406,63 @@ fn datetime_filter_from_range_inclusive() {
         }
         _ => panic!("Expected Range"),
     }
+}
+
+#[test]
+fn datetime_filter_from_impls_truncate_to_micros() {
+    // A timestamp with sub-microsecond digits, as produced by nanosecond-resolution
+    // clocks (e.g., Utc::now() on Linux).
+    let base = DateTime::from_timestamp_micros(1_767_225_600_123_456).unwrap();
+    let ns = base + Duration::nanoseconds(999);
+
+    // From<DateTime<Utc>> -> Equal, truncated to microsecond precision.
+    let f: DateTimeFilter = ns.into();
+    assert_eq!(f, DateTimeFilter::Equal(base));
+
+    // From<RangeInclusive<DateTime<Utc>>> -> Range, both bounds truncated.
+    let f: DateTimeFilter = (ns..=ns).into();
+    assert_eq!(f, DateTimeFilter::Range { start: base, end: base });
+
+    // From<Vec<DateTime<Utc>>> -> Inclusion, each value truncated.
+    let f: DateTimeFilter = vec![ns, ns].into();
+    assert_eq!(f, DateTimeFilter::Inclusion(vec![base, base]));
+
+    // From<&[DateTime<Utc>]> -> Inclusion, each value truncated.
+    let arr = [ns, ns];
+    let f: DateTimeFilter = (&arr[..]).into();
+    assert_eq!(f, DateTimeFilter::Inclusion(vec![base, base]));
+
+    // Values already at microsecond precision pass through unchanged.
+    let f: DateTimeFilter = base.into();
+    assert_eq!(f, DateTimeFilter::Equal(base));
+}
+
+#[test]
+fn datetime_filter_deserialize_truncates_to_micros() {
+    let start = DateTime::parse_from_rfc3339("2026-01-01T00:00:00+00:00").unwrap().with_timezone(&Utc);
+    let end = DateTime::parse_from_rfc3339("2026-01-01T01:00:00.000001+00:00").unwrap().with_timezone(&Utc);
+
+    // RFC 3339 strings with sub-microsecond digits are truncated on deserialize.
+    let json = r#"{"start": "2026-01-01T00:00:00.000000999+00:00", "end": "2026-01-01T01:00:00.000001999+00:00"}"#;
+    let f: DateTimeFilter = serde_json::from_str(json).unwrap();
+    assert_eq!(f, DateTimeFilter::Range { start, end });
+
+    // A single RFC 3339 string deserializes as Equal, truncated.
+    let f: DateTimeFilter = serde_json::from_str(r#""2026-01-01T00:00:00.000000999+00:00""#).unwrap();
+    assert_eq!(f, DateTimeFilter::Equal(start));
+
+    // Integer microseconds (as accepted by raw JSON queries) are deserialized as Equal.
+    let f: DateTimeFilter = serde_json::from_str("1767225600000000").unwrap();
+    assert_eq!(f, DateTimeFilter::Equal(start));
+
+    // Inclusion mixes strings and integers, each truncated to microsecond precision.
+    let f: DateTimeFilter =
+        serde_json::from_str(r#"["2026-01-01T00:00:00.000000999+00:00", 1767225600000000]"#).unwrap();
+    assert_eq!(f, DateTimeFilter::Inclusion(vec![start, start]));
+
+    // Invalid shapes still fail.
+    assert!(serde_json::from_str::<DateTimeFilter>("null").is_err());
+    assert!(serde_json::from_str::<DateTimeFilter>(r#"{"start": "2026-01-01T00:00:00Z"}"#).is_err());
 }
 
 #[test]
@@ -582,7 +645,7 @@ fn string_filter_default_and_assignment() {
 
 #[test]
 fn timestamp_filter_equal() {
-    let now = Utc::now();
+    let now = to_micros(Utc::now());
     let mut filter = SensorFilter::default();
     filter.collected_at = Some((now).into());
     assert_eq!(filter.collected_at, Some(DateTimeFilter::Equal(now)));
@@ -590,7 +653,7 @@ fn timestamp_filter_equal() {
 
 #[test]
 fn timestamp_filter_range() {
-    let now = Utc::now();
+    let now = to_micros(Utc::now());
     let mut filter = SensorFilter::default();
     filter.collected_at = Some(((now - Duration::hours(1))..=now).into());
     match &filter.collected_at {
@@ -683,7 +746,7 @@ fn bool_index_filter_integration() {
 
 #[test]
 fn range_bounds_from_range_filter() {
-    let now = Utc::now();
+    let now = to_micros(Utc::now());
     let start = now - Duration::minutes(10);
     let filter = SensorFilter::new(1i64, start..=now);
     let (s, e) = filter.range_bounds().unwrap();
@@ -715,7 +778,7 @@ fn range_duration_from_range_filter() {
 
 #[test]
 fn range_shift() {
-    let now = Utc::now();
+    let now = to_micros(Utc::now());
     let start = now - Duration::minutes(10);
     let mut filter = SensorFilter::new(1i64, start..=now);
 
@@ -1163,28 +1226,16 @@ fn query_stat_with_timestamp_filter_from_json_microseconds() {
         }
     });
 
-    // Try to deserialize JSON with microseconds integers into typed Filter
-    let result: Result<QueryStatWithTimestampFilter, _> = json.clone().try_into();
-    match result {
-        Ok(filter) => {
-            // Round-trip back to JSON and see what we get
-            let roundtrip_json: serde_json::Value =
-                filter.try_into().unwrap_or_else(|e| panic!("Filter -> JSON failed: {e}"));
+    // Integer microseconds are supported by DateTimeFilter's Deserialize impl.
+    let filter: QueryStatWithTimestampFilter =
+        json.clone().try_into().expect("Failed to deserialize integer microseconds into Filter");
 
-            // Filter with the result
-            let results = QueryStatWithTimestamp::filter_bytes(&bytes, roundtrip_json.clone(), &[]);
-            match results {
-                Ok(rows) => {
-                    eprintln!("Got {} rows filtering with microseconds integers", rows.len());
-                }
-                Err(e) => panic!("filter_bytes failed: {e:?}"),
-            }
-        }
-        Err(e) => {
-            // This is OK - DateTimeFilter might not support integer microseconds via serde
-            eprintln!("Expected: Cannot deserialize microseconds integers into Filter directly: {}", e);
-        }
-    }
+    // Round-trip back to JSON and see what we get
+    let roundtrip_json: serde_json::Value = filter.try_into().unwrap_or_else(|e| panic!("Filter -> JSON failed: {e}"));
+
+    // Filter with the result; the row at 2026-07-11T21:00:00Z falls inside the range.
+    let results = QueryStatWithTimestamp::filter_bytes(&bytes, roundtrip_json, &[]).unwrap();
+    assert_eq!(results.len(), 1);
 }
 
 #[test]
