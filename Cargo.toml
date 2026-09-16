@@ -16,7 +16,7 @@ ahash = "0.8"
 anyhow = "1.0"
 bitvec = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-half = "2.7"
+half = { version = "2.7", features = ["serde"] }
 hex = "0.4"
 pco = "1.0"
 pco_pack_derive = { version = "0.1.0", path = "pco_pack_derive" }
@@ -29,11 +29,16 @@ uuid = { version = "1.0", features = ["serde", "std"] }
 zstd = "0.13"
 
 [dev-dependencies]
+arrow-array = "58"
+arrow-schema = "58"
 bytemuck = "1.0"
 columnar = { version = "0.13", features = ["serde", "std"] }
 markdown-tables = "0.1"
 peak_alloc = "0.3"
+serde_arrow = { version = "0.15", features = ["arrow-58"] }
 serde_columnar = "0.3"
+tokio = { version = "1", features = ["rt"] }
+vortex = { version = "0.85", features = ["tokio"] }
 
 [[bench]]
 name = "collection"

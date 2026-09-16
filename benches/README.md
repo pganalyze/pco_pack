@@ -58,18 +58,26 @@ PcoPack significantly outperforms when storing enums and timestamps because of t
 
 ## Structs
 
-- `PcoPack` compressed size is 3-5x smaller than all others. Filtering is 4-28x faster via lazy decompression and `index`/`timestamp` indexing
-- `columnar` has the fastest roundtrip serialization, but the compressed size is 3x larger than PcoPack
-- `serde_columnar` has better compressed size than `columnar` because of per-field encoding (which users must manually set)
+### PcoPack vs columnar, serde_columnar, msgpack
+
+- PcoPack compressed size is 3-5x smaller. Filtering is 4-28x faster via lazy decompression and `index`/`timestamp` indexing
+- columnar has the fastest roundtrip serialization, but the compressed size is 3x larger than PcoPack
+- serde_columnar has better compressed size than columnar because of per-field encoding (which users must manually set)
 - msgpack has the worst compressed size and roundtrip time when including filtering. This uses a traditional row-based layout instead of a columnar layout, highlighting why a columnar layout is beneficial
 
-| Metric                          | PcoPack  | columnar | serde_columnar | msgpack  |
-|---------------------------------|----------|----------|----------------|----------|
-| Serialize                       | 111.8 ms | 67.5 ms  | 97.1 ms        | 97.6 ms  |
-| Deserialize                     | 73.0 ms  | 23.6 ms  | 71.2 ms        | 104.7 ms |
-| Size                            | 1383 KB  | 7.4 MB   | 5.4 MB         | 8.2 MB   |
-| Filter account_id (20% of rows) | 18.3 ms  | 24.6 ms  | 69.2 ms        | 102.4 ms |
-| Filter color + score (1 row)    | 9.0 ms   | 24.1 ms  | 70.2 ms        | 101.4 ms |
+### PcoPack vs Vortex
+
+PcoPack achieves 15% faster roundtrip serialization and 17% smaller compressed size. Vortex acheives a significantly faster 1-row filter while PcoPack outperforms with the account_id filter using its built-in indexed serialization format.
+
+To summarize: PcoPack and Vortex have similar performance. Choose Vortex if ecosystem support is important and you want to customize the compression modes. Chose PcoPack if you want great performance with minimal code.
+
+| Metric                          | PcoPack  | columnar | serde_columnar | msgpack  | Vortex   |
+|---------------------------------|----------|----------|----------------|----------|----------|
+| Serialize                       | 113.3 ms | 68.0 ms  | 95.6 ms        | 97.3 ms  | 141.5 ms |
+| Deserialize                     | 74.0 ms  | 23.3 ms  | 69.3 ms        | 108.4 ms | 77.6 ms  |
+| Size                            | 1383 KB  | 7.4 MB   | 5.4 MB         | 8.2 MB   | 1673 KB  |
+| Filter account_id (20% of rows) | 19.5 ms  | 24.4 ms  | 70.9 ms        | 106.1 ms | 32.6 ms  |
+| Filter color + score (1 row)    | 9.4 ms   | 24.3 ms  | 71.5 ms        | 103.9 ms | 0.8 ms   |
 
 ## Timeline
 

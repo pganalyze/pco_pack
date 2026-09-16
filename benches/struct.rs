@@ -1,12 +1,21 @@
 include!("bench_common.rs");
 
+use arrow_schema::FieldRef;
 use columnar::{Borrow, Columnar, FromBytes, Index, Len};
 use markdown_tables::{MarkdownTableRow, as_table};
 use pco_pack::PcoPack;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_arrow::schema::{SchemaLike, TracingOptions};
 use serde_bytes::ByteBuf;
 use serde_columnar::{columnar, from_bytes, to_vec};
 use serde_json::json;
+use vortex::array::expr::{and, col, eq, lit};
+use vortex::array::stream::ArrayStreamExt;
+use vortex::arrow::ArrowSessionExt as _;
+use vortex::buffer::ByteBuffer;
+use vortex::compressor::BtrBlocksCompressorBuilder;
+use vortex::file::{OpenOptionsSessionExt, WriteOptionsSessionExt, WriteStrategyBuilder};
+use vortex::session::VortexSession;
 
 fn main() {
     let data = data(500_000);
@@ -49,6 +58,37 @@ fn main() {
     let map_buf = serialize_flat_map(&data);
     let map_deserial_ms = avg_ms(|| deserialize_flat(&map_buf));
 
+    // ---- Vortex benchmarks ----
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+    let (vortex_session, vortex_buf) = setup_vortex_file(&rt, &data);
+    let vortex_serial_ms = avg_ms(|| {
+        let bytes = rt.block_on(async { write_vortex_file(&vortex_session, &data).await });
+        black_box(bytes.len())
+    });
+    let vortex_deserial_ms = avg_ms(|| {
+        let rows = rt.block_on(async { vortex_read_all(&vortex_session, vortex_buf.clone()).await });
+        assert_eq!(rows.len(), data.len());
+        black_box(rows.len())
+    });
+    let vfilter_single = eq(col("account_id"), lit(2_i64));
+    let vortex_filter_single_ms = avg_ms(|| {
+        rt.block_on(async {
+            let batch = vortex_scan(&vortex_session, vortex_buf.clone(), Some(vfilter_single.clone())).await;
+            let rows: Vec<Record> = serde_arrow::from_record_batch(&batch).unwrap();
+            assert_eq!(rows.len(), 100_000);
+            black_box(rows)
+        })
+    });
+    let vfilter_multi = and(eq(col("color"), lit(0_u8)), eq(col("score"), lit(500_f64)));
+    let vortex_filter_multi_ms = avg_ms(|| {
+        rt.block_on(async {
+            let batch = vortex_scan(&vortex_session, vortex_buf.clone(), Some(vfilter_multi.clone())).await;
+            let rows: Vec<Record> = serde_arrow::from_record_batch(&batch).unwrap();
+            assert_eq!(rows.len(), 1);
+            black_box(rows)
+        })
+    });
+
     #[derive(Debug)]
     struct StructRow {
         metric: String,
@@ -56,11 +96,12 @@ fn main() {
         columnar: String,
         serde_columnar: String,
         msgpack: String,
+        vortex: String,
     }
 
     impl MarkdownTableRow for StructRow {
         fn column_names() -> Vec<&'static str> {
-            vec!["Metric", "PcoPack", "columnar", "serde_columnar", "msgpack"]
+            vec!["Metric", "PcoPack", "columnar", "serde_columnar", "msgpack", "Vortex"]
         }
 
         fn column_values(&self) -> Vec<String> {
@@ -70,6 +111,7 @@ fn main() {
                 self.columnar.clone(),
                 self.serde_columnar.clone(),
                 self.msgpack.clone(),
+                self.vortex.clone(),
             ]
         }
     }
@@ -169,6 +211,7 @@ fn main() {
             columnar: format_ms(columnar_serial_ms),
             serde_columnar: format_ms(sc_serial_ms),
             msgpack: format_ms(map_serial_ms),
+            vortex: format_ms(vortex_serial_ms),
         },
         StructRow {
             metric: "Deserialize".to_string(),
@@ -176,6 +219,7 @@ fn main() {
             columnar: format_ms(columnar_deserial_ms),
             serde_columnar: format_ms(sc_deserial_ms),
             msgpack: format_ms(map_deserial_ms),
+            vortex: format_ms(vortex_deserial_ms),
         },
         StructRow {
             metric: "Size".to_string(),
@@ -183,6 +227,7 @@ fn main() {
             columnar: format_bytes(columnar_size_bytes),
             serde_columnar: format_bytes(sc_buf.len()),
             msgpack: format_bytes(map_buf.len()),
+            vortex: format_bytes(vortex_buf.len()),
         },
         StructRow {
             metric: "Filter account_id (20% of rows)".to_string(),
@@ -190,6 +235,7 @@ fn main() {
             columnar: format_ms(col_filter_single_ms),
             serde_columnar: format_ms(sc_filter_single_ms),
             msgpack: format_ms(map_filter_single_ms),
+            vortex: format_ms(vortex_filter_single_ms),
         },
         StructRow {
             metric: "Filter color + score (1 row)".to_string(),
@@ -197,6 +243,7 @@ fn main() {
             columnar: format_ms(col_filter_multi_ms),
             serde_columnar: format_ms(sc_filter_multi_ms),
             msgpack: format_ms(map_filter_multi_ms),
+            vortex: format_ms(vortex_filter_multi_ms),
         },
     ];
     println!("{}", as_table(&rows));
@@ -390,4 +437,67 @@ fn deserialize_flat(buf: &[u8]) -> Vec<Record> {
     let decompressed = zstd::decode_all(buf).unwrap();
     let data: Vec<Record> = rmp_serde::from_slice(&decompressed).unwrap();
     data
+}
+
+// ---- Vortex helpers ----
+
+/// Construct the session inside the Tokio runtime and write one compressed vortex file.
+fn setup_vortex_file(rt: &tokio::runtime::Runtime, data: &[Record]) -> (VortexSession, ByteBuffer) {
+    rt.block_on(async {
+        use vortex::VortexSessionDefault as _;
+        let session = VortexSession::default();
+        let bytes = write_vortex_file(&session, data).await;
+        (session, ByteBuffer::from(bytes))
+    })
+}
+
+/// Serialize records to Arrow via serde_arrow (tracing), then write them as vortex file bytes with compact schemes.
+///
+/// Note: we intentionally use serde_arrow here instead of typed-arrow's compile-time builders, which are
+/// ~2x faster at building the ingest batch. Vortex re-encodes strings to its own Utf8View dtype on export,
+/// and typed-arrow can't read that back, so we would still need serde_arrow for reads anyway.
+async fn write_vortex_file(session: &VortexSession, data: &[Record]) -> Vec<u8> {
+    let fields = <Vec<FieldRef>>::from_type::<Record>(TracingOptions::default()).unwrap();
+    let batch = serde_arrow::to_record_batch(&fields, &data).unwrap();
+    let schema_in = batch.schema();
+    let array = session.arrow().from_arrow_record_batch(batch, &schema_in).unwrap();
+    let mut bytes: Vec<u8> = vec![];
+    let strategy = WriteStrategyBuilder::default()
+        .with_btrblocks_builder(BtrBlocksCompressorBuilder::default().with_compact())
+        .build();
+    session.write_options().with_strategy(strategy).write(&mut bytes, array.to_array_stream()).await.unwrap();
+    bytes
+}
+
+/// Open the file and scan all rows, materializing through Arrow back into Rust records.
+async fn vortex_read_all(session: &VortexSession, buffer: ByteBuffer) -> Vec<Record> {
+    let batch = vortex_scan(session, buffer, None).await;
+    serde_arrow::from_record_batch(&batch).unwrap()
+}
+
+/// Open the file and run an (optionally filtered) scan, materializing an Arrow RecordBatch of matches.
+async fn vortex_scan(
+    session: &VortexSession, buffer: ByteBuffer, filter: Option<vortex::array::expr::Expression>,
+) -> arrow_array::RecordBatch {
+    let file = session.open_options().open_buffer(buffer).unwrap();
+    let mut scan = file.scan().unwrap();
+    if let Some(expr) = filter {
+        let bound = expr.optimize_recursive(file.dtype()).unwrap().bind(file.dtype()).unwrap();
+        scan = scan.with_filter(bound);
+    }
+    // Materialize the compressed scan result through Arrow (the session's stable export path).
+    let array = scan.into_array_stream().unwrap().read_all().await.unwrap();
+    let schema_out = session.arrow().to_arrow_schema(array.dtype()).unwrap();
+    materialize_vortex_batch(session, array, &schema_out)
+}
+
+/// Materialize a vortex array into an Arrow RecordBatch via the session's executor.
+#[allow(deprecated)] // execute_record_batch is deprecated in favor of the new Arrow exporter but still stable.
+fn materialize_vortex_batch(
+    session: &VortexSession, array: vortex::array::ArrayRef, schema: &arrow_schema::Schema,
+) -> arrow_array::RecordBatch {
+    use vortex::array::VortexSessionExecute;
+    use vortex::arrow::ArrowArrayExecutor as _;
+    let mut ctx = session.create_execution_ctx();
+    array.execute_record_batch(schema, &mut ctx).unwrap()
 }
