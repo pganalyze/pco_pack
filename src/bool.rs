@@ -95,13 +95,13 @@ impl PcoFilter for bool {
                 for v in arr {
                     match v {
                         serde_json::Value::Bool(b) => bools.push(*b),
-                        _ => anyhow::bail!("Expected boolean value for field '{}'", path),
+                        _ => anyhow::bail!("Expected boolean value, got {}", json_type_name(v)),
                     }
                 }
                 Filter::InclusionBool(bools.into_iter().collect())
             }
             serde_json::Value::Bool(b) => Filter::Bool(*b),
-            _ => anyhow::bail!("Expected boolean value for field '{}'", path),
+            _ => anyhow::bail!("Expected boolean value, got {}", json_type_name(json)),
         };
         Ok(ResolvedFilter { path: vec![0], filter })
     }

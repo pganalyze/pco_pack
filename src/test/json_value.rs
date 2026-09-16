@@ -8,6 +8,17 @@ struct JsonRecord {
 }
 
 #[test]
+fn json_filter_null_query_error_includes_field() {
+    let data = vec![JsonRecord { val: json!({"a": 1}) }];
+    let bytes = JsonRecord::serialize(data).unwrap();
+
+    let result = JsonRecord::filter_bytes(&bytes, json!({"val": null}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'val'"), "error message: {err}");
+    assert!(err.contains("Cannot filter JSON Value column with null query value"), "error message: {err}");
+}
+
+#[test]
 fn json_value_roundtrip() {
     let data = vec![
         JsonRecord { val: json!({"name": "alice", "age": 30, "active": true}) },

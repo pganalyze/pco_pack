@@ -131,14 +131,14 @@ macro_rules! impl_pco_number {
                 }
                 if let serde_json::Value::Object(obj) = json {
                     if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                        let start = start_val
-                            .as_i64()
-                            .or_else(|| start_val.as_f64().map(|f| f as i64))
-                            .context("Range start must be a number")?;
+                        let start =
+                            start_val.as_i64().or_else(|| start_val.as_f64().map(|f| f as i64)).with_context(|| {
+                                format!("Range start must be a number, got {}", json_type_name(start_val))
+                            })?;
                         let end = end_val
                             .as_i64()
                             .or_else(|| end_val.as_f64().map(|f| f as i64))
-                            .context("Range end must be a number")?;
+                            .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
                         return Ok(ResolvedFilter { path: vec![0], filter: Filter::Range(start..=end) });
                     }
                 }
@@ -158,7 +158,7 @@ macro_rules! impl_pco_number {
                     }
                 }
                 let value = json.as_i64().or_else(|| json.as_f64().map(|f| f as i64));
-                let value = value.with_context(|| format!("Expected numeric value for field '{}'", path))?;
+                let value = value.with_context(|| format!("Expected numeric value, got {}", json_type_name(json)))?;
                 Ok(ResolvedFilter { path: vec![0], filter: Filter::$filter_variant(value) })
             }
         }

@@ -7,6 +7,17 @@ struct BytesRow {
     value: ByteBuf,
 }
 
+#[test]
+fn bytes_filter_type_error_includes_field_and_type() {
+    let data = vec![BytesRow { value: ByteBuf::from(&b"abc"[..]) }];
+    let bytes = BytesRow::serialize(data).unwrap();
+
+    let result = BytesRow::filter_bytes(&bytes, serde_json::json!({"value": 42}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'value'"), "error message: {err}");
+    assert!(err.contains("Expected string for bytes filter, got number"), "error message: {err}");
+}
+
 fn roundtrip(data: Vec<BytesRow>) {
     let bytes = BytesRow::serialize(data.clone()).unwrap();
     let result = BytesRow::deserialize(&bytes).unwrap();

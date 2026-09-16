@@ -19,6 +19,11 @@ fn bool_range_filter_errors() {
         "error message should mention expected type: {}",
         err_msg
     );
+    assert!(
+        err_msg.contains("Failed to resolve filter for field 'active'"),
+        "error message should name the failing field: {}",
+        err_msg
+    );
 }
 
 #[test]

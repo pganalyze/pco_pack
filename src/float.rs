@@ -176,8 +176,12 @@ impl PcoFilter for half::f16 {
         }
         if let serde_json::Value::Object(obj) = json {
             if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                let start = start_val.as_f64().context("Range start must be a number")?;
-                let end = end_val.as_f64().context("Range end must be a number")?;
+                let start = start_val
+                    .as_f64()
+                    .with_context(|| format!("Range start must be a number, got {}", json_type_name(start_val)))?;
+                let end = end_val
+                    .as_f64()
+                    .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
                 return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
             }
         }
@@ -189,7 +193,8 @@ impl PcoFilter for half::f16 {
                 }
             }
         }
-        let value = json_to_f64(json).with_context(|| format!("Expected numeric value for field '{}'", path))?;
+        let value =
+            json_to_f64(json).with_context(|| format!("Expected numeric value, got {}", json_type_name(json)))?;
         Ok(ResolvedFilter { path: vec![0], filter: Filter::F64(value) })
     }
 }
@@ -343,8 +348,12 @@ impl PcoFilter for f32 {
         }
         if let serde_json::Value::Object(obj) = json {
             if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                let start = start_val.as_f64().context("Range start must be a number")?;
-                let end = end_val.as_f64().context("Range end must be a number")?;
+                let start = start_val
+                    .as_f64()
+                    .with_context(|| format!("Range start must be a number, got {}", json_type_name(start_val)))?;
+                let end = end_val
+                    .as_f64()
+                    .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
                 return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
             }
         }
@@ -356,7 +365,8 @@ impl PcoFilter for f32 {
                 }
             }
         }
-        let value = json_to_f64(json).with_context(|| format!("Expected numeric value for field '{}'", path))?;
+        let value =
+            json_to_f64(json).with_context(|| format!("Expected numeric value, got {}", json_type_name(json)))?;
         Ok(ResolvedFilter { path: vec![0], filter: Filter::F64(value) })
     }
 }
@@ -501,8 +511,12 @@ impl PcoFilter for f64 {
         }
         if let serde_json::Value::Object(obj) = json {
             if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                let start = start_val.as_f64().context("Range start must be a number")?;
-                let end = end_val.as_f64().context("Range end must be a number")?;
+                let start = start_val
+                    .as_f64()
+                    .with_context(|| format!("Range start must be a number, got {}", json_type_name(start_val)))?;
+                let end = end_val
+                    .as_f64()
+                    .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
                 return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
             }
         }
@@ -514,7 +528,8 @@ impl PcoFilter for f64 {
                 }
             }
         }
-        let value = json_to_f64(json).with_context(|| format!("Expected numeric value for field '{}'", path))?;
+        let value =
+            json_to_f64(json).with_context(|| format!("Expected numeric value, got {}", json_type_name(json)))?;
         Ok(ResolvedFilter { path: vec![0], filter: Filter::F64(value) })
     }
 }

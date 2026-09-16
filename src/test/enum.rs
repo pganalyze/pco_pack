@@ -9,6 +9,20 @@ enum Status {
     Pending,
 }
 
+#[test]
+fn enum_filter_type_error_includes_type() {
+    let data = vec![Status::Active, Status::Inactive];
+    let bytes = Status::serialize(data).unwrap();
+
+    let result = Status::filter_bytes(&bytes, serde_json::json!({"": "nope"}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Expected i64 discriminant value for enum filter, got string"), "error message: {err}");
+
+    let result = Status::filter_bytes(&bytes, serde_json::json!({"": {"start": true, "end": 2}}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Range start must be an integer, got boolean"), "error message: {err}");
+}
+
 #[derive(Debug, Clone, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
 struct Click {
     x: i32,

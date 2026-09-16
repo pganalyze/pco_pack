@@ -240,6 +240,81 @@ fn filter_tuple_field() {
 }
 
 #[test]
+fn filter_numeric_type_error_includes_field_name_and_passed_type() {
+    let data = make_simple_data();
+    let bytes = SimpleRecord::serialize(data).unwrap();
+
+    let result = SimpleRecord::filter_bytes(&bytes, serde_json::json!({"id": "not-a-number"}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'id'"), "error message: {err}");
+    assert!(err.contains("Expected numeric value, got string"), "error message: {err}");
+
+    let result = SimpleRecord::filter_bytes(&bytes, serde_json::json!({"score": true}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'score'"), "error message: {err}");
+    assert!(err.contains("Expected numeric value, got boolean"), "error message: {err}");
+
+    let result = SimpleRecord::filter_bytes(&bytes, serde_json::json!({"id": null}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'id'"), "error message: {err}");
+    assert!(err.contains("Expected numeric value, got null"), "error message: {err}");
+}
+
+#[test]
+fn filter_nested_numeric_type_error_includes_full_path() {
+    let data = make_nested_data();
+    let bytes = NestedRecord::serialize(data).unwrap();
+
+    let result = NestedRecord::filter_bytes(&bytes, serde_json::json!({"meta.score": "nope"}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'meta.score'"), "error message: {err}");
+    assert!(err.contains("Expected numeric value, got string"), "error message: {err}");
+}
+
+#[test]
+fn filter_bool_type_error_includes_field_name_and_passed_type() {
+    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    struct BoolRow {
+        active: bool,
+    }
+
+    let data = vec![BoolRow { active: true }, BoolRow { active: false }];
+    let bytes = BoolRow::serialize(data).unwrap();
+
+    let result = BoolRow::filter_bytes(&bytes, serde_json::json!({"active": "yes"}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'active'"), "error message: {err}");
+    assert!(err.contains("Expected boolean value, got string"), "error message: {err}");
+}
+
+#[test]
+fn filter_string_type_error_includes_field_name_and_passed_type() {
+    let data = make_simple_data();
+    let bytes = SimpleRecord::serialize(data).unwrap();
+
+    let result = SimpleRecord::filter_bytes(&bytes, serde_json::json!({"name": 42}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'name'"), "error message: {err}");
+    assert!(err.contains("Expected string or array for string filter, got number"), "error message: {err}");
+}
+
+#[test]
+fn filter_range_sub_value_type_error_includes_type() {
+    let data = make_simple_data();
+    let bytes = SimpleRecord::serialize(data).unwrap();
+
+    let result = SimpleRecord::filter_bytes(&bytes, serde_json::json!({"id": {"start": "a", "end": 3}}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'id'"), "error message: {err}");
+    assert!(err.contains("Range start must be a number, got string"), "error message: {err}");
+
+    let result = SimpleRecord::filter_bytes(&bytes, serde_json::json!({"score": {"start": true, "end": 2.0}}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'score'"), "error message: {err}");
+    assert!(err.contains("Range start must be a number, got boolean"), "error message: {err}");
+}
+
+#[test]
 fn filter_empty_query_returns_all() {
     let data = make_simple_data();
     let bytes = SimpleRecord::serialize(data.clone()).unwrap();

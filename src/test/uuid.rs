@@ -7,6 +7,17 @@ struct UuidRecord {
     thing_id: uuid::Uuid,
 }
 
+#[test]
+fn uuid_filter_type_error_includes_field_and_type() {
+    let data = vec![UuidRecord { id: 1, thing_id: uuid::Uuid::nil() }];
+    let bytes = UuidRecord::serialize(data).unwrap();
+
+    let result = UuidRecord::filter_bytes(&bytes, serde_json::json!({"thing_id": 42}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'thing_id'"), "error message: {err}");
+    assert!(err.contains("Expected string or array for UUID filter, got number"), "error message: {err}");
+}
+
 fn roundtrip(data: Vec<UuidRecord>) -> Vec<UuidRecord> {
     let bytes = UuidRecord::serialize(data).unwrap();
     UuidRecord::deserialize(&bytes).unwrap()

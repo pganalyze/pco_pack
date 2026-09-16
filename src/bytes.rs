@@ -42,7 +42,7 @@ impl PcoFilter for serde_bytes::ByteBuf {
             serde_json::Value::Array(_) => Err(anyhow::anyhow!(
                 "Inclusion queries are not supported for bytes columns; use exact equality instead"
             )),
-            _ => Err(anyhow::anyhow!("Expected string for bytes filter, got {}", json)),
+            _ => Err(anyhow::anyhow!("Expected string for bytes filter, got {}", json_type_name(json))),
         }
     }
 

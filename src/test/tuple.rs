@@ -196,3 +196,18 @@ fn tuple_remove_non_tail_field_errors() {
     let full_err = format!("{:?}", err);
     assert!(full_err.contains("String"));
 }
+
+#[test]
+fn tuple_filter_index_errors_are_descriptive() {
+    let data = vec![Tuple2 { field: (1, 100) }];
+    let bytes = Tuple2::serialize(data).unwrap();
+
+    let result = Tuple2::filter_bytes(&bytes, serde_json::json!({"field": 42}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'field'"), "error message: {err}");
+    assert!(err.contains("Expected a tuple element index (e.g. '0')"), "error message: {err}");
+
+    let result = Tuple2::filter_bytes(&bytes, serde_json::json!({"field.9": 42}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Tuple index '9' not found"), "error message: {err}");
+}

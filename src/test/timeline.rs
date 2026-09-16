@@ -444,6 +444,24 @@ struct TimelineAsPayload {
 }
 
 #[test]
+fn timeline_filter_type_error_includes_field_and_type() {
+    let mut tl = Timeline::<0>::new();
+    tl.add(1_000, 2_000);
+    let data = vec![TimelineAsPayload { id: 1, seen_at: tl, label: "a".into() }];
+    let bytes = TimelineAsPayload::serialize(data).unwrap();
+
+    let result = TimelineAsPayload::filter_bytes(&bytes, serde_json::json!({"seen_at": "nope"}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'seen_at'"), "error message: {err}");
+    assert!(err.contains("Expected integer microseconds, got string"), "error message: {err}");
+
+    let result =
+        TimelineAsPayload::filter_bytes(&bytes, serde_json::json!({"seen_at": {"start": true, "end": 2}}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Range start must be an integer, got boolean"), "error message: {err}");
+}
+
+#[test]
 fn timeline_as_plain_field_roundtrip() {
     let mut tl = Timeline::<0>::new();
     tl.add(1_000_000, 2_000_000);

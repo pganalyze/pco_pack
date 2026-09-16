@@ -53,7 +53,7 @@ impl PcoFilter for String {
                 }
                 Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionString(strings.into_iter().collect()) })
             }
-            _ => Err(anyhow::anyhow!("Expected string or array for string filter, got {}", json)),
+            _ => Err(anyhow::anyhow!("Expected string or array for string filter, got {}", json_type_name(json))),
         }
     }
 
@@ -157,7 +157,7 @@ impl PcoFilter for smol_str::SmolStr {
                 }
                 Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionString(strings.into_iter().collect()) })
             }
-            _ => Err(anyhow::anyhow!("Expected string or array for string filter, got {}", json)),
+            _ => Err(anyhow::anyhow!("Expected string or array for string filter, got {}", json_type_name(json))),
         }
     }
 
