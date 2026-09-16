@@ -22,6 +22,15 @@ fn filter_tuple_element_nested<T: PcoFilter>(
     Ok(())
 }
 
+/// Error for a tuple filter path that doesn't name a valid element index.
+fn tuple_index_error(root: &str) -> Result<ResolvedFilter> {
+    if root.is_empty() {
+        Err(anyhow::anyhow!("Expected a tuple element index (e.g. '0')"))
+    } else {
+        Err(anyhow::anyhow!("Tuple index '{}' not found; expected a numeric string index", root))
+    }
+}
+
 impl<T1, T2> PcoSerde for (T1, T2)
 where
     T1: PcoSerde,
@@ -113,7 +122,7 @@ where
                 filter.path[0] = 1;
                 Ok(filter)
             }
-            _ => Err(::anyhow::anyhow!("Tuple index '{}' not found; expected a numeric string index", root)),
+            _ => tuple_index_error(root),
         }
     }
 
@@ -263,7 +272,7 @@ where
                 filter.path[0] = 2;
                 Ok(filter)
             }
-            _ => Err(::anyhow::anyhow!("Tuple index '{}' not found; expected a numeric string index", root)),
+            _ => tuple_index_error(root),
         }
     }
 
@@ -442,7 +451,7 @@ where
                 filter.path[0] = 3;
                 Ok(filter)
             }
-            _ => Err(::anyhow::anyhow!("Tuple index '{}' not found; expected a numeric string index", root)),
+            _ => tuple_index_error(root),
         }
     }
 
@@ -662,7 +671,7 @@ where
                 filter.path[0] = 4;
                 Ok(filter)
             }
-            _ => Err(::anyhow::anyhow!("Tuple index '{}' not found; expected a numeric string index", root)),
+            _ => tuple_index_error(root),
         }
     }
 
@@ -912,7 +921,7 @@ where
                 filter.path[0] = 5;
                 Ok(filter)
             }
-            _ => Err(::anyhow::anyhow!("Tuple index '{}' not found; expected a numeric string index", root)),
+            _ => tuple_index_error(root),
         }
     }
 

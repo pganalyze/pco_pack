@@ -259,8 +259,12 @@ impl<const RESOLUTION: i64> PcoFilter for Timeline<RESOLUTION> {
         }
         if let serde_json::Value::Object(obj) = json {
             if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                let start = start_val.as_i64().context("Range start must be an integer")?;
-                let end = end_val.as_i64().context("Range end must be an integer")?;
+                let start = start_val
+                    .as_i64()
+                    .with_context(|| format!("Range start must be an integer, got {}", json_type_name(start_val)))?;
+                let end = end_val
+                    .as_i64()
+                    .with_context(|| format!("Range end must be an integer, got {}", json_type_name(end_val)))?;
                 return Ok(ResolvedFilter { path: vec![0], filter: Filter::Range(start..=end) });
             }
         }
@@ -275,7 +279,8 @@ impl<const RESOLUTION: i64> PcoFilter for Timeline<RESOLUTION> {
                 }
             }
         }
-        let ts = json.as_i64().context("Expected integer microseconds")?;
+        let ts =
+            json.as_i64().with_context(|| format!("Expected integer microseconds, got {}", json_type_name(json)))?;
         Ok(ResolvedFilter { path: vec![0], filter: Filter::I64(ts) })
     }
 }

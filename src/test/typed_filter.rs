@@ -1,5 +1,5 @@
 use crate as pco_pack;
-use crate::{BoolFilter, DateTimeFilter, F64Filter, I64Filter, PcoFilter, PcoPack, StringFilter, UuidFilter};
+use crate::{BoolFilter, F64Filter, I64Filter, PcoFilter, PcoPack, StringFilter, TimeFilter, UuidFilter};
 use chrono::{DateTime, Duration, Utc};
 
 #[derive(PcoPack, Debug, PartialEq)]
@@ -72,7 +72,7 @@ fn filter_new_with_index_and_timestamp() {
     let filter = SensorFilter::new(I64Filter::Equal(1), range.clone());
 
     assert_eq!(filter.device_id, Some(I64Filter::Equal(1)));
-    assert_eq!(filter.collected_at, Some(DateTimeFilter::Range { start: *range.start(), end: *range.end() }));
+    assert_eq!(filter.collected_at, Some(TimeFilter::Range { start: *range.start(), end: *range.end() }));
 }
 
 #[test]
@@ -143,11 +143,11 @@ fn filter_deserialize_from_json() {
     let filter: SensorFilter = json.try_into().unwrap();
 
     assert_eq!(filter.device_id, Some(I64Filter::Equal(1)));
-    if let Some(DateTimeFilter::Range { start, end }) = &filter.collected_at {
+    if let Some(TimeFilter::Range { start, end }) = &filter.collected_at {
         assert_eq!(start.to_rfc3339(), "2026-01-01T00:00:00+00:00");
         assert_eq!(end.to_rfc3339(), "2026-01-01T01:00:00+00:00");
     } else {
-        panic!("Expected DateTimeFilter::Range");
+        panic!("Expected TimeFilter::Range");
     }
     // temperature is now a typed field; deserialize into F64Filter
     if let Some(F64Filter::Range { start, end }) = &filter.temperature {
@@ -284,7 +284,7 @@ fn timestamp_only_filter_new() {
     let now = Utc::now();
     let filter = EventFilter::new((now - Duration::hours(1))..=now);
 
-    assert!(matches!(&filter.ts, Some(DateTimeFilter::Range { .. })));
+    assert!(matches!(&filter.ts, Some(TimeFilter::Range { .. })));
 }
 
 #[test]
@@ -384,23 +384,23 @@ fn bool_filter_equal() {
 }
 
 #[test]
-fn datetime_filter_range() {
+fn time_filter_range() {
     let now = Utc::now();
-    let f = DateTimeFilter::Range { start: now - Duration::hours(1), end: now };
+    let f = TimeFilter::Range { start: now - Duration::hours(1), end: now };
     let json: serde_json::Value = serde_json::to_value(&f).unwrap();
     assert!(json["start"].is_string());
     assert!(json["end"].is_string());
 }
 
 #[test]
-fn datetime_filter_from_range_inclusive() {
+fn time_filter_from_range_inclusive() {
     let start = to_micros(Utc::now());
     let end = start + Duration::hours(1);
     let range: std::ops::RangeInclusive<DateTime<Utc>> = start..=end;
-    let f: DateTimeFilter = range.into();
+    let f: TimeFilter = range.into();
 
     match f {
-        DateTimeFilter::Range { start: s, end: e } => {
+        TimeFilter::Range { start: s, end: e } => {
             assert_eq!(s.to_rfc3339(), start.to_rfc3339());
             assert_eq!(e.to_rfc3339(), end.to_rfc3339());
         }
@@ -409,60 +409,59 @@ fn datetime_filter_from_range_inclusive() {
 }
 
 #[test]
-fn datetime_filter_from_impls_truncate_to_micros() {
+fn time_filter_from_impls_truncate_to_micros() {
     // A timestamp with sub-microsecond digits, as produced by nanosecond-resolution
     // clocks (e.g., Utc::now() on Linux).
     let base = DateTime::from_timestamp_micros(1_767_225_600_123_456).unwrap();
     let ns = base + Duration::nanoseconds(999);
 
     // From<DateTime<Utc>> -> Equal, truncated to microsecond precision.
-    let f: DateTimeFilter = ns.into();
-    assert_eq!(f, DateTimeFilter::Equal(base));
+    let f: TimeFilter = ns.into();
+    assert_eq!(f, TimeFilter::Equal(base));
 
     // From<RangeInclusive<DateTime<Utc>>> -> Range, both bounds truncated.
-    let f: DateTimeFilter = (ns..=ns).into();
-    assert_eq!(f, DateTimeFilter::Range { start: base, end: base });
+    let f: TimeFilter = (ns..=ns).into();
+    assert_eq!(f, TimeFilter::Range { start: base, end: base });
 
     // From<Vec<DateTime<Utc>>> -> Inclusion, each value truncated.
-    let f: DateTimeFilter = vec![ns, ns].into();
-    assert_eq!(f, DateTimeFilter::Inclusion(vec![base, base]));
+    let f: TimeFilter = vec![ns, ns].into();
+    assert_eq!(f, TimeFilter::Inclusion(vec![base, base]));
 
     // From<&[DateTime<Utc>]> -> Inclusion, each value truncated.
     let arr = [ns, ns];
-    let f: DateTimeFilter = (&arr[..]).into();
-    assert_eq!(f, DateTimeFilter::Inclusion(vec![base, base]));
+    let f: TimeFilter = (&arr[..]).into();
+    assert_eq!(f, TimeFilter::Inclusion(vec![base, base]));
 
     // Values already at microsecond precision pass through unchanged.
-    let f: DateTimeFilter = base.into();
-    assert_eq!(f, DateTimeFilter::Equal(base));
+    let f: TimeFilter = base.into();
+    assert_eq!(f, TimeFilter::Equal(base));
 }
 
 #[test]
-fn datetime_filter_deserialize_truncates_to_micros() {
+fn time_filter_deserialize_truncates_to_micros() {
     let start = DateTime::parse_from_rfc3339("2026-01-01T00:00:00+00:00").unwrap().with_timezone(&Utc);
     let end = DateTime::parse_from_rfc3339("2026-01-01T01:00:00.000001+00:00").unwrap().with_timezone(&Utc);
 
     // RFC 3339 strings with sub-microsecond digits are truncated on deserialize.
     let json = r#"{"start": "2026-01-01T00:00:00.000000999+00:00", "end": "2026-01-01T01:00:00.000001999+00:00"}"#;
-    let f: DateTimeFilter = serde_json::from_str(json).unwrap();
-    assert_eq!(f, DateTimeFilter::Range { start, end });
+    let f: TimeFilter = serde_json::from_str(json).unwrap();
+    assert_eq!(f, TimeFilter::Range { start, end });
 
     // A single RFC 3339 string deserializes as Equal, truncated.
-    let f: DateTimeFilter = serde_json::from_str(r#""2026-01-01T00:00:00.000000999+00:00""#).unwrap();
-    assert_eq!(f, DateTimeFilter::Equal(start));
+    let f: TimeFilter = serde_json::from_str(r#""2026-01-01T00:00:00.000000999+00:00""#).unwrap();
+    assert_eq!(f, TimeFilter::Equal(start));
 
     // Integer microseconds (as accepted by raw JSON queries) are deserialized as Equal.
-    let f: DateTimeFilter = serde_json::from_str("1767225600000000").unwrap();
-    assert_eq!(f, DateTimeFilter::Equal(start));
+    let f: TimeFilter = serde_json::from_str("1767225600000000").unwrap();
+    assert_eq!(f, TimeFilter::Equal(start));
 
     // Inclusion mixes strings and integers, each truncated to microsecond precision.
-    let f: DateTimeFilter =
-        serde_json::from_str(r#"["2026-01-01T00:00:00.000000999+00:00", 1767225600000000]"#).unwrap();
-    assert_eq!(f, DateTimeFilter::Inclusion(vec![start, start]));
+    let f: TimeFilter = serde_json::from_str(r#"["2026-01-01T00:00:00.000000999+00:00", 1767225600000000]"#).unwrap();
+    assert_eq!(f, TimeFilter::Inclusion(vec![start, start]));
 
     // Invalid shapes still fail.
-    assert!(serde_json::from_str::<DateTimeFilter>("null").is_err());
-    assert!(serde_json::from_str::<DateTimeFilter>(r#"{"start": "2026-01-01T00:00:00Z"}"#).is_err());
+    assert!(serde_json::from_str::<TimeFilter>("null").is_err());
+    assert!(serde_json::from_str::<TimeFilter>(r#"{"start": "2026-01-01T00:00:00Z"}"#).is_err());
 }
 
 #[test]
@@ -631,6 +630,20 @@ fn filter_default_and_field_assignment() {
 }
 
 #[test]
+fn filter_debug_includes_typed_filters() {
+    let now = to_micros(Utc::now());
+    let mut filter = SensorFilter::default();
+    filter.device_id = Some(1.into());
+    filter.collected_at = Some(now.into());
+    filter.temperature = Some(F64Filter::Equal(42.0));
+
+    let debug = format!("{filter:?}");
+    assert!(debug.contains("device_id: Some(Equal(1))"), "{debug}");
+    assert!(debug.contains("collected_at: Some(Equal("), "{debug}");
+    assert!(debug.contains("temperature: Some(Equal(42.0))"), "{debug}");
+}
+
+#[test]
 fn string_filter_default_and_assignment() {
     let mut filter = NamedItemFilter::default();
     filter.name = Some(("alice").into()); // Equal via From<&str>
@@ -648,7 +661,7 @@ fn timestamp_filter_equal() {
     let now = to_micros(Utc::now());
     let mut filter = SensorFilter::default();
     filter.collected_at = Some((now).into());
-    assert_eq!(filter.collected_at, Some(DateTimeFilter::Equal(now)));
+    assert_eq!(filter.collected_at, Some(TimeFilter::Equal(now)));
 }
 
 #[test]
@@ -657,7 +670,7 @@ fn timestamp_filter_range() {
     let mut filter = SensorFilter::default();
     filter.collected_at = Some(((now - Duration::hours(1))..=now).into());
     match &filter.collected_at {
-        Some(DateTimeFilter::Range { start, end }) => {
+        Some(TimeFilter::Range { start, end }) => {
             assert_eq!(start.to_rfc3339(), (now - Duration::hours(1)).to_rfc3339());
             assert_eq!(end.to_rfc3339(), now.to_rfc3339());
         }
@@ -672,7 +685,7 @@ fn timestamp_filter_inclusion() {
     let mut filter = SensorFilter::default();
     filter.collected_at = Some(([t1, t2]).into());
     match &filter.collected_at {
-        Some(DateTimeFilter::Inclusion(v)) => assert_eq!(v.len(), 2),
+        Some(TimeFilter::Inclusion(v)) => assert_eq!(v.len(), 2),
         _ => panic!("Expected Inclusion"),
     }
 }
@@ -1226,7 +1239,7 @@ fn query_stat_with_timestamp_filter_from_json_microseconds() {
         }
     });
 
-    // Integer microseconds are supported by DateTimeFilter's Deserialize impl.
+    // Integer microseconds are supported by TimeFilter's Deserialize impl.
     let filter: QueryStatWithTimestampFilter =
         json.clone().try_into().expect("Failed to deserialize integer microseconds into Filter");
 

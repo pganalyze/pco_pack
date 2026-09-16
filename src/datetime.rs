@@ -88,10 +88,8 @@ impl PcoFilter for chrono::DateTime<chrono::Utc> {
 
         if let serde_json::Value::Object(obj) = json {
             if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                let start = parse_datetime_value(start_val, &format!("{}.start", path))
-                    .context("Range 'start' must be an integer or RFC 3339 datetime string")?;
-                let end = parse_datetime_value(end_val, &format!("{}.end", path))
-                    .context("Range 'end' must be an integer or RFC 3339 datetime string")?;
+                let start = parse_datetime_value(start_val, &sub_label(path, "start"))?;
+                let end = parse_datetime_value(end_val, &sub_label(path, "end"))?;
                 return Ok(ResolvedFilter { path: vec![0], filter: Filter::Range(start..=end) });
             }
         }
@@ -124,6 +122,11 @@ impl PcoFilter for chrono::DateTime<chrono::Utc> {
     }
 }
 
+/// Error-message label for a sub-value of a filter value: ("ts", "start") -> "ts.start", ("", "start") -> "start".
+fn sub_label(path: &str, part: &str) -> String {
+    if path.is_empty() { part.to_string() } else { format!("{path}.{part}") }
+}
+
 /// Parse a JSON value into microseconds since epoch.
 /// Supports:
 /// - Integer (microseconds since epoch)
@@ -133,10 +136,21 @@ pub(crate) fn parse_datetime_value(json: &serde_json::Value, field_path: &str) -
         return Ok(val);
     }
     let Some(s) = json.as_str() else {
-        anyhow::bail!("Expected integer (microseconds since epoch) or RFC 3339 string for field '{field_path}'")
+        let type_name = json_type_name(json);
+        if field_path.is_empty() {
+            anyhow::bail!("Expected integer (microseconds since epoch) or RFC 3339 string, got {type_name}")
+        }
+        anyhow::bail!(
+            "Expected integer (microseconds since epoch) or RFC 3339 string for '{field_path}', got {type_name}"
+        )
     };
-    let dt = chrono::DateTime::<chrono::FixedOffset>::parse_from_str(s, "%+")
-        .with_context(|| format!("Failed to parse RFC 3339 string for field '{field_path}'"))?;
+    let dt = chrono::DateTime::<chrono::FixedOffset>::parse_from_str(s, "%+").with_context(|| {
+        if field_path.is_empty() {
+            format!("Failed to parse RFC 3339 datetime string: {s}")
+        } else {
+            format!("Failed to parse RFC 3339 datetime string for '{field_path}': {s}")
+        }
+    })?;
     Ok(dt.with_timezone(&chrono::Utc).timestamp_micros())
 }
 

@@ -50,12 +50,12 @@ const _: () = {
         }
     }
     /// Typed filter struct for [`#name`].
-    #[derive(Clone, Default, pco_pack::serde::Deserialize)]
+    #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     pub struct Filter {
         pub database_id: Option<pco_pack::I64Filter>,
         pub granularity: Option<pco_pack::I64Filter>,
-        pub collected_at: Option<pco_pack::DateTimeFilter>,
+        pub collected_at: Option<pco_pack::TimeFilter>,
         pub fingerprint: Option<pco_pack::I64Filter>,
         #[serde(flatten)]
         others: pco_pack::serde_json::Map<String, pco_pack::serde_json::Value>,
@@ -66,7 +66,7 @@ const _: () = {
         pub fn new(
             database_id: impl Into<pco_pack::I64Filter>,
             granularity: impl Into<pco_pack::I64Filter>,
-            collected_at: impl Into<pco_pack::DateTimeFilter>,
+            collected_at: impl Into<pco_pack::TimeFilter>,
         ) -> Self {
             Self {
                 database_id: Some(database_id.into()),
@@ -111,7 +111,7 @@ const _: () = {
             shift: pco_pack::chrono::Duration,
         ) -> pco_pack::anyhow::Result<()> {
             let (start, end) = self.range_bounds()?;
-            self.collected_at = Some(pco_pack::DateTimeFilter::Range {
+            self.collected_at = Some(pco_pack::TimeFilter::Range {
                 start: start + shift,
                 end: end + shift,
             });

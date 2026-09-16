@@ -34,7 +34,7 @@ const _: () = {
         }
     }
     /// Typed filter struct for [`#name`].
-    #[derive(Clone, Default, pco_pack::serde::Deserialize)]
+    #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     pub struct Filter {
         pub name: Option<pco_pack::StringFilter>,
@@ -614,7 +614,7 @@ const _: () = {
         }
     }
     /// Typed filter struct for [`#name`].
-    #[derive(Clone, Default, pco_pack::serde::Deserialize)]
+    #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     pub struct Filter {
         pub x: Option<pco_pack::I64Filter>,

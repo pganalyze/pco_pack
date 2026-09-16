@@ -37,7 +37,7 @@ pub use lazy_reader::LazyReader;
 pub use number::{CoercibleNumber, NumberReader, NumberWriter, RangeCoercibleNumber};
 pub use pco_pack_derive::PcoPack;
 pub use timeline::Timeline;
-pub use typed_filter::{BoolFilter, DateTimeFilter, F64Filter, I64Filter, StringFilter, UuidFilter};
+pub use typed_filter::{BoolFilter, F64Filter, I64Filter, StringFilter, TimeFilter, UuidFilter};
 
 // Re-exports for the derive macro, which generates code referencing these via `pco_pack::...`.
 pub use ahash;
@@ -169,13 +169,32 @@ pub trait PcoFilter: PcoSerde {
             serde_json::Value::Object(map) => {
                 let mut plans = Vec::with_capacity(map.len());
                 for (field_name, raw_value) in map {
-                    plans.push(Self::resolve_filter(field_name, raw_value)?);
+                    let plan = Self::resolve_filter(field_name, raw_value).map_err(|err| {
+                        if field_name.is_empty() {
+                            anyhow::anyhow!("{err}")
+                        } else {
+                            anyhow::anyhow!("Failed to resolve filter for field '{field_name}': {err}")
+                        }
+                    })?;
+                    plans.push(plan);
                 }
                 plans.iter_mut().for_each(|p| p.filter.normalize());
                 Ok(plans)
             }
             _ => Err(::anyhow::anyhow!("Query must be a JSON object with field-name keys")),
         }
+    }
+}
+
+/// Human-readable name of a JSON value's type, for filter error messages.
+pub fn json_type_name(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
     }
 }
 

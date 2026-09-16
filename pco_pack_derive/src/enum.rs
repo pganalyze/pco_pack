@@ -400,8 +400,10 @@ pub fn generate_enum_tokens(
                         // Handle range syntax: {"start": min, "end": max}
                         if let pco_pack::serde_json::Value::Object(obj) = json {
                             if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                                let start = start_val.as_i64().context("Range start must be an integer")?;
-                                let end = end_val.as_i64().context("Range end must be an integer")?;
+                                let start = start_val.as_i64()
+                                    .with_context(|| format!("Range start must be an integer, got {}", pco_pack::json_type_name(start_val)))?;
+                                let end = end_val.as_i64()
+                                    .with_context(|| format!("Range end must be an integer, got {}", pco_pack::json_type_name(end_val)))?;
                                 return Ok(pco_pack::ResolvedFilter {
                                     path: vec![0],
                                     filter: pco_pack::Filter::Range(start..=end),
@@ -423,7 +425,8 @@ pub fn generate_enum_tokens(
                             }
                         }
                         let discriminant: Option<i64> = json.as_i64().or_else(|| json.as_f64().map(|f| f as i64));
-                        let discriminant = discriminant.context("Expected i64 discriminant value for enum filter")?;
+                        let discriminant = discriminant
+                            .with_context(|| format!("Expected i64 discriminant value for enum filter, got {}", pco_pack::json_type_name(json)))?;
                         return Ok(pco_pack::ResolvedFilter {
                             path: vec![0],
                             filter: pco_pack::Filter::I64(discriminant),

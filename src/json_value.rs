@@ -289,9 +289,7 @@ impl super::PcoFilter for serde_json::Value {
             serde_json::Value::Array(_) => Err(::anyhow::anyhow!(
                 "Inclusion queries are not supported for JSON Value columns; use exact equality instead"
             )),
-            _ if json.is_null() => {
-                Err(::anyhow::anyhow!("Cannot filter JSON Value column with null query value for field '{}'", path))
-            }
+            _ if json.is_null() => Err(::anyhow::anyhow!("Cannot filter JSON Value column with null query value")),
             _ => Ok(ResolvedFilter { path: vec![0], filter: Filter::Json(json.clone()) }),
         }
     }

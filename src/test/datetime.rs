@@ -8,6 +8,35 @@ struct DateTimeRecord {
 }
 
 #[test]
+fn datetime_filter_type_error_includes_field_and_type() {
+    let data = vec![
+        DateTimeRecord { ts: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH },
+        DateTimeRecord { ts: chrono::DateTime::<chrono::Utc>::from_timestamp(1000, 0).unwrap() },
+    ];
+    let bytes = DateTimeRecord::serialize(data).unwrap();
+
+    let result = DateTimeRecord::filter_bytes(&bytes, serde_json::json!({"ts": true}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'ts'"), "error message: {err}");
+    assert!(
+        err.contains("Expected integer (microseconds since epoch) or RFC 3339 string, got boolean"),
+        "error message: {err}"
+    );
+
+    let result = DateTimeRecord::filter_bytes(&bytes, serde_json::json!({"ts": {"start": "nope", "end": 2}}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Failed to resolve filter for field 'ts'"), "error message: {err}");
+    assert!(err.contains("Failed to parse RFC 3339 datetime string for 'start': nope"), "error message: {err}");
+
+    let result = DateTimeRecord::filter_bytes(&bytes, serde_json::json!({"ts": {"start": true, "end": 2}}), &[]);
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Expected integer (microseconds since epoch) or RFC 3339 string for 'start', got boolean"),
+        "error message: {err}"
+    );
+}
+
+#[test]
 fn datetime_utc_roundtrip() {
     let data = vec![
         DateTimeRecord { ts: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH },
