@@ -34,9 +34,9 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
             FieldRole::Timestamp => {
                 let ident = &fi.ident;
                 ts_ident = Some(ident);
-                typed_fields.push(quote! { pub #ident: Option<pco_pack::DateTimeFilter>, });
+                typed_fields.push(quote! { pub #ident: Option<pco_pack::TimeFilter>, });
 
-                new_params.push(quote! { #ident: impl Into<pco_pack::DateTimeFilter> });
+                new_params.push(quote! { #ident: impl Into<pco_pack::TimeFilter> });
                 new_assigns.push(quote! { #ident: Some(#ident.into()), });
 
                 let field_name = ident.to_string();
@@ -81,7 +81,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
             /// Shifts the filter's time range by the given duration. Requires the timestamp field to be set as a range.
             pub fn range_shift(&mut self, shift: pco_pack::chrono::Duration) -> pco_pack::anyhow::Result<()> {
                 let (start, end) = self.range_bounds()?;
-                self.#ts_ident = Some(pco_pack::DateTimeFilter::Range { start: start + shift, end: end + shift });
+                self.#ts_ident = Some(pco_pack::TimeFilter::Range { start: start + shift, end: end + shift });
                 Ok(())
             }
         }
@@ -91,7 +91,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
 
     quote! {
         /// Typed filter struct for [`#name`].
-        #[derive(Clone, Default, pco_pack::serde::Deserialize)]
+        #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
         #[serde(deny_unknown_fields)]
         pub struct Filter {
             #(#typed_fields)*
@@ -182,7 +182,7 @@ fn is_simple_type(ty: &Type) -> bool {
 fn field_filter_type(ty: &Type) -> proc_macro2::TokenStream {
     // Check for chrono::DateTime<Utc>.
     if is_datetime_utc(ty) {
-        return quote! { pco_pack::DateTimeFilter };
+        return quote! { pco_pack::TimeFilter };
     }
 
     match type_last_segment(ty).as_deref() {

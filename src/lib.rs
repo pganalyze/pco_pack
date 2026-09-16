@@ -37,7 +37,7 @@ pub use lazy_reader::LazyReader;
 pub use number::{CoercibleNumber, NumberReader, NumberWriter, RangeCoercibleNumber};
 pub use pco_pack_derive::PcoPack;
 pub use timeline::Timeline;
-pub use typed_filter::{BoolFilter, DateTimeFilter, F64Filter, I64Filter, StringFilter, UuidFilter};
+pub use typed_filter::{BoolFilter, F64Filter, I64Filter, StringFilter, TimeFilter, UuidFilter};
 
 // Re-exports for the derive macro, which generates code referencing these via `pco_pack::...`.
 pub use ahash;

@@ -171,13 +171,13 @@ fn from_micros(micros: i64) -> ::chrono::DateTime<::chrono::Utc> {
 /// observable through this type.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
-pub enum DateTimeFilter {
+pub enum TimeFilter {
     Equal(::chrono::DateTime<::chrono::Utc>),
     Inclusion(Vec<::chrono::DateTime<::chrono::Utc>>),
     Range { start: ::chrono::DateTime<::chrono::Utc>, end: ::chrono::DateTime<::chrono::Utc> },
 }
 
-impl<'de> Deserialize<'de> for DateTimeFilter {
+impl<'de> Deserialize<'de> for TimeFilter {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -192,17 +192,17 @@ impl<'de> Deserialize<'de> for DateTimeFilter {
                 let (Some(start), Some(end)) = (obj.get("start"), obj.get("end")) else {
                     return Err(D::Error::custom("Timestamp range filter requires 'start' and 'end' keys".to_string()));
                 };
-                Ok(DateTimeFilter::Range { start: parse_one(start, "start")?, end: parse_one(end, "end")? })
+                Ok(TimeFilter::Range { start: parse_one(start, "start")?, end: parse_one(end, "end")? })
             }
             serde_json::Value::Array(items) => {
                 let mut values = Vec::with_capacity(items.len());
                 for (i, item) in items.iter().enumerate() {
                     values.push(parse_one(item, &format!("[{i}]"))?);
                 }
-                Ok(DateTimeFilter::Inclusion(values))
+                Ok(TimeFilter::Inclusion(values))
             }
             serde_json::Value::String(_) | serde_json::Value::Number(_) => {
-                Ok(DateTimeFilter::Equal(parse_one(&value, "")?))
+                Ok(TimeFilter::Equal(parse_one(&value, "")?))
             }
             _ => Err(D::Error::custom(
                 "Expected an RFC 3339 string or integer microseconds for a timestamp filter".to_string(),
@@ -211,11 +211,11 @@ impl<'de> Deserialize<'de> for DateTimeFilter {
     }
 }
 
-impl DateTimeFilter {
+impl TimeFilter {
     /// Returns the value if this filter is an exact match.
     pub fn exact(&self) -> Option<::chrono::DateTime<::chrono::Utc>> {
         match self {
-            DateTimeFilter::Equal(v) => Some(*v),
+            TimeFilter::Equal(v) => Some(*v),
             _ => None,
         }
     }
@@ -223,7 +223,7 @@ impl DateTimeFilter {
     /// Returns the list of values if this filter is an inclusion filter.
     pub fn inclusion(&self) -> Option<Vec<::chrono::DateTime<::chrono::Utc>>> {
         match self {
-            DateTimeFilter::Inclusion(v) => Some(v.clone()),
+            TimeFilter::Inclusion(v) => Some(v.clone()),
             _ => None,
         }
     }
@@ -231,7 +231,7 @@ impl DateTimeFilter {
     /// Returns the range if this filter is a range filter.
     pub fn range(&self) -> Option<RangeInclusive<::chrono::DateTime<::chrono::Utc>>> {
         match self {
-            DateTimeFilter::Range { start, end } => Some(*start..=*end),
+            TimeFilter::Range { start, end } => Some(*start..=*end),
             _ => None,
         }
     }
@@ -244,7 +244,7 @@ impl DateTimeFilter {
         &self,
     ) -> anyhow::Result<(::chrono::DateTime<::chrono::Utc>, ::chrono::DateTime<::chrono::Utc>)> {
         match self {
-            DateTimeFilter::Range { start, end } => Ok((*start, *end)),
+            TimeFilter::Range { start, end } => Ok((*start, *end)),
             _ => Err(anyhow::anyhow!("Timestamp filter is not a range")),
         }
     }
@@ -736,38 +736,38 @@ impl<'a> From<&'a [::uuid::Uuid]> for UuidFilter {
     }
 }
 
-impl From<::chrono::DateTime<::chrono::Utc>> for DateTimeFilter {
+impl From<::chrono::DateTime<::chrono::Utc>> for TimeFilter {
     fn from(v: ::chrono::DateTime<::chrono::Utc>) -> Self {
-        DateTimeFilter::Equal(truncate_to_micros(v))
+        TimeFilter::Equal(truncate_to_micros(v))
     }
 }
 
-impl<const N: usize> From<[::chrono::DateTime<::chrono::Utc>; N]> for DateTimeFilter {
+impl<const N: usize> From<[::chrono::DateTime<::chrono::Utc>; N]> for TimeFilter {
     fn from(arr: [::chrono::DateTime<::chrono::Utc>; N]) -> Self {
-        DateTimeFilter::Inclusion(arr.into_iter().map(truncate_to_micros).collect())
+        TimeFilter::Inclusion(arr.into_iter().map(truncate_to_micros).collect())
     }
 }
 
-impl From<Vec<::chrono::DateTime<::chrono::Utc>>> for DateTimeFilter {
+impl From<Vec<::chrono::DateTime<::chrono::Utc>>> for TimeFilter {
     fn from(v: Vec<::chrono::DateTime<::chrono::Utc>>) -> Self {
-        DateTimeFilter::Inclusion(v.into_iter().map(truncate_to_micros).collect())
+        TimeFilter::Inclusion(v.into_iter().map(truncate_to_micros).collect())
     }
 }
 
-impl<'a> From<&'a Vec<::chrono::DateTime<::chrono::Utc>>> for DateTimeFilter {
+impl<'a> From<&'a Vec<::chrono::DateTime<::chrono::Utc>>> for TimeFilter {
     fn from(v: &'a Vec<::chrono::DateTime<::chrono::Utc>>) -> Self {
-        DateTimeFilter::Inclusion(v.iter().copied().map(truncate_to_micros).collect())
+        TimeFilter::Inclusion(v.iter().copied().map(truncate_to_micros).collect())
     }
 }
 
-impl<'a> From<&'a [::chrono::DateTime<::chrono::Utc>]> for DateTimeFilter {
+impl<'a> From<&'a [::chrono::DateTime<::chrono::Utc>]> for TimeFilter {
     fn from(slice: &'a [::chrono::DateTime<::chrono::Utc>]) -> Self {
-        DateTimeFilter::Inclusion(slice.iter().copied().map(truncate_to_micros).collect())
+        TimeFilter::Inclusion(slice.iter().copied().map(truncate_to_micros).collect())
     }
 }
 
-impl From<RangeInclusive<::chrono::DateTime<::chrono::Utc>>> for DateTimeFilter {
+impl From<RangeInclusive<::chrono::DateTime<::chrono::Utc>>> for TimeFilter {
     fn from(r: RangeInclusive<::chrono::DateTime<::chrono::Utc>>) -> Self {
-        DateTimeFilter::Range { start: truncate_to_micros(*r.start()), end: truncate_to_micros(*r.end()) }
+        TimeFilter::Range { start: truncate_to_micros(*r.start()), end: truncate_to_micros(*r.end()) }
     }
 }
