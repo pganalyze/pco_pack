@@ -355,3 +355,51 @@ fn timestamp_chunk_metadata_all_same_timestamp() {
     assert_eq!(chunks[0].start_at.timestamp_micros(), 42);
     assert_eq!(chunks[0].end_at.timestamp_micros(), 42);
 }
+
+/// `time_round` rounds the stored timestamp column, so the per-chunk `start_at`/`end_at`
+/// bounds must be rounded the same way at storage time. Otherwise the timestamp filter's
+/// chunk-level "full match" fast path (which deliberately skips the per-row check) emits
+/// rows whose stored value lies outside the query range.
+#[test]
+fn time_round_chunk_bounds_match_stored_values() {
+    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[pco_pack(timestamp = ts, chunk_size = 2, time_round = Duration::seconds(1))]
+    struct TimeRoundRow {
+        id: i64,
+        ts: DateTime<Utc>,
+    }
+
+    let base_us = 1_655_869_784_000_000i64;
+    let mk = |off: i64| DateTime::from_timestamp_micros(base_us + off).unwrap();
+    let data = vec![
+        TimeRoundRow { id: 0, ts: mk(340_281) },
+        TimeRoundRow { id: 1, ts: mk(1_000_281) },
+        TimeRoundRow { id: 2, ts: mk(2_000_381) },
+        TimeRoundRow { id: 3, ts: mk(3_000_481) },
+    ];
+
+    let chunks = TimeRoundRow::write(data.clone()).unwrap();
+    assert_eq!(chunks.len(), 2);
+    assert_eq!(chunks[0].start_at.timestamp_micros(), base_us);
+    assert_eq!(chunks[0].end_at.timestamp_micros(), base_us + 1_000_000);
+    assert_eq!(chunks[1].start_at.timestamp_micros(), base_us + 2_000_000);
+    assert_eq!(chunks[1].end_at.timestamp_micros(), base_us + 3_000_000);
+
+    let bytes = TimeRoundRow::serialize(data).unwrap();
+
+    // The query starts at row 0's *raw* instant; its stored (rounded) value is below that start,
+    // so it must be excluded. Chunk 0's raw bounds would have declared the chunk a full match.
+    let start = base_us + 340_281;
+    let end = base_us + 2_000_381;
+    let filter = serde_json::json!({ "ts": { "start": start, "end": end } });
+    let result = TimeRoundRow::filter_bytes(&bytes, filter, &[]).unwrap();
+    assert_eq!(result.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1, 2]);
+    for r in &result {
+        assert!(r.ts.timestamp_micros() >= start && r.ts.timestamp_micros() <= end, "row outside query: {r:?}");
+    }
+
+    // A range covering a chunk's rounded bounds still matches every row of it.
+    let filter = serde_json::json!({ "ts": { "start": base_us, "end": base_us + 3_000_000 } });
+    let result = TimeRoundRow::filter_bytes(&bytes, filter, &[]).unwrap();
+    assert_eq!(result.iter().map(|r| r.id).collect::<Vec<_>>(), vec![0, 1, 2, 3]);
+}

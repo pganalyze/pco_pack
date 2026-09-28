@@ -133,11 +133,27 @@ impl StructGen {
                     };
                 }
             } else {
+                let bounds = if self.time_round.is_some() && super::super::type_helpers::is_datetime_type(&ts_field.ty)
+                {
+                    let time_round = self.time_round.as_ref().unwrap();
+                    quote! {
+                        pco_pack::round_bounds_us(
+                            timestamp_to_i64(&data[#iv[0]].#rf_ident),
+                            timestamp_to_i64(&data[#iv[#iv.len() - 1]].#rf_ident),
+                            #time_round
+                        )
+                    }
+                } else {
+                    quote! {
+                        (
+                            timestamp_to_i64(&data[#iv[0]].#rf_ident),
+                            timestamp_to_i64(&data[#iv[#iv.len() - 1]].#rf_ident),
+                        )
+                    }
+                };
                 quote! {
                     let (g_start, g_end) = if !#iv.is_empty() {
-                        let first = timestamp_to_i64(&data[#iv[0]].#rf_ident);
-                        let last = timestamp_to_i64(&data[#iv[#iv.len() - 1]].#rf_ident);
-                        (first, last)
+                        #bounds
                     } else {
                         (0i64, 0i64)
                     };
@@ -182,11 +198,27 @@ impl StructGen {
                     };
                 }
             } else {
+                let bounds = if self.time_round.is_some() && super::super::type_helpers::is_datetime_type(&ts_field.ty)
+                {
+                    let time_round = self.time_round.as_ref().unwrap();
+                    quote! {
+                        pco_pack::round_bounds_us(
+                            timestamp_to_i64(&group_rows[0].#rf_ident),
+                            timestamp_to_i64(&group_rows[group_rows.len() - 1].#rf_ident),
+                            #time_round
+                        )
+                    }
+                } else {
+                    quote! {
+                        (
+                            timestamp_to_i64(&group_rows[0].#rf_ident),
+                            timestamp_to_i64(&group_rows[group_rows.len() - 1].#rf_ident),
+                        )
+                    }
+                };
                 quote! {
                     let (g_start, g_end) = if !group_rows.is_empty() {
-                        let first = timestamp_to_i64(&group_rows[0].#rf_ident);
-                        let last = timestamp_to_i64(&group_rows[group_rows.len() - 1].#rf_ident);
-                        (first, last)
+                        #bounds
                     } else {
                         (0i64, 0i64)
                     };

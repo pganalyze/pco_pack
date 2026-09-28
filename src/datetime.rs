@@ -5,13 +5,8 @@ impl PcoSerde for chrono::DateTime<chrono::Utc> {
     type Reader = NumberReader<i64>;
 
     fn write(data: Vec<Self>, _float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
-        let granularity_us =
-            if time_round.is_zero() { 0i64 } else { time_round.num_microseconds().unwrap_or(i64::MAX) };
-        let micros: Vec<i64> = if granularity_us > 0 {
-            data.into_iter().map(|dt| round_half_up(dt.timestamp_micros(), granularity_us) * granularity_us).collect()
-        } else {
-            data.into_iter().map(|dt| dt.timestamp_micros()).collect()
-        };
+        let micros: Vec<i64> =
+            data.into_iter().map(|dt| round_timestamp_us(dt.timestamp_micros(), time_round)).collect();
         i64::write(micros, 0, time_round)
     }
 
@@ -35,6 +30,27 @@ fn round_half_up(v: i64, g: i64) -> i64 {
     let r = v % g;
     let half = g / 2;
     if r >= half || (r < 0 && (-r) > half) { q + 1 } else { q }
+}
+
+/// The µs granularity `time_round` corresponds to (`0` = no rounding).
+pub(crate) fn granularity_us(time_round: chrono::Duration) -> i64 {
+    if time_round.is_zero() { 0 } else { time_round.num_microseconds().unwrap_or(i64::MAX) }
+}
+
+/// The µs a `DateTime` column actually stores for `micros` under `time_round`
+/// (rounded to the nearest multiple of the granularity; unrounded when zero).
+fn round_timestamp_us(micros: i64, time_round: chrono::Duration) -> i64 {
+    let g = granularity_us(time_round);
+    if g > 0 { round_half_up(micros, g) * g } else { micros }
+}
+
+/// `start_at`/`end_at` chunk bounds matching the chunk's *stored* timestamp
+/// column. Generated code calls this at **storage time**: the chunk-level
+/// timestamp filter skips the per-row check when a chunk's bounds are fully
+/// inside the query, which is only sound if the bounds share the column's
+/// precision — so they are rounded exactly like the column values.
+pub fn round_bounds_us(first: i64, last: i64, time_round: chrono::Duration) -> (i64, i64) {
+    (round_timestamp_us(first, time_round), round_timestamp_us(last, time_round))
 }
 
 impl PcoFilter for chrono::DateTime<chrono::Utc> {

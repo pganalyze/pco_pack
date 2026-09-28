@@ -211,11 +211,10 @@ const _: () = {
                     Default::default(),
                 )?;
                 let (g_start, g_end) = if !indices.is_empty() {
-                    let first = timestamp_to_i64(&data[indices[0]].collected_at);
-                    let last = timestamp_to_i64(
-                        &data[indices[indices.len() - 1]].collected_at,
-                    );
-                    (first, last)
+                    (
+                        timestamp_to_i64(&data[indices[0]].collected_at),
+                        timestamp_to_i64(&data[indices[indices.len() - 1]].collected_at),
+                    )
                 } else {
                     (0i64, 0i64)
                 };
@@ -599,13 +598,12 @@ const _: () = {
                         Default::default(),
                     )?;
                     let (g_start, g_end) = if !group_indices.is_empty() {
-                        let first = timestamp_to_i64(
-                            &data[group_indices[0]].collected_at,
-                        );
-                        let last = timestamp_to_i64(
-                            &data[group_indices[group_indices.len() - 1]].collected_at,
-                        );
-                        (first, last)
+                        (
+                            timestamp_to_i64(&data[group_indices[0]].collected_at),
+                            timestamp_to_i64(
+                                &data[group_indices[group_indices.len() - 1]].collected_at,
+                            ),
+                        )
                     } else {
                         (0i64, 0i64)
                     };
