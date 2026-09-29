@@ -6,7 +6,6 @@ use markdown_tables::{MarkdownTableRow, as_table};
 use pco_pack::PcoPack;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_arrow::schema::{SchemaLike, TracingOptions};
-use serde_bytes::ByteBuf;
 use serde_columnar::{columnar, from_bytes, to_vec};
 use serde_json::json;
 use vortex::array::expr::{and, col, eq, lit};
@@ -16,6 +15,10 @@ use vortex::buffer::ByteBuffer;
 use vortex::compressor::BtrBlocksCompressorBuilder;
 use vortex::file::{OpenOptionsSessionExt, WriteOptionsSessionExt, WriteStrategyBuilder};
 use vortex::session::VortexSession;
+
+/// The row the multi-filter (`color == Red && score == 500.0`) matches exactly
+/// once: its fields are forced and no generated `lognorm_small` value hits 500.0.
+const SENTINEL: usize = 12_345;
 
 fn main() {
     let data = data(500_000);
@@ -53,7 +56,7 @@ fn main() {
         black_box(decoded.data.len());
     });
 
-    // ---- msgpack benchmarks ----
+    // ---- msgpack benchmarks (single-frame) ----
     let map_serial_ms = avg_ms(|| serialize_flat_map(&data));
     let map_buf = serialize_flat_map(&data);
     let map_deserial_ms = avg_ms(|| deserialize_flat(&map_buf));
@@ -101,17 +104,17 @@ fn main() {
 
     impl MarkdownTableRow for StructRow {
         fn column_names() -> Vec<&'static str> {
-            vec!["Metric", "PcoPack", "columnar", "serde_columnar", "msgpack", "Vortex"]
+            vec!["Metric", "PcoPack", "Vortex", "columnar", "serde_columnar", "msgpack"]
         }
 
         fn column_values(&self) -> Vec<String> {
             vec![
                 self.metric.clone(),
                 self.pco_pack.clone(),
+                self.vortex.clone(),
                 self.columnar.clone(),
                 self.serde_columnar.clone(),
                 self.msgpack.clone(),
-                self.vortex.clone(),
             ]
         }
     }
@@ -230,7 +233,7 @@ fn main() {
             vortex: format_bytes(vortex_buf.len()),
         },
         StructRow {
-            metric: "Filter account_id (20% of rows)".to_string(),
+            metric: "Filter 20%".to_string(),
             pco_pack: format_ms(pco_filter_single_ms),
             columnar: format_ms(col_filter_single_ms),
             serde_columnar: format_ms(sc_filter_single_ms),
@@ -238,7 +241,7 @@ fn main() {
             vortex: format_ms(vortex_filter_single_ms),
         },
         StructRow {
-            metric: "Filter color + score (1 row)".to_string(),
+            metric: "Filter <0.01%".to_string(),
             pco_pack: format_ms(pco_filter_multi_ms),
             columnar: format_ms(col_filter_multi_ms),
             serde_columnar: format_ms(sc_filter_multi_ms),
@@ -276,7 +279,6 @@ struct Record {
     tag: Option<i32>,
     tags: Vec<i32>,
     color: Color,
-    payload: ByteBuf,
 }
 
 /// Integer-backed serde serialization for optimal msgpack compression.
@@ -323,7 +325,6 @@ struct ColumnarRecord {
     tag: Option<i32>,
     tags: Vec<i32>,
     color: u8,
-    payload: Vec<u8>,
 }
 
 impl From<&Record> for ColumnarRecord {
@@ -336,7 +337,6 @@ impl From<&Record> for ColumnarRecord {
             tag: r.tag,
             tags: r.tags.clone(),
             color: r.color as u8,
-            payload: r.payload.as_slice().to_vec(),
         }
     }
 }
@@ -353,13 +353,6 @@ mod serde_columnar_record {
 
     #[columnar(vec, ser, de)]
     #[derive(Debug, Clone, PartialEq)]
-    pub struct Payload {
-        #[columnar(strategy = "Rle")]
-        pub values: Vec<u8>,
-    }
-
-    #[columnar(vec, ser, de)]
-    #[derive(Debug, Clone, PartialEq)]
     pub struct SerdeColumnarRecord {
         #[columnar(strategy = "DeltaRle")]
         pub account_id: i64,
@@ -372,7 +365,6 @@ mod serde_columnar_record {
         pub tag: Option<i32>,
         pub color: u8,
         pub tags: Tags,
-        pub payload: Payload,
     }
 
     #[columnar(ser, de)]
@@ -392,35 +384,38 @@ mod serde_columnar_record {
                 tag: r.tag,
                 color: r.color as u8,
                 tags: Tags { values: r.tags.clone() },
-                payload: Payload { values: r.payload.as_slice().to_vec() },
             }
         }
     }
 }
 
-fn noise_i32(i: usize) -> i32 {
-    let h = (i as u32).wrapping_mul(0x01000193).wrapping_add(i as u32);
-    (h ^ (h >> 16)) as i32 & 0xF
-}
-
+/// Realistic field distributions (skewed counters, log-normal scores, skewed
+/// enum, random names); `account_id` is the index key the filters exercise.
 fn data(n: usize) -> Vec<Record> {
     (0..n)
         .map(|i| {
-            let n = noise_i32(i);
+            let sentinel = i == SENTINEL;
             Record {
-                account_id: i as i64 % 5, // 5 unique account IDs
-                name: format!("name_{}_{}", i % 5000, n & 0xFF),
-                score: (i as f64) / 100.0 + (n as f64) / 100.0,
-                active: (i + n as usize) % 3 != 0,
-                tag: if i % 2 == 0 { Some(((i % 100) as i32) + n) } else { None },
-                tags: (0..((i % 5) + 1)).map(|j| (i * 100 + j) as i32 + n).collect(),
-                color: match (i + n as usize) % 4 {
-                    0 => Color::Red,
-                    1 => Color::Green,
-                    2 => Color::Blue,
-                    _ => Color::Yellow,
+                account_id: (i % 5) as i64, // 5 unique account IDs (the index key)
+                name: format!("name_{}", splitmix64(i.wrapping_add(0xA5A5)) % 1_000_000),
+                score: if sentinel { 500.0 } else { lognorm_small(i) },
+                active: if sentinel { true } else { unit64(i.wrapping_add(0x0707)) < 0.7 },
+                tag: if i % 50 < 25 {
+                    None
+                } else {
+                    Some(skew_small(i.wrapping_add(999)) as i32)
                 },
-                payload: ByteBuf::from(vec![n as u8; 64]),
+                tags: (0..(i % 5 + 1)).map(|j| skew_small(i.wrapping_add(j * 131)) as i32).collect(),
+                color: if sentinel {
+                    Color::Red
+                } else {
+                    match cdf_index(&[0.6751, 0.9528, 0.9969, 1.0], unit64(i.wrapping_add(0xC0DE))) {
+                        0 => Color::Red,
+                        1 => Color::Green,
+                        2 => Color::Blue,
+                        _ => Color::Yellow,
+                    }
+                },
             }
         })
         .collect()
@@ -451,11 +446,8 @@ fn setup_vortex_file(rt: &tokio::runtime::Runtime, data: &[Record]) -> (VortexSe
     })
 }
 
-/// Serialize records to Arrow via serde_arrow (tracing), then write them as vortex file bytes with compact schemes.
-///
-/// Note: we intentionally use serde_arrow here instead of typed-arrow's compile-time builders, which are
-/// ~2x faster at building the ingest batch. Vortex re-encodes strings to its own Utf8View dtype on export,
-/// and typed-arrow can't read that back, so we would still need serde_arrow for reads anyway.
+/// Serialize records to Arrow via serde_arrow, then write vortex file bytes
+/// with the compact strategy (serde_arrow is also needed to read back Utf8View).
 async fn write_vortex_file(session: &VortexSession, data: &[Record]) -> Vec<u8> {
     let fields = <Vec<FieldRef>>::from_type::<Record>(TracingOptions::default()).unwrap();
     let batch = serde_arrow::to_record_batch(&fields, &data).unwrap();

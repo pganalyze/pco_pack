@@ -182,10 +182,10 @@ fn generate_scenario(total_seconds: usize, uniqueness_pct: usize) -> (Vec<DateTi
     let mut timeline_data = Vec::with_capacity(total_seconds * NUM_SENSORS as usize);
     for s in 0..total_seconds {
         let ts_s = BASE_TS_S + s as i64;
-        let us = splitmix64(ts_s as u64) % 5_000; // 0-5ms jitter
+        let us = splitmix64(ts_s as usize) % 5_000; // 0-5ms jitter
         let seen_at = chrono::DateTime::<chrono::Utc>::from_timestamp(ts_s, us as u32).unwrap_or_default();
         for (id, sensor) in sensors.iter_mut().enumerate() {
-            if splitmix64(id as u64 * 31 + s as u64) % 100 < uniqueness_pct as u64 {
+            if splitmix64(id * 31 + s) % 100 < uniqueness_pct as u64 {
                 if let Some(row) = sensor.timeline_row.take() {
                     timeline_data.push(row);
                 }
@@ -221,22 +221,14 @@ fn generate_scenario(total_seconds: usize, uniqueness_pct: usize) -> (Vec<DateTi
 
 fn random_temperature(sensor_id: u32, change_count: usize) -> f32 {
     // [20, 25)
-    20.0 + (splitmix64(sensor_id as u64 * 1_000_003 + change_count as u64) % 1_000_000) as f32 / 200_000.0
+    20.0 + (splitmix64(sensor_id as usize * 1_000_003 + change_count) % 1_000_000) as f32 / 200_000.0
 }
 
 fn random_humidity(sensor_id: u32, change_count: usize) -> f32 {
     // [50, 100)
-    50.0 + (splitmix64(sensor_id as u64 * 1_000_003 + change_count as u64 + 7919) % 1_000_000) as f32 / 20_000.0
+    50.0 + (splitmix64(sensor_id as usize * 1_000_003 + change_count + 7919) % 1_000_000) as f32 / 20_000.0
 }
 
 fn random_status(sensor_id: u32, change_count: usize) -> u8 {
-    (splitmix64(sensor_id as u64 * 1_000_003 + change_count as u64 + 104729) % 5) as u8
-}
-
-/// Generates pseudo-random values without sequential patterns
-fn splitmix64(mut x: u64) -> u64 {
-    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    x ^ (x >> 31)
+    (splitmix64(sensor_id as usize * 1_000_003 + change_count + 104729) % 5) as u8
 }

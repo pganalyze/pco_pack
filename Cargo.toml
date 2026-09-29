@@ -38,11 +38,8 @@ peak_alloc = "0.3"
 serde_arrow = { version = "0.15", features = ["arrow-58"] }
 serde_columnar = "0.3"
 tokio = { version = "1", features = ["rt"] }
+uuid = { version = "1.0", features = ["v4"] }
 vortex = { version = "0.85", features = ["tokio"] }
-
-[[bench]]
-name = "collection"
-harness = false
 
 [[bench]]
 name = "chunk_size"
@@ -53,25 +50,13 @@ name = "filter"
 harness = false
 
 [[bench]]
-name = "float_round"
-harness = false
-
-[[bench]]
-name = "number"
-harness = false
-
-[[bench]]
-name = "other"
-harness = false
-
-[[bench]]
 name = "struct"
 harness = false
 
 [[bench]]
-name = "time_round"
+name = "timeline"
 harness = false
 
 [[bench]]
-name = "timeline"
+name = "types"
 harness = false

@@ -4,6 +4,10 @@ use std::time::Instant;
 
 pub const ITERATIONS: usize = 50;
 
+/// pco_pack's rows per chunk. The fair-comparison unit: every codec (pco,
+/// PcoPack, msgpack+zstd) is measured at this data size.
+pub const CHUNK_ROWS: usize = 262_144;
+
 /// Benchmark a closure and return average time in milliseconds (rounded to 1 decimal).
 pub fn avg_ms<T, F: Fn() -> T>(f: F) -> f64 {
     let mut total_ns: u128 = 0;
@@ -45,83 +49,334 @@ pub fn format_ms(ms: f64) -> String {
     format!("{:.1} ms", ((ms * 10.0).round() / 10.0))
 }
 
-/// Serialize data to msgpack and compress with zstd (level 3).
-pub fn to_msgpack_zstd<T: serde::Serialize>(data: &[T]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    let mut ser = rmp_serde::Serializer::new(&mut buf);
-    serde::Serialize::serialize(&data, &mut ser).expect("msgpack failed");
-    zstd::encode_all(&*buf, 3).unwrap()
+// Shared deterministic distribution primitives (splitmix64-seeded): each
+// distribution is one transformation of the row index, shared across types.
+
+/// Deterministic high-quality 64-bit hash (splitmix64), the seed for all generators.
+pub fn splitmix64(i: usize) -> u64 {
+    let mut z = (i as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
-/// Benchmark PcoPack roundtrip (write + read all rows) for a PcoSerde type.
-/// Returns (label, deserialization time in ms, serialized size in bytes).
-pub fn bench_roundtrip<T: pco_pack::PcoSerde + Clone + std::fmt::Debug, F: Fn(usize) -> Vec<T>>(
+/// Uniform [0, 1) derived from a row index (53 bits of precision).
+pub fn unit64(i: usize) -> f64 {
+    (splitmix64(i) >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// Index a uniform draw falls into under a cumulative distribution
+/// (`cdf[i]` = cumulative probability through `i`).
+pub fn cdf_index(cdf: &[f64], r: f64) -> usize {
+    match cdf.binary_search_by(|c| c.total_cmp(&r)) {
+        Ok(i) => i,
+        Err(i) => i.min(cdf.len() - 1),
+    }
+}
+
+/// Right-skewed small counter: ~64% in 1..22 with a j^-2 skew (p50 = 2), the
+/// rest a Pareto tail.
+pub fn skew_small(i: usize) -> i64 {
+    const SPIKE_CDF: [f64; 22] = [
+        0.6248, 0.7810, 0.8504, 0.8895, 0.9145, 0.9318, 0.9446, 0.9543, 0.9620, 0.9683, 0.9735,
+        0.9778, 0.9815, 0.9847, 0.9875, 0.9899, 0.9921, 0.9940, 0.9957, 0.9973, 0.9987, 1.0,
+    ];
+    if unit64(i) < 0.64 {
+        1 + cdf_index(&SPIKE_CDF, unit64(i.wrapping_add(0x5eed))) as i64
+    } else {
+        let u = unit64(i.wrapping_add(0xbeef));
+        (10.0 * (1.0 - u).powf(-1.0 / 1.02)).min(3_362_520.0) as i64
+    }
+}
+
+/// Log-normal positive values (a CLT normal, exponentiated), a realistic
+/// score/latency shape (p50 ~10, heavy right tail).
+pub fn lognorm_small(i: usize) -> f64 {
+    let mut s = 0.0f64;
+    for k in 0..12 {
+        s += unit64(i.wrapping_add(k * 7919));
+    }
+    s = (s - 6.0) * 1.1;
+    s.exp() * 10.0
+}
+
+/// Repeating-pattern column: a stable 12-slot snapshot pattern with variable
+/// length and occasional drift; the repetitions feed zstd back-references.
+pub fn gen_repeating<T: Copy>(n: usize, pattern: &[T], values: &[T], counts: &[f64]) -> Vec<T> {
+    let total: f64 = counts.iter().sum();
+    let mut cdf = Vec::with_capacity(counts.len());
+    let mut acc = 0.0;
+    for c in counts {
+        acc += c / total;
+        cdf.push(acc);
+    }
+    let mut slots: Vec<T> = pattern.to_vec();
+    let mut out = Vec::with_capacity(n);
+    let mut snap = 0usize;
+    while out.len() < n {
+        let len = 10 + (splitmix64(snap.wrapping_mul(2_654_435_761)) % 5) as usize;
+        // Drift: 5% of snapshots redraw 1-2 slots from the measured marginal.
+        if unit64(snap.wrapping_add(0xbeef)) < 0.05 {
+            let k = 1 + (splitmix64(snap.wrapping_add(0x1234)) % 2) as usize;
+            for j in 0..k {
+                let s = (splitmix64(snap.wrapping_mul(7919).wrapping_add(j)) % 12) as usize;
+                slots[s] = values[cdf_index(&cdf, unit64(snap.wrapping_mul(104_729).wrapping_add(s)))];
+            }
+        }
+        // Random phase: consecutive snapshots don't start at the same slot, so
+        // rows share no aligned repetition (matching the real columns).
+        let phase = (splitmix64(snap.wrapping_mul(31)) % 12) as usize;
+        for k in 0..len {
+            if out.len() == n {
+                return out;
+            }
+            out.push(slots[(k + phase) % 12]);
+        }
+        snap += 1;
+    }
+    out
+}
+
+// Codecs
+
+/// msgpack (rmp_serde) + zstd level 3, one zstd frame per `CHUNK_ROWS` chunk.
+pub fn to_msgpack_zstd<T: serde::Serialize>(data: &[T]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for chunk in data.chunks(CHUNK_ROWS) {
+        let mut buf = Vec::new();
+        let mut ser = rmp_serde::Serializer::new(&mut buf);
+        serde::Serialize::serialize(chunk, &mut ser).expect("msgpack failed");
+        out.extend_from_slice(&zstd::encode_all(&*buf, 3).unwrap());
+    }
+    out
+}
+
+/// PcoPack write time (ms) and size (bytes) for a PcoSerde type; verifies a
+/// full sequential roundtrip (skipping rows corrupts the forward-only reader).
+pub fn bench_write<T: pco_pack::PcoSerde + Clone + PartialEq + std::fmt::Debug, F: Fn(usize) -> Vec<T>>(
     label: &str, n_rows: usize, build: F,
 ) -> (String, f64, usize) {
     let data = build(n_rows);
-    let buf = T::write(data.clone(), 0, Default::default()).unwrap();
-    let size = buf.len();
-    let ms = avg_ms(|| {
-        let mut cursor = Cursor::new(&buf[..]);
-        let mut reader = T::read(&mut cursor, 0, Default::default()).unwrap();
-        let mut result = Vec::with_capacity(data.len());
-        for row_idx in 0..data.len() {
-            result.push(T::get(&mut reader, row_idx));
-        }
-        black_box(result)
-    });
-    (label.to_string(), ms, size)
+    let (ms, buf) = avg_ms_pair(|| T::write(data.clone(), 0, Default::default()).unwrap());
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = T::read(&mut cursor, 0, Default::default()).unwrap();
+    for idx in 0..n_rows {
+        assert_eq!(
+            T::get(&mut reader, idx).unwrap(),
+            Some(data[idx].clone()),
+            "roundtrip mismatch at row {idx}"
+        );
+    }
+    (label.to_string(), ms, buf.len())
 }
 
-/// Benchmark msgpack roundtrip on a Serialize+Deserialize type. Returns time in ms.
-pub fn bench_msgpack<T: serde::Serialize + for<'de> serde::Deserialize<'de>>(data: &[T]) -> f64 {
-    let buf = to_msgpack_zstd(data);
-    let decompressed = zstd::decode_all(&buf[..]).unwrap();
-    match rmp_serde::from_read::<_, Vec<T>>(Cursor::new(decompressed.clone())) {
-        Ok(_result) => {
-            // eprintln!("bench_msgpack: deserialization OK ({})", result.len());
-        }
-        Err(e) => {
-            eprintln!(
-                "bench_msgpack: FAILED to deserialize {} items of type `{}`: {:?}",
-                data.len(),
-                std::any::type_name::<T>(),
-                e
-            );
-        }
+/// [`bench_write`] for lossy knobs (`float_round`/`time_round`): the roundtrip
+/// check compares against `expect(&original)`, the rounded value actually stored.
+pub fn bench_write_round<
+    T: pco_pack::PcoSerde + Clone + PartialEq + std::fmt::Debug,
+    F: Fn(usize) -> Vec<T>,
+    E: Fn(&T) -> T,
+>(
+    label: &str, n_rows: usize, build: F, float_round: u32, time_round: chrono::Duration, expect: E,
+) -> (String, f64, usize) {
+    let data = build(n_rows);
+    let (ms, buf) = avg_ms_pair(|| T::write(data.clone(), float_round, time_round).unwrap());
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = T::read(&mut cursor, float_round, time_round).unwrap();
+    for idx in 0..n_rows {
+        assert_eq!(
+            T::get(&mut reader, idx).unwrap(),
+            Some(expect(&data[idx])),
+            "roundtrip mismatch at row {idx}"
+        );
     }
-    avg_ms(|| {
-        let decompressed = zstd::decode_all(&buf[..]).unwrap();
-        let cursor = Cursor::new(decompressed);
-        black_box(rmp_serde::from_read::<_, Vec<T>>(cursor).unwrap());
+    (label.to_string(), ms, buf.len())
+}
+
+/// msgpack+zstd write (serialization) time in ms; verifies a single-frame
+/// decode roundtrip once.
+pub fn bench_msgpack<T: serde::Serialize + for<'de> serde::Deserialize<'de>>(data: &[T]) -> f64 {
+    let mut buf = Vec::new();
+    let mut ser = rmp_serde::Serializer::new(&mut buf);
+    serde::Serialize::serialize(data, &mut ser).expect("msgpack failed");
+    let z = zstd::encode_all(&*buf, 3).unwrap();
+    let decompressed = zstd::decode_all(&z[..]).unwrap();
+    let back: Vec<T> = rmp_serde::from_read(Cursor::new(decompressed)).expect("msgpack decode failed");
+    assert_eq!(back.len(), data.len());
+    avg_ms(|| to_msgpack_zstd(data))
+}
+
+/// Standalone pco (`ChunkConfig::default()`, pco's own chunking) for a flat
+/// numeric column. Returns (write ms, size bytes).
+pub fn bench_pco_col<T: pco::data_types::Number>(data: &[T]) -> (f64, usize) {
+    let (ms, buf) = avg_ms_pair(|| pco::standalone::simple_compress(data, &pco::ChunkConfig::default()).unwrap());
+    (ms, buf.len())
+}
+
+/// Standalone pco with 8-bit types enabled, the only config that accepts a
+/// `u8`/`i8` column; PcoPack enables them by default.
+pub fn bench_pco_col_8bit<T: pco::data_types::Number>(data: &[T]) -> (f64, usize) {
+    let cfg = pco::ChunkConfig::default().with_enable_8_bit(true);
+    let (ms, buf) = avg_ms_pair(|| pco::standalone::simple_compress(data, &cfg).unwrap());
+    (ms, buf.len())
+}
+
+/// Baseline for dynamic types (strings, byte arrays, JSON, maps): pco has no
+/// serde API for them, so the fallback stores them as msgpack+zstd.
+#[allow(dead_code)]
+pub fn bench_pco_fallback<T: serde::Serialize>(data: &[T]) -> (f64, usize) {
+    let (ms, buf) = avg_ms_pair(|| to_msgpack_zstd(data));
+    (ms, buf.len())
+}
+
+// Vortex (the vortex crate, via serde_arrow): the general columnar-format
+// competitor. One compact file per column, values wrapped in `Item`.
+
+#[allow(dead_code)] // only some benches measure Vortex
+fn vortex_rt() -> &'static tokio::runtime::Runtime {
+    static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RT.get_or_init(|| tokio::runtime::Builder::new_current_thread().build().unwrap())
+}
+
+/// The session must be created inside `block_on` so vortex picks up the
+/// ambient tokio runtime (the struct bench's convention).
+#[allow(dead_code)]
+fn vortex_session() -> &'static vortex::session::VortexSession {
+    static SESSION: std::sync::OnceLock<vortex::session::VortexSession> = std::sync::OnceLock::new();
+    SESSION.get_or_init(|| {
+        use vortex::VortexSessionDefault as _;
+        vortex_rt().block_on(async { vortex::session::VortexSession::default() })
     })
 }
 
-/// Row for comparing PcoPack vs msgpack (Type, time, size columns).
+/// Write one compact vortex file per column of `T` and verify a full
+/// value-level roundtrip; `Err` for types the pipeline can't express.
+#[allow(dead_code)]
+pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug>(
+    data: &[T],
+) -> Result<(f64, usize), String> {
+    use arrow_schema::FieldRef;
+    use serde_arrow::schema::{SchemaLike, TracingOptions};
+    use serde_arrow::utils::{Item, Items};
+    use vortex::array::stream::ArrayStreamExt;
+    use vortex::arrow::ArrowSessionExt as _;
+    use vortex::buffer::ByteBuffer;
+    use vortex::compressor::BtrBlocksCompressorBuilder;
+    use vortex::file::{OpenOptionsSessionExt, WriteOptionsSessionExt, WriteStrategyBuilder};
+
+    let rt = vortex_rt();
+    let session = vortex_session();
+    // Unsupported types panic inside the pipeline; catch it and silence the
+    // default hook so a caught panic doesn't print a scary message.
+    let old_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Schema: `from_type` for self-describing types, `from_samples` for
+        // the rest; unit enums via `enums_without_data_as_strings`.
+        let options = TracingOptions::default()
+            .enums_without_data_as_strings(true)
+            .allow_null_fields(true);
+        let fields: Vec<FieldRef> = match <Vec<FieldRef>>::from_type::<Item<T>>(options.clone()) {
+            Ok(f) => f,
+            Err(_) => {
+                let samples: Vec<T> = data.iter().take(100).cloned().collect();
+                match <Vec<FieldRef>>::from_samples(Items(samples), options) {
+                    Ok(f) => f,
+                    Err(e) => return Err(e.to_string()),
+                }
+            }
+        };
+
+        let items: Vec<Item<T>> = data.iter().cloned().map(Item).collect();
+        let (ms, bytes) = avg_ms_pair(|| {
+            rt.block_on(async {
+                let batch = serde_arrow::to_record_batch(&fields, &items).unwrap();
+                let schema_in = batch.schema();
+                let array = session.arrow().from_arrow_record_batch(batch, &schema_in).unwrap();
+                let mut out: Vec<u8> = vec![];
+                let strategy = WriteStrategyBuilder::default()
+                    .with_btrblocks_builder(BtrBlocksCompressorBuilder::default().with_compact())
+                    .build();
+                session
+                    .write_options()
+                    .with_strategy(strategy)
+                    .write(&mut out, array.to_array_stream())
+                    .await
+                    .unwrap();
+                out
+            })
+        });
+
+        // Full value-level roundtrip check (the harness convention).
+        let back: Vec<Item<T>> = rt.block_on(async {
+            let file = session.open_options().open_buffer(ByteBuffer::from(bytes.clone())).unwrap();
+            let scan = file.scan().unwrap();
+            let array = scan.into_array_stream().unwrap().read_all().await.unwrap();
+            let schema_out = session.arrow().to_arrow_schema(array.dtype()).unwrap();
+            #[allow(deprecated)]
+            use vortex::arrow::ArrowArrayExecutor as _;
+            use vortex::array::VortexSessionExecute;
+            let mut ctx = session.create_execution_ctx();
+            #[allow(deprecated)]
+            let batch = array.execute_record_batch(&schema_out, &mut ctx).unwrap();
+            serde_arrow::from_record_batch(&batch).unwrap()
+        });
+        assert_eq!(
+            back.iter().map(|i| i.0.clone()).collect::<Vec<_>>(),
+            data.to_vec(),
+            "vortex roundtrip mismatch"
+        );
+        Ok((ms, bytes.len()))
+    }));
+    std::panic::set_hook(old_hook);
+    match result {
+        Ok(res) => res,
+        Err(_) => Err("panic in the vortex pipeline (type unsupported?)".to_string()),
+    }
+}
+
+/// [`bench_vortex`] as formatted table cells: "-" where the vortex pipeline
+/// cannot express the type (complex enums, heterogeneous values, maps).
+#[allow(dead_code)]
+pub fn vortex_cell<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug>(
+    data: &[T],
+) -> (String, String) {
+    match bench_vortex(data) {
+        Ok((t, s)) => (format_ms(t), format_bytes(s)),
+        Err(_) => ("-".to_string(), "-".to_string()),
+    }
+}
+
+/// Row for the four-codec comparison table: pco, PcoPack, msgpack+zstd, and
+/// Vortex (write time, then size).
 pub struct ComparisonRow {
     pub type_name: String,
     pub pco_time: String,
+    pub pco_pack_time: String,
     pub mp_time: String,
-    pub time_ratio: String,
+    pub vortex_time: String,
     pub pco_size: String,
+    pub pco_pack_size: String,
     pub mp_size: String,
-    pub size_ratio: String,
+    pub vortex_size: String,
 }
 
 impl markdown_tables::MarkdownTableRow for ComparisonRow {
     fn column_names() -> Vec<&'static str> {
-        vec!["Type", "PcoPack", "msgpack", "Time ratio", "PcoPack", "msgpack", "Size ratio"]
+        vec!["Type", "pco", "PcoPack", "msgpack", "Vortex", "pco", "PcoPack", "msgpack", "Vortex"]
     }
 
     fn column_values(&self) -> Vec<String> {
         vec![
             self.type_name.clone(),
             self.pco_time.clone(),
+            self.pco_pack_time.clone(),
             self.mp_time.clone(),
-            self.time_ratio.clone(),
+            self.vortex_time.clone(),
             self.pco_size.clone(),
+            self.pco_pack_size.clone(),
             self.mp_size.clone(),
-            self.size_ratio.clone(),
+            self.vortex_size.clone(),
         ]
     }
 }
@@ -132,25 +387,37 @@ pub fn print_comparison_table(rows: &[ComparisonRow]) {
     }
 }
 
-/// Row for struct benchmarks (Metric, PcoPack, msgpack, Ratio).
-pub struct StructRow {
-    pub metric: String,
-    pub pco_val: String,
-    pub mp_val: String,
-    pub ratio: String,
+/// Row for the three-codec table: types where pco has no applicable
+/// representation compare PcoPack, msgpack+zstd, and Vortex (time, then size).
+pub struct SlimRow {
+    pub type_name: String,
+    pub pco_pack_time: String,
+    pub mp_time: String,
+    pub vortex_time: String,
+    pub pco_pack_size: String,
+    pub mp_size: String,
+    pub vortex_size: String,
 }
 
-impl markdown_tables::MarkdownTableRow for StructRow {
+impl markdown_tables::MarkdownTableRow for SlimRow {
     fn column_names() -> Vec<&'static str> {
-        vec!["Metric", "PcoPack", "msgpack", "Ratio"]
+        vec!["Type", "PcoPack", "msgpack", "Vortex", "PcoPack", "msgpack", "Vortex"]
     }
 
     fn column_values(&self) -> Vec<String> {
-        vec![self.metric.clone(), self.pco_val.clone(), self.mp_val.clone(), self.ratio.clone()]
+        vec![
+            self.type_name.clone(),
+            self.pco_pack_time.clone(),
+            self.mp_time.clone(),
+            self.vortex_time.clone(),
+            self.pco_pack_size.clone(),
+            self.mp_size.clone(),
+            self.vortex_size.clone(),
+        ]
     }
 }
 
-pub fn print_struct_table(rows: &[StructRow]) {
+pub fn print_slim_table(rows: &[SlimRow]) {
     if !rows.is_empty() {
         println!("{}", markdown_tables::as_table(rows));
     }
