@@ -402,3 +402,91 @@ is a deliberate fidelity cut (not exact): `fwci` and scores carry ~15-digit mode
 Filter selectivity: every dataset carries one highly selective (<= 1% of rows) and one
 looser (<= 30%) filter, labeled in the tables. PcoPack's advantage is largest on the flat,
 time-sorted data (air_quality, taxi) and shrinks on the deeply nested openalex schema.
+
+## Postgres
+
+Real pganalyze monitoring payloads captured from a live pgaweb deployment, the only
+non-public datasets here. The captures commit as neutral msgpack+zstd input blobs on
+Git LFS (content-addressed, so no extra checksum pins), so the benchmark reproduces
+without re-capturing: `cargo bench --bench postgres` decodes them (override the dir with
+`$PCO_PACK_BENCH_DATA`) and re-encodes the same loaded rows through every codec, one
+table per data source (`backend_snapshots`, its Timeline-dedup variant, and
+`query_stats` per granularity), in the same format as [Datasets](#datasets).
+`query_stats` is trimmed to the capture's last 14 days:
+the full capture spans ~100 days for some database IDs (114.3M rows, 748 MB); keeping
+the tail (31.0M rows, 165 MB, 2026-09-09 to 2026-09-23) keeps LFS hosting cheap and
+full runs tractable. Regenerate with the capture crate in `tmp/pg_capture` against a
+live deployment, then trim to the last 14 days before committing:
+
+| File | Content | Size |
+|------|---------|------|
+| `backend_snapshots.msgpack.zst` | every `backend_snapshots_7d` tick reconstructed with the pco backfill's exact keep rule (`application_name`/`client_addr` are empty because the raw table doesn't persist them; the enum stacks carry the signal) | 58,898,437 B |
+| `query_stats.msgpack.zst` | last 14 days of the pco_store `query_stats` partition parent (1min + 1hour children; 31.0M rows) | 172,956,811 B |
+
+Schemas mirror production verbatim (index + timestamp). PcoPack reports full-fidelity,
+plus the `TimeRound` storage model (production's rounded writes: `time_round = 1 s`
+and `float_round = 2` on the query_stats f64 aggregates) as the `PcoPack time_round`
+column. backend_snapshots adds `PcoPack Timeline`: the same rows deduped so unchanged
+state between ticks collapses into one row carrying a `Timeline<0>` of the
+ticks it was observed at (see [Timeline](#timeline)). Indexed writes return rows
+index-grouped, not in stored order, so PcoPack roundtrips verify row counts (the
+convention for indexed structs, see [Structs](#structs)); filter results are asserted
+against counts computed from each codec's own stored precision.
+
+### backend_snapshots (13328012 rows)
+
+| Metric        | PcoPack  | PcoPack time_round | PcoPack Timeline | Vortex   | columnar | serde_columnar | msgpack |
+|---------------|----------|--------------------|------------------|----------|----------|----------------|---------|
+| Serialize     | 3.8 s    | 3.7 s              | 2.0 s            | 4.3 s    | 1.3 s    | 3.1 s          | 5.1 s   |
+| Deserialize   | 1.4 s    | 1.4 s              | 552.6 ms         | 1.8 s    | 578.1 ms | 2.1 s          | 5.5 s   |
+| Size          | 47.1 MB  | 39.2 MB            | 18.0 MB          | 83.8 MB  | 68.8 MB  | 69.3 MB        | 80.2 MB |
+| Filter 0.49%  | 71.8 ms  | 73.3 ms            | 203.7 ms         | 16.2 ms  | 667.5 ms | 2.2 s          | 5.7 s   |
+| Filter 29.25% | 822.8 ms | 867.2 ms           | 536.7 ms         | 866.8 ms | 692.8 ms | 2.2 s          | 5.7 s   |
+| Filter 77.25% | 1.2 s    | 1.3 s              | 427.7 ms         | 1.6 s    | 697.9 ms | 2.2 s          | 5.8 s   |
+
+- Full-fidelity ~44% under Vortex, ~31% under columnar, ~41% under msgpack;
+  `time_round = 1 s` cuts another ~17% (`backend_start`/`query_start` carry the us)
+- Vortex is the fastest selective filterer (16.2 ms); columnar's full decode+scan
+  amortizes once windows widen (sub-second across every window), where PcoPack pays
+  whole-row chunk reads
+- The last-1h window is the production dashboard query: 65,194 of 13.3M rows in ~72 ms
+- `PcoPack Timeline` re-encodes the same ticks deduped: 3,794,455 fold rows survive
+  out of 13.3M (idle backends dominate), and PcoPack's range columns make the fold
+  pay: 47.1 MB to 18.0 MB (-62%), ~1.9x faster serialize, ~2.5x faster deserialize.
+  Active ticks barely fold (their payload changes every tick), so they dominate the
+  deduped set and the window filter pays range-overlap checks across chunk boundaries
+  (~204 ms vs ~72 ms), while the wide scans still speed up (~1.5x/~2.8x). Filter
+  labels are per-tick fractions; the Timeline column answers the same queries over
+  the fold rows (0.44%/83.34%/52.12%), asserted internally
+
+### query_stats_1min (29970299 rows)
+
+| Metric        | PcoPack  | PcoPack time_round | Vortex   | columnar | serde_columnar | msgpack  |
+|---------------|----------|--------------------|----------|----------|----------------|----------|
+| Serialize     | 5.2 s    | 5.1 s              | 7.5 s    | 4.7 s    | 4.9 s          | 7.3 s    |
+| Deserialize   | 2.0 s    | 2.1 s              | 3.0 s    | 1.5 s    | 4.0 s          | 5.6 s    |
+| Size          | 116.5 MB | 116.4 MB           | 130.0 MB | 191.7 MB | 179.4 MB       | 236.2 MB |
+| Filter 0.31%  | 157.5 ms | 154.1 ms           | 98.9 ms  | 1.6 s    | 3.4 s          | 6.1 s    |
+| Filter 18.19% | 913.2 ms | 846.0 ms           | 1.3 s    | 1.6 s    | 3.3 s          | 5.8 s    |
+| Filter 0.05%  | 35.8 ms  | 35.9 ms            | 22.0 ms  | 1.7 s    | 3.4 s          | 5.8 s    |
+
+### query_stats_1hour (1041799 rows)
+
+| Metric        | PcoPack  | PcoPack time_round | Vortex   | columnar | serde_columnar | msgpack  |
+|---------------|----------|--------------------|----------|----------|----------------|----------|
+| Serialize     | 222.0 ms | 191.1 ms           | 315.8 ms | 433.0 ms | 299.4 ms       | 254.0 ms |
+| Deserialize   | 89.1 ms  | 79.2 ms            | 108.8 ms | 65.0 ms  | 368.5 ms       | 206.3 ms |
+| Size          | 5.9 MB   | 5.9 MB             | 7.1 MB   | 10.0 MB  | 9.1 MB         | 11.6 MB  |
+| Filter 0.63%  | 30.6 ms  | 29.4 ms            | 2.9 ms   | 63.6 ms  | 120.2 ms       | 203.4 ms |
+| Filter 58.45% | 60.6 ms  | 57.9 ms            | 86.9 ms  | 67.1 ms  | 122.5 ms       | 211.0 ms |
+| Filter 0.03%  | 1.7 ms   | 1.8 ms             | 17.2 ms  | 67.2 ms  | 126.6 ms       | 210.3 ms |
+
+- PcoPack full-fidelity is ~10% under Vortex, ~39% under columnar, ~51% under
+  msgpack at both granularities: fingerprints and the calls/rows counters keep
+  every re-encode honest and cheap to delta-encode
+- The `PcoPack time_round` column barely moves here (116.5 MB to 116.4 MB): ticks are
+  already second-aligned and pco's float stage already squeezes the f64
+  aggregates, so the rounding knobs earn their keep on backend_snapshots, not stats
+- Vortex is again the sharpest selective filterer (98.9/22.0 ms at 1min,
+  2.9/17.2 ms at 1hour); PcoPack's index+timestamp layout tracks it within ~60%
+  while every decode-and-scan codec pays full store decode on every window

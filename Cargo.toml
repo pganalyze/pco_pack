@@ -71,3 +71,7 @@ harness = false
 [[bench]]
 name = "types"
 harness = false
+
+[[bench]]
+name = "postgres"
+harness = false
