@@ -33,7 +33,14 @@ arrow-array = "58"
 arrow-schema = "58"
 bytemuck = "1.0"
 columnar = { version = "0.13", features = ["serde", "std"] }
+flate2 = "1"
+futures = "0.3"
 markdown-tables = "0.1"
+md-5 = "0.10"
+# the Geofabrik extract's data blobs are zlib-compressed
+osm-pbf = { version = "0.3", default-features = false, features = ["zlib"] }
+osm-types = "0.1"
+parquet = "58"
 peak_alloc = "0.3"
 serde_arrow = { version = "0.15", features = ["arrow-58"] }
 serde_columnar = "0.3"
@@ -43,6 +50,10 @@ vortex = { version = "0.85", features = ["tokio"] }
 
 [[bench]]
 name = "chunk_size"
+harness = false
+
+[[bench]]
+name = "datasets"
 harness = false
 
 [[bench]]

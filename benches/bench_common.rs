@@ -44,9 +44,14 @@ pub fn format_bytes(bytes: usize) -> String {
     }
 }
 
-/// Format milliseconds with 1 decimal precision (rounded). Always outputs ms.
+/// Format a duration: milliseconds below a second, fractional seconds at or
+/// above it (mirrors `format_bytes`' unit switch; big ms values are noisy).
 pub fn format_ms(ms: f64) -> String {
-    format!("{:.1} ms", ((ms * 10.0).round() / 10.0))
+    if ms >= 1000.0 {
+        format!("{:.1} s", (ms / 1000.0 * 10.0).round() / 10.0)
+    } else {
+        format!("{:.1} ms", ((ms * 10.0).round() / 10.0))
+    }
 }
 
 // Shared deterministic distribution primitives (splitmix64-seeded): each

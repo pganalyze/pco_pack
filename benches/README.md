@@ -270,3 +270,135 @@ PcoPack is designed to skip expensive deserialization work for rows that don't m
 | multi-field (string_val + u8_val)                    | 7.0 ms    | 1000   |
 | multi-field (json_val + u8_val)                      | 7.0 ms    | 1000   |
 | multi-field zero-match (id + int32_val + string_val) | 0.3 ms    | 0      |
+
+## Datasets
+
+Four public datasets run end to end at full scale: serialize, deserialize, size, and filtered
+reads. Each operation runs one pass, so sizes are exact and timings carry run-to-run variance.
+Run `cargo bench --bench datasets` (~25-30 min); the pinned payloads are cached in gitignored
+`tmp/` on first run, offline afterwards; override the dir with `$PCO_PACK_BENCH_DATA`:
+
+| File                                            | Source                                                                                        | Size          | Pin                                    |
+|-------------------------------------------------|-----------------------------------------------------------------------------------------------|---------------|----------------------------------------|
+| `devinrsmith-air-quality.20220714.zstd.parquet` | https://pcodec-public.s3.amazonaws.com/devinrsmith-air-quality.20220714.zstd.parquet          | 15,661,377 B  | size (multipart ETag)                  |
+| `fhvhv_tripdata_2023-04.parquet`                | https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2023-04.parquet                | 491,826,475 B | md5 `7233505d557e0c4f7a2e64ba4bfe5c2d` |
+| `austria-260923.osm.pbf`                        | https://download.geofabrik.de/europe/austria-260923.osm.pbf (ODbL)                            | 810,746,083 B | md5 `481bb65e61d5d5d22bb8a065b22506e2` |
+| `openalex_part_0000.gz`                         | https://openalex.s3.amazonaws.com/data/jsonl/works/updated_date=2026-09-23/part_0000.gz (CC0) | 772,597,338 B | size (multipart ETag)                  |
+| `openalex_part_0001.gz`                         | https://openalex.s3.amazonaws.com/data/jsonl/works/updated_date=2026-09-23/part_0001.gz (CC0) | 771,641,892 B | size (multipart ETag)                  |
+
+Each schema maps to its most expressive Rust representation (closed vocabularies -> enums,
+sparse flags -> `Option<bool>`, small strings -> `SmolStr`), and every codec round-trips the
+same values through mirrors where needed (columnar codecs: enum as u8, `DateTime` as i64,
+maps as `Vec<(K, V)>`; Vortex: enum utf8 mirrors). Filter results are asserted against the
+counts computed from each codec's own stored precision.
+
+### air_quality (823743 rows)
+
+NYC AirData single-sensor stream (2022-06-22 to 07-14): wide i16 measurements, a monotonic
+i64 counter, ns-precision `DateTime` (stored as us, real truncation), and the only genuine
+default-vs-lossy pair (`time_round = 1 s`). Runs at the default chunk size (4 chunks):
+`chunk_size = 2048` measured ~2x faster window filters but ~10% worse size and ~4x slower
+serialize.
+
+| Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
+|--------------|----------|-----------------|----------|----------|----------------|----------|
+| Serialize    | 118.5 ms | 110.4 ms        | 229.6 ms | 110.3 ms | 149.6 ms       | 322.4 ms |
+| Deserialize  | 55.0 ms  | 54.5 ms         | 69.8 ms  | 38.2 ms  | 64.5 ms        | 228.1 ms |
+| Size         | 4.1 MB   | 2.5 MB          | 4.1 MB   | 14.0 MB  | 5.4 MB         | 15.9 MB  |
+| Filter 0.18% | 6.8 ms   | 6.7 ms          | 2.4 ms   | 42.4 ms  | 62.5 ms        | 226.5 ms |
+| Filter 4.49% | 8.3 ms   | 8.0 ms          | 4.1 ms   | 40.9 ms  | 61.5 ms        | 230.5 ms |
+
+- Size ties Vortex (both full-fidelity), ~71% under columnar and ~74% under msgpack;
+  `time_round = 1 s` cuts another 40%
+- Deserialize ~4x faster than msgpack; window filters cost ~12-15% of the full deserialize:
+  both windows sit inside chunk 0, so the rest of the file is never touched
+- Vortex mirrors the timestamp as i64 ns (its RFC3339 string column would make the range
+  filter unsound) and is the fastest filterer here (2.4 / 4.1 ms)
+
+### taxi (19144903 rows)
+
+NYC TLC FHV trips, April 2023, the file pcodec benchmarks as "taxi". All four timestamps
+are integer seconds (asserted); `float_round = 3` is exactly lossless (asserted): miles
+carry a third decimal on 24% of rows, amounts <= 2.
+
+| Metric         | PcoPack     | PcoPack (lossy)   | Vortex       | columnar    | serde_columnar   | msgpack      |
+|----------------|-------------|-------------------|--------------|-------------|------------------|--------------|
+| Serialize      | 9.5 s       | 9.4 s             | 21.1 s       | 8.2 s       | 17.4 s           | 12.9 s       |
+| Deserialize    | 3.7 s       | 3.6 s             | 9.9 s        | 2.6 s       | 5.7 s            | 10.3 s       |
+| Size           | 285.5 MB    | 275.7 MB          | 413.8 MB     | 572.5 MB    | 523.4 MB         | 661.5 MB     |
+| Filter 0.2%    | 106.7 ms    | 97.3 ms           | 30.8 ms      | 2.6 s       | 6.2 s            | 10.0 s       |
+| Filter 4.05%   | 228.1 ms    | 227.2 ms          | 447.7 ms     | 2.6 s       | 5.9 s            | 10.3 s       |
+
+- Smallest codec on the table by a wide margin: ~31% under Vortex, ~57% under msgpack
+- Hour window favors Vortex (finer row-group pruning); day window favors PcoPack (~49%
+  faster): chunk bounds vs row groups
+- pcodec's published numbers for reference (M3 Max, numeric columns only): pco L8 333.6 MB,
+  parquet+zstd1 456.5 MB
+
+### osm (87800672 nodes / 9378713 ways / 180809 relations)
+
+Geofabrik Austria PBF (ODbL). Node coords are nanodegree decimals (9 fractional digits);
+`float_round = 7` drops only sub-centimeter noise. Filters use padded boxes centered on the
+data centroid: cross-border geometry puts 0.013% of nodes outside the nominal country
+bbox. Ways/relations have no natural scalar filter.
+
+#### Node (87800672 rows)
+
+| Metric         | PcoPack     | PcoPack (lossy)   | Vortex       | columnar    | serde_columnar   | msgpack     |
+|----------------|-------------|-------------------|--------------|-------------|------------------|-------------|
+| Serialize      | 9.5 s       | 10.4 s            | 30.8 s       | 8.3 s       | 9.1 s            | 8.6 s       |
+| Deserialize    | 3.3 s       | 3.2 s             | 4.4 s        | 2.4 s       | 3.8 s            | 6.8 s       |
+| Size           | 867.1 MB    | 359.7 MB          | 412.0 MB     | 1.2 GB      | 1.1 GB           | 1.4 GB      |
+| Filter 0.17%   | 750.6 ms    | 792.1 ms          | 548.8 ms     | 2.3 s       | 4.2 s            | 6.9 s       |
+| Filter 4.65%   | 1.2 s       | 1.3 s             | 2.0 s        | 2.3 s       | 4.1 s            | 6.8 s       |
+
+- Vortex is ~53% smaller full-fidelity; the gap is entirely the raw f64 coordinate columns,
+  where PcoPack pays ~4.9 B/coord; tags favor PcoPack
+- `float_round = 7` cuts node size ~59% and lands ~13% below every full-fidelity codec
+- The wide box runs ~40% faster than Vortex (chunk bounds skip); the narrow box trails it
+  (~37% slower): Vortex's row groups prune spatial data better at fine granularity
+
+#### Way (9378713 rows)
+
+| Metric        | PcoPack     | Vortex       | columnar    | serde_columnar   | msgpack     |
+|---------------|-------------|--------------|-------------|------------------|-------------|
+| Serialize     | 9.2 s       | 11.9 s       | 6.6 s       | 5.6 s            | 4.6 s       |
+| Deserialize   | 4.8 s       | 4.0 s        | 1.6 s       | 3.8 s            | 4.0 s       |
+| Size          | 199.7 MB    | 207.1 MB     | 395.1 MB    | 459.9 MB         | 491.0 MB    |
+
+#### Relation (180809 rows)
+
+| Metric      | PcoPack  | Vortex   | columnar | serde_columnar | msgpack  |
+|-------------|----------|----------|----------|----------------|----------|
+| Serialize   | 491.1 ms | 639.8 ms | 301.9 ms | 484.6 ms       | 206.7 ms |
+| Deserialize | 234.9 ms | 227.9 ms | 65.0 ms  | 200.8 ms       | 266.0 ms |
+| Size        | 18.4 MB  | 19.2 MB  | 20.2 MB  | 17.3 MB        | 19.8 MB  |
+
+Ways: PcoPack ~4% under Vortex, ~49% under columnar. Vortex stores `Member.rtype` as a
+utf8 string. `relation` members are too rare in its 100-row sampling to observe every
+enum variant, and an unobserved variant leaves an unencodable Union.
+
+### openalex (558403 works)
+
+OpenAlex `works` snapshot (CC0): deeply nested JSON flattened to typed structs: enums,
+`Option<bool>`, maps as `Vec<(K, V)>`, nested authorship/topic collections. `float_round = 4`
+is a deliberate fidelity cut (not exact): `fwci` and scores carry ~15-digit model noise.
+
+| Metric         | PcoPack      | PcoPack (lossy)   | Vortex       | columnar     | serde_columnar   | msgpack     |
+|----------------|--------------|-------------------|--------------|--------------|------------------|-------------|
+| Serialize      | 16.4 s       | 15.3 s            | 12.3 s       | 11.0 s       | 10.6 s           | 5.3 s       |
+| Deserialize    | 7.1 s        | 7.2 s             | 5.8 s        | 1.8 s        | 6.0 s            | 4.9 s       |
+| Size           | 411.5 MB     | 404.2 MB          | 423.8 MB     | 556.3 MB     | 513.4 MB         | 566.7 MB    |
+| Filter 0.02%   | 2.4 s        | 2.3 s             | 479.5 ms     | 1.7 s        | 6.2 s            | 5.2 s       |
+| Filter 2.94%   | 2.8 s        | 2.9 s             | 1.1 s        | 1.8 s        | 6.0 s            | 4.6 s       |
+
+- ~3% under Vortex full-fidelity; ~26% under columnar
+- Filter cost barely tracks selectivity here (~34-40% of the full deserialize either way):
+  the bench asks for whole rows (`fields = &[]`), so every surviving chunk decompresses
+  everything before matching. A narrow `fields` list would read only the filtered column
+- Vortex is the fastest filterer (row-group pruning + predicate pushdown); columnar's full
+  decode+scan costs ~1.7 s
+
+Filter selectivity: every dataset carries one highly selective (<= 1% of rows) and one
+looser (<= 30%) filter, labeled in the tables. PcoPack's advantage is largest on the flat,
+time-sorted data (air_quality, taxi) and shrinks on the deeply nested openalex schema.
