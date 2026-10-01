@@ -37,6 +37,11 @@ pub fn is_timeline_type(ty: &syn::Type) -> bool {
     type_last_segment_matches(ty, "Timeline").unwrap_or(false)
 }
 
+/// Check if a type is a chrono `DateTime`.
+pub fn is_datetime_type(ty: &syn::Type) -> bool {
+    type_last_segment_matches(ty, "DateTime").unwrap_or(false)
+}
+
 /// Extract the const generic parameter (RESOLUTION) from a Timeline<N> type.
 /// Returns the literal value as a TokenStream, or `0` if not found.
 pub fn extract_timeline_const_generic(ty: &syn::Type) -> proc_macro2::TokenStream {

@@ -32,6 +32,7 @@ mod uuid;
 mod vec;
 mod vec_number;
 
+pub use datetime::round_bounds_us;
 pub use filter_mask::FilterMask;
 pub use lazy_reader::LazyReader;
 pub use number::{CoercibleNumber, NumberReader, NumberWriter, RangeCoercibleNumber};
