@@ -4,7 +4,7 @@ All serialization times and sizes include compression (either Pcodec or zstd). T
 
 ## Types
 
-PcoPack vs standalone Pcodec vs msgpack+zstd vs Vortex, per field type and distribution. All rows run at PcoPack's default 262k-row chunk size. Pcodec uses zero-config defaults plus 8-bit types. msgpack+zstd uses the same chunking. Vortex is one compact btrblocks file per column, with "-" where the pipeline can't express the type: complex enums and heterogeneous-shape `serde_json::Value`. Map rows run twice: once with serde_arrow's struct-promoted tracing, once as native `vortex.map`.
+PcoPack vs standalone Pcodec vs msgpack+zstd vs Vortex, per field type and distribution. All rows run at PcoPack's default 262k-row chunk size. Pcodec uses zero-config defaults plus 8-bit types. msgpack+zstd uses the same chunking. Vortex is one compact btrblocks file per column, with "-" where the pipeline can't express the type: complex enums and heterogeneous-shape `serde_json::Value`. Map rows declare their Vortex layout: native `vortex.map` for open tuple-key vocabularies, struct-promoted columns for stable vocabularies.
 
 Every Numbers row is a synthetic shape that isolates exactly one axis: entropy floor, type-agnosticism, delta, skew, sparsity and placement, alphabet and dwell length, distinct count, multiset placement, recurrence distance, chunk fixed costs. Real-column bytes live in the [Postgres](#postgres) section.
 
@@ -84,67 +84,65 @@ Where each codec wins:
 | `Enum (complex, repeating pattern + payloads)`       | -     | 96 KB   | 180 KB  | -      | -      | 2.4 ms  | 1.9 ms  | -      |
 | `u8 (repeating-pattern discriminant, plain integer)` | 24 KB | 24 KB   | 17 KB   | 26 KB  | 0.2 ms | 0.2 ms  | 0.3 ms  | 1.2 ms |
 
+Complex enums stay `-`: serde_arrow traces them to arrow dense unions, and
+the Vortex arrow import does not implement unions (`vortex.union` joins no
+core edition writable set).
+
 ### Strings & bytes
 
-| Type                  | PcoPack | msgpack | Vortex  | PcoPack | msgpack | Vortex  |
-|-----------------------|---------|---------|---------|---------|---------|---------|
-| `String`              | 291 KB  | 288 KB  | 328 KB  | 5.2 ms  | 2.7 ms  | 10.5 ms |
-| `SmolStr`             | 291 KB  | 288 KB  | 328 KB  | 3.2 ms  | 2.8 ms  | 10.3 ms |
-| `Uuid (v4 random)`    | 1692 KB | 1692 KB | 2001 KB | 1.6 ms  | 1.4 ms  | 23.0 ms |
-| `ByteBuf (avg 128B)`  | 12.4 MB | 12.4 MB | 12.6 MB | 13.2 ms | 10.4 ms | 18.8 ms |
-| `Vec<String> (avg 4)` | 139 KB  | 138 KB  | 183 KB  | 9.9 ms  | 4.1 ms  | 14.3 ms |
-| `serde_json::Value`   | 635 KB  | 632 KB  | -       | 13.6 ms | 4.3 ms  | -       |
-| `serde_json::Value (5 stable keys, 50k rows)` | 301 KB | 299 KB | 124 KB | 14.7 ms | 4.4 ms | 10.1 ms |
+| Type                                          | PcoPack | msgpack | Vortex  | PcoPack | msgpack | Vortex  |
+|-----------------------------------------------|---------|---------|---------|---------|---------|---------|
+| `String`                                      | 291 KB  | 288 KB  | 328 KB  | 5.2 ms  | 2.7 ms  | 10.5 ms |
+| `SmolStr`                                     | 291 KB  | 288 KB  | 328 KB  | 3.2 ms  | 2.8 ms  | 10.3 ms |
+| `Uuid (v4 random)`                            | 1692 KB | 1692 KB | 2001 KB | 1.6 ms  | 1.4 ms  | 23.0 ms |
+| `ByteBuf (avg 128B)`                          | 12.4 MB | 12.4 MB | 12.6 MB | 13.2 ms | 10.4 ms | 18.8 ms |
+| `Vec<String> (avg 4)`                         | 139 KB  | 138 KB  | 183 KB  | 9.9 ms  | 4.1 ms  | 14.3 ms |
+| `serde_json::Value`                           | 635 KB  | 632 KB  | -       | 13.6 ms | 4.3 ms  | -       |
+| `serde_json::Value (5 stable keys, 50k rows)` | 301 KB  | 299 KB  | 124 KB  | 14.7 ms | 4.4 ms  | 10.1 ms |
+
+Stable-shape JSON objects ride the struct-promoted layout (key names enter
+the schema once, not per object). Heterogeneous-shape `serde_json::Value`
+stays `-`: serde_arrow cannot merge mismatched samples into one schema.
 
 ### Maps
 
-| Type                                                                             | PcoPack | msgpack | Vortex   | PcoPack  | msgpack | Vortex   |
-|----------------------------------------------------------------------------------|---------|---------|----------|----------|---------|----------|
-| `BTreeMap<String, i32>`                                                          | 125 KB  | 123 KB  | -        | 2.1 ms   | 1.2 ms  | -        |
-| `BTreeMap<String, i32> (vortex.map)`                                             | 125 KB  | 123 KB  | 138 KB   | 2.1 ms   | 1.2 ms  | 5.8 ms   |
-| `HashMap<String, i32>`                                                           | 125 KB  | 130 KB  | -        | 2.7 ms   | 1.3 ms  | -        |
-| `HashMap<String, i32> (vortex.map)`                                              | 125 KB  | 130 KB  | 142 KB   | 2.7 ms   | 1.3 ms  | 5.7 ms   |
-| `BTreeMap<SmolStr, i32>`                                                         | 125 KB  | 123 KB  | -        | 1.6 ms   | 3.7 ms  | -        |
-| `BTreeMap<SmolStr, i32> (vortex.map)`                                          | 125 KB  | 123 KB  | 138 KB   | 1.6 ms   | 3.7 ms  | 5.7 ms   |
-| `HashMap<SmolStr, i32>`                                                          | 125 KB  | 130 KB  | -        | 2.4 ms   | 4.3 ms  | -        |
-| `HashMap<SmolStr, i32> (vortex.map)`                                            | 125 KB  | 130 KB  | 142 KB   | 2.4 ms   | 4.3 ms  | 5.8 ms   |
-| `HashMap<SmolStr, i32> (8 stable keys)`                                          | 43 KB   | 148 KB  | 51 KB    | 3.4 ms   | 1.9 ms  | 4.6 ms   |
-| `HashMap<SmolStr, i32> (8 stable keys) (vortex.map)`                             | 43 KB   | 148 KB  | 76 KB    | 3.4 ms   | 1.9 ms  | 5.2 ms   |
-| `HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null)`                        | 26 KB   | 127 KB  | 36 KB    | 3.4 ms   | 1.8 ms  | 4.4 ms   |
-| `HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null) (vortex.map)`         | 26 KB   | 127 KB  | 60 KB    | 3.4 ms   | 1.8 ms  | 5.1 ms   |
-| `HashMap<SmolStr, i32> (8 stable keys, walk)`                                     | 115 KB  | 3.3 MB  | 114 KB   | 116.4 ms | 50.6 ms | 61.7 ms  |
-| `HashMap<SmolStr, i32> (8 stable keys, walk) (vortex.map)`                        | 115 KB  | 3.3 MB  | 2033 KB  | 116.4 ms | 50.6 ms | 150.6 ms |
-| `HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null, walk)`                  | 852 KB  | 3.4 MB  | 352 KB   | 98.4 ms  | 52.0 ms | 77.8 ms  |
-| `HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null, walk) (vortex.map)`    | 852 KB  | 3.4 MB  | 1866 KB  | 98.4 ms  | 52.0 ms | 124.2 ms |
+| Type                                                             | PcoPack | msgpack | Vortex | PcoPack  | msgpack | Vortex  |
+|------------------------------------------------------------------|---------|---------|--------|----------|---------|---------|
+| `BTreeMap<String, i32>`                                          | 125 KB  | 123 KB  | 138 KB | 2.2 ms   | 1.2 ms  | 5.9 ms  |
+| `HashMap<String, i32>`                                           | 125 KB  | 130 KB  | 142 KB | 2.8 ms   | 1.3 ms  | 5.8 ms  |
+| `BTreeMap<SmolStr, i32>`                                         | 125 KB  | 123 KB  | 138 KB | 1.7 ms   | 3.9 ms  | 5.8 ms  |
+| `HashMap<SmolStr, i32>`                                          | 125 KB  | 130 KB  | 142 KB | 2.5 ms   | 4.2 ms  | 5.8 ms  |
+| `HashMap<SmolStr, i32> (8 stable keys)`                          | 43 KB   | 148 KB  | 51 KB  | 3.5 ms   | 1.9 ms  | 4.7 ms  |
+| `HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null)`       | 26 KB   | 127 KB  | 36 KB  | 3.5 ms   | 1.9 ms  | 4.5 ms  |
+| `HashMap<SmolStr, i32> (8 stable keys, walk)`                    | 115 KB  | 3.3 MB  | 114 KB | 117.0 ms | 51.6 ms | 61.6 ms |
+| `HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null, walk)` | 852 KB  | 3.4 MB  | 352 KB | 100.9 ms | 52.0 ms | 77.0 ms |
+
+Each row stores maps in whichever Vortex layout wins on its distribution:
+the first four rows use native `vortex.map`, the stable-key rows use
+struct-promoted columns (one column per key, key names in the schema).
 
 - The first four rows stress a ~5000-key random keyspace with tuple-composed
-  keys; tuple keys fail serde_arrow tracing ("cannot interpret key as
-  string"). String keys on the same vocabulary would trace onto a
-  first-100-row schema and silently drop entries whose keys missed it (39872
-  entries in, 13963 out; `examples/map_probe.rs`, section E). The harness
-  roundtrip turns both failures into `-`.
-- The `(vortex.map)` twins write all of it, tuple keys included (struct map
-  keys pass the arrow/vortex import, probe section D), at ~10% over PcoPack.
-  Keys stay in the entries column (varbin->zstd) instead of the schema.
-- The stable-key rows share a fixed 8-key vocabulary and trace cleanly into
-  one Vortex column per key. At 10k rows PcoPack's flattened
-  counts+keys+values streams still edge out the struct, because zstd absorbs
-  the repeated keys. Native twins sit ~1.5-1.7x above the promoted cells,
-  matching the 1.63x probe ratio.
+  keys, and use native `vortex.map`: struct promotion cannot express them.
+  Tuple keys fail serde_arrow tracing ("cannot interpret key as string"),
+  and with string keys the first-100-row schema silently drops every entry
+  outside the sample (measured: 39872 entries in, 13963 out). Native costs
+  ~10% over PcoPack here: keys stay in the entries column (varbin->zstd)
+  instead of the schema.
+- The stable-key rows declare struct promotion and trace into one Vortex
+  column per key. At 10k rows PcoPack's flattened counts+keys+values streams
+  still edge out the struct, because zstd absorbs the repeated keys. The
+  native layout measures ~1.5-1.7x above the promoted cells on this data.
 - Dense walk (chunk-sized, autocorrelated values along row order, a
-  time-sorted capture shape): promoted vs PcoPack is a dead heat (114 KB vs
+  time-sorted capture shape): struct vs PcoPack is a dead heat (114 KB vs
   115 KB). PcoPack's zstd'd key column already neutralizes constant keys, and
-  one interleaved value stream loses little when every key moves. The native
-  twin pays ~18x (2033 KB): one interleaved stream cannot delta-code eight
-  key-specific walks.
-- Sparse walk: per-key separation wins big. Promoted Vortex lands ~59% under
-  PcoPack (352 KB vs 852 KB): a hot-key column keeps its run/delta structure
-  intact across absent keys, while the flat layout pays a presence index per
-  entry and a gap-jumpier value stream. The native twin (1866 KB) still beats
-  msgpack+zstd (3.4 MB).
-- JSON stable objects get the same per-key-column promotion as stable-key
-  maps, ~59% under the msgpack+zstd blob (key names enter the schema once,
-  not per object); heterogeneous-shape `serde_json::Value` stays `-`
+  one interleaved value stream loses little when every key moves. On this row
+  native would pay ~18x (2033 KB): one interleaved stream cannot delta-code
+  eight key-specific walks.
+- Sparse walk: per-key separation wins big. Vortex lands ~59% under PcoPack
+  (352 KB vs 852 KB): a hot-key column keeps its run/delta structure intact
+  across absent keys, while the flat layout pays a presence index per entry
+  and a gap-jumpier value stream. Native on the same distribution (1866 KB)
+  loses that separation but still beats msgpack+zstd (3.4 MB).
 
 ### Floats (float_round)
 
@@ -161,11 +159,11 @@ Where each codec wins:
 
 ### Timestamps (time_round)
 
-| Type                                  | pco    | PcoPack | msgpack | Vortex  | pco    | PcoPack | msgpack | Vortex  |
-|---------------------------------------|--------|---------|---------|---------|--------|---------|---------|---------|
-| `DateTime (60s step, no round)`       | 313 KB | 313 KB  | 825 KB  | 836 KB  | 1.2 ms | 1.3 ms  | 15.4 ms | 26.7 ms |
-| `DateTime (60s step, time_round=1s)`  | 313 KB | 69 KB   | 825 KB  | 836 KB  | 1.2 ms | 1.3 ms  | 15.4 ms | 26.7 ms |
-| `DateTime (60s step, time_round=60s)` | 313 KB | 14 KB   | 825 KB  | 836 KB  | 1.2 ms | 1.0 ms  | 15.4 ms | 26.7 ms |
+| Type                                  | pco    | PcoPack | msgpack | Vortex | pco    | PcoPack | msgpack | Vortex  |
+|---------------------------------------|--------|---------|---------|--------|--------|---------|---------|---------|
+| `DateTime (60s step, no round)`       | 313 KB | 313 KB  | 825 KB  | 836 KB | 1.2 ms | 1.3 ms  | 15.4 ms | 26.7 ms |
+| `DateTime (60s step, time_round=1s)`  | 313 KB | 69 KB   | 825 KB  | 836 KB | 1.2 ms | 1.3 ms  | 15.4 ms | 26.7 ms |
+| `DateTime (60s step, time_round=60s)` | 313 KB | 14 KB   | 825 KB  | 836 KB | 1.2 ms | 1.0 ms  | 15.4 ms | 26.7 ms |
 
 The pco column is i64 microseconds, a 1:1 representation, so Pcodec is comparable. Vortex has no time type: `DateTime` is an RFC3339 string (~2.7x the exact-instant column). `time_round` is lossy: 1s rounding cuts PcoPack's column ~78%, 60s rounding ~95%.
 
@@ -401,8 +399,8 @@ columns, where PcoPack pays ~4.9 B/coord; tags favor PcoPack
   a flattened `Vec<(String, String)>` layout of the same tags measures ~1%
   smaller and writes ~40% faster, with unchanged filtering. Promoting the open
   vocabulary (serde_arrow `map_as_struct=true` plus a sampled schema) silently
-  drops ~65% of tag entries with no error (`examples/map_probe.rs`, section
-  E), so native maps are the honest representation here
+  drops ~65% of tag entries with no error, so native maps are the honest
+  representation here
 - `float_round = 7` cuts node size ~59% and lands ~13% below every full-fidelity codec
 - The wide box runs ~37% faster than Vortex (chunk bounds skip); the narrow box trails it
   (~40% slower): Vortex's row groups prune spatial data better at fine granularity
@@ -467,10 +465,10 @@ the tail (31.0M rows, 165 MB, 2026-09-09 to 2026-09-23) keeps LFS hosting cheap 
 full runs tractable. Regenerate with the capture crate in `tmp/pg_capture` against a
 live deployment, then trim to the last 14 days before committing:
 
-| File | Content | Size |
-|------|---------|------|
-| `backend_snapshots.msgpack.zst` | every `backend_snapshots_7d` tick reconstructed with the pco backfill's exact keep rule (`application_name`/`client_addr` are empty because the raw table doesn't persist them; the enum stacks carry the signal) | 58,898,437 B |
-| `query_stats.msgpack.zst` | last 14 days of the pco_store `query_stats` partition parent (1min + 1hour children; 31.0M rows) | 172,956,811 B |
+| File                            | Content                                                                                                                                                                                                           | Size          |
+|---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------|
+| `backend_snapshots.msgpack.zst` | every `backend_snapshots_7d` tick reconstructed with the pco backfill's exact keep rule (`application_name`/`client_addr` are empty because the raw table doesn't persist them; the enum stacks carry the signal) | 58,898,437 B  |
+| `query_stats.msgpack.zst`       | last 14 days of the pco_store `query_stats` partition parent (1min + 1hour children; 31.0M rows)                                                                                                                  | 172,956,811 B |
 
 Schemas mirror production verbatim (index + timestamp). PcoPack reports full-fidelity,
 plus the `TimeRound` storage model (production's rounded writes: `time_round = 1 s`

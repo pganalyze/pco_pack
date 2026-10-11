@@ -248,6 +248,11 @@ fn vortex_session() -> &'static vortex::session::VortexSession {
 
 /// Write one compact vortex file per column of `T` and verify a full
 /// value-level roundtrip; `Err` for types the pipeline can't express.
+/// Maps follow serde_arrow's default struct-promoting tracing. Rows whose
+/// key vocabulary is open declare the native layout via
+/// [`bench_vortex_native_map`]; the choice lives in the table, never in an
+/// error-recovery path, so an upstream tracing change shows up as a "-"
+/// cell or a deliberate edit rather than silent number drift.
 #[allow(dead_code)]
 pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug>(
     data: &[T],
@@ -255,10 +260,23 @@ pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clo
     bench_vortex_map_mode(data, true)
 }
 
-/// [`bench_vortex`] with the serde_arrow map tracing mode explicit.
-/// `map_as_struct=true` promotes stable-key maps to structs, putting key names
-/// in the schema instead of the data. `false` keeps the native arrow `Map`,
-/// which vortex stores as `vortex.map`.
+/// [`bench_vortex`] storing maps as native `vortex.map`
+/// (`map_as_struct(false)`). Struct promotion silently drops entries whose
+/// key misses the sample-derived schema, so open-vocabulary rows declare
+/// this layout.
+#[allow(dead_code)]
+pub fn bench_vortex_native_map<
+    T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
+>(
+    data: &[T],
+) -> Result<(f64, usize), String> {
+    bench_vortex_map_mode(data, false)
+}
+
+/// [`bench_vortex`] / [`bench_vortex_native_map`] with the serde_arrow map
+/// tracing mode explicit: `map_as_struct=true` promotes stable-key maps to
+/// structs, putting key names in the schema instead of the data; `false`
+/// keeps the native arrow `Map`, which vortex stores as `vortex.map`.
 #[allow(dead_code)]
 pub fn bench_vortex_map_mode<
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
@@ -338,7 +356,8 @@ pub fn bench_vortex_map_mode<
 }
 
 /// [`bench_vortex`] as formatted table cells, size first: "-" where the vortex
-/// pipeline cannot express the type (complex enums, heterogeneous values, maps).
+/// pipeline cannot express the type (complex enums, heterogeneous-shape
+/// `serde_json::Value`).
 #[allow(dead_code)]
 pub fn vortex_cell<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug>(
     data: &[T],
@@ -349,15 +368,14 @@ pub fn vortex_cell<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clon
     }
 }
 
-/// [`vortex_cell`] for map rows stored as native `vortex.map` instead of the
-/// struct-promoted layout.
+/// [`bench_vortex_native_map`] as formatted table cells, size first.
 #[allow(dead_code)]
 pub fn vortex_cell_native_map<
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
 >(
     data: &[T],
 ) -> (String, String) {
-    match bench_vortex_map_mode(data, false) {
+    match bench_vortex_native_map(data) {
         Ok((t, s)) => (format_bytes(s), format_ms(t)),
         Err(_) => ("-".to_string(), "-".to_string()),
     }
