@@ -5,9 +5,9 @@
 //! the nanodegree tail is noise), bbox filter on the bulk centroid
 //! (cross-border).
 
+use osm_pbf::FileBlock;
 use osm_pbf::decode::decode_elements;
 use osm_pbf::parse::parse_osm_pbf;
-use osm_pbf::FileBlock;
 use osm_types::Element;
 use pco_pack::PcoPack;
 use smol_str::SmolStr;
@@ -53,7 +53,7 @@ pub enum MemberType {
 #[derive(Clone, Debug, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
 pub struct Member {
     pub rtype: MemberType,
-    pub ref_id: i64, // the PBF field is `ref`: a Rust keyword
+    pub ref_id: i64,           // the PBF field is `ref`: a Rust keyword
     pub role: Option<SmolStr>, // short closed vocabulary ("outer", "left", ...)
 }
 
@@ -77,12 +77,7 @@ pub struct NodeF {
 
 impl From<&Node> for NodeF {
     fn from(r: &Node) -> Self {
-        NodeF {
-            id: r.id,
-            lat: r.lat,
-            lon: r.lon,
-            tags: r.tags.clone(),
-        }
+        NodeF { id: r.id, lat: r.lat, lon: r.lon, tags: r.tags.clone() }
     }
 }
 
@@ -100,19 +95,13 @@ pub fn bench() {
     {
         // Two bbox windows centered on the in-country bulk's centroid; the
         // bulk's min-lat min-lon corner is not a corner of the country.
-        let (lat_c, lon_c) = (
-            (stats.lat_bulk_min + stats.lat_bulk_max) / 2.0,
-            (stats.lon_bulk_min + stats.lon_bulk_max) / 2.0,
-        );
+        let (lat_c, lon_c) =
+            ((stats.lat_bulk_min + stats.lat_bulk_max) / 2.0, (stats.lon_bulk_min + stats.lon_bulk_max) / 2.0);
         // (half-lat, half-lon, shape label)
         let windows: [(f64, f64, &str); 2] = [(0.05, 0.1, "0.1deg x 0.2deg"), (0.25, 0.5, "0.5deg x 1.0deg")];
-        let boxes: Vec<(f64, f64, f64, f64)> = windows
-            .iter()
-            .map(|(dlat, dlon, _)| (lat_c - dlat, lat_c + dlat, lon_c - dlon, lon_c + dlon))
-            .collect();
-        let in_box = |r: &Node, k: &(f64, f64, f64, f64)| {
-            r.lat >= k.0 && r.lat <= k.1 && r.lon >= k.2 && r.lon <= k.3
-        };
+        let boxes: Vec<(f64, f64, f64, f64)> =
+            windows.iter().map(|(dlat, dlon, _)| (lat_c - dlat, lat_c + dlat, lon_c - dlon, lon_c + dlon)).collect();
+        let in_box = |r: &Node, k: &(f64, f64, f64, f64)| r.lat >= k.0 && r.lat <= k.1 && r.lon >= k.2 && r.lon <= k.3;
         let exp: Vec<usize> = boxes.iter().map(|k| nodes.iter().filter(|r| in_box(r, k)).count()).collect();
         // The lossy variant stores lat/lon rounded to 7 digits, so the rows it
         // reports for the same query can differ at the boundary.
@@ -143,8 +132,10 @@ pub fn bench() {
                 })
             })
             .collect();
-        let pco_filters: Vec<(&serde_json::Value, usize)> = queries.iter().zip(exp.iter()).map(|(q, e)| (q, *e)).collect();
-        let pcof_filters: Vec<(&serde_json::Value, usize)> = queries.iter().zip(exp_f.iter()).map(|(q, e)| (q, *e)).collect();
+        let pco_filters: Vec<(&serde_json::Value, usize)> =
+            queries.iter().zip(exp.iter()).map(|(q, e)| (q, *e)).collect();
+        let pcof_filters: Vec<(&serde_json::Value, usize)> =
+            queries.iter().zip(exp_f.iter()).map(|(q, e)| (q, *e)).collect();
 
         let pco = common::bench_pco_pack(&nodes, &pco_filters, |back| {
             // No `timestamp` field -> PcoPack keeps file order -> positional
@@ -183,15 +174,10 @@ pub fn bench() {
 
         let sc = common::bench_serde_columnar(
             n_nodes,
-            || osm_sc::NodeScStore {
-                data: nodes.iter().map(osm_sc::NodeScRow::from).collect(),
-            },
+            || osm_sc::NodeScStore { data: nodes.iter().map(osm_sc::NodeScRow::from).collect() },
             &box_filters,
             |s: &osm_sc::NodeScStore, k: &(f64, f64, f64, f64)| {
-                s.data
-                    .iter()
-                    .filter(|r| k.0 <= r.lat && r.lat <= k.1 && k.2 <= r.lon && r.lon <= k.3)
-                    .count()
+                s.data.iter().filter(|r| k.0 <= r.lat && r.lat <= k.1 && k.2 <= r.lon && r.lon <= k.3).count()
             },
         );
 
@@ -220,7 +206,6 @@ pub fn bench() {
             vortex: vx,
         }
         .print(&label_refs);
-
     }
     drop(nodes);
 
@@ -239,9 +224,7 @@ pub fn bench() {
         );
         let sc = common::bench_serde_columnar(
             n_ways,
-            || osm_sc::WayScStore {
-                data: ways.iter().map(osm_sc::WayScRow::from).collect(),
-            },
+            || osm_sc::WayScStore { data: ways.iter().map(osm_sc::WayScRow::from).collect() },
             &[] as &[((), usize)],
             |_: &osm_sc::WayScStore, _: &()| 0,
         );
@@ -276,9 +259,7 @@ pub fn bench() {
         );
         let sc = common::bench_serde_columnar(
             n_rels,
-            || osm_sc::RelationScStore {
-                data: rels.iter().map(osm_sc::RelationScRow::from).collect(),
-            },
+            || osm_sc::RelationScStore { data: rels.iter().map(osm_sc::RelationScRow::from).collect() },
             &[] as &[((), usize)],
             |_: &osm_sc::RelationScStore, _: &()| 0,
         );
@@ -295,7 +276,6 @@ pub fn bench() {
             vortex: vx,
         }
         .print(&[]);
-
     }
 }
 
@@ -346,42 +326,25 @@ fn rtype_u8(t: &MemberType) -> u8 {
 
 impl From<&Node> for NodeCol {
     fn from(r: &Node) -> Self {
-        NodeCol {
-            id: r.id,
-            lat: r.lat,
-            lon: r.lon,
-            tags: tags_kv(&r.tags),
-        }
+        NodeCol { id: r.id, lat: r.lat, lon: r.lon, tags: tags_kv(&r.tags) }
     }
 }
 
 impl From<&Way> for WayCol {
     fn from(r: &Way) -> Self {
-        WayCol {
-            id: r.id,
-            refs: r.refs.clone(),
-            tags: tags_kv(&r.tags),
-        }
+        WayCol { id: r.id, refs: r.refs.clone(), tags: tags_kv(&r.tags) }
     }
 }
 
 impl From<&Member> for MemberCol {
     fn from(r: &Member) -> Self {
-        MemberCol {
-            rtype: rtype_u8(&r.rtype),
-            ref_id: r.ref_id,
-            role: r.role.as_deref().map(str::to_string),
-        }
+        MemberCol { rtype: rtype_u8(&r.rtype), ref_id: r.ref_id, role: r.role.as_deref().map(str::to_string) }
     }
 }
 
 impl From<&Relation> for RelationCol {
     fn from(r: &Relation) -> Self {
-        RelationCol {
-            id: r.id,
-            members: r.members.iter().map(MemberCol::from).collect(),
-            tags: tags_kv(&r.tags),
-        }
+        RelationCol { id: r.id, members: r.members.iter().map(MemberCol::from).collect(), tags: tags_kv(&r.tags) }
     }
 }
 
@@ -458,22 +421,13 @@ mod osm_sc {
 
     impl From<&Node> for NodeScRow {
         fn from(r: &Node) -> Self {
-            NodeScRow {
-                id: r.id,
-                lat: r.lat,
-                lon: r.lon,
-                tags: super::tags_kv(&r.tags),
-            }
+            NodeScRow { id: r.id, lat: r.lat, lon: r.lon, tags: super::tags_kv(&r.tags) }
         }
     }
 
     impl From<&Way> for WayScRow {
         fn from(r: &Way) -> Self {
-            WayScRow {
-                id: r.id,
-                refs: r.refs.clone(),
-                tags: super::tags_kv(&r.tags),
-            }
+            WayScRow { id: r.id, refs: r.refs.clone(), tags: super::tags_kv(&r.tags) }
         }
     }
 
@@ -560,22 +514,13 @@ fn rtype_str(t: &MemberType) -> &'static str {
 
 impl From<&Node> for NodeVx {
     fn from(r: &Node) -> Self {
-        NodeVx {
-            id: r.id,
-            lat: r.lat,
-            lon: r.lon,
-            tags: tags_kv(&r.tags),
-        }
+        NodeVx { id: r.id, lat: r.lat, lon: r.lon, tags: tags_kv(&r.tags) }
     }
 }
 
 impl From<&Way> for WayVx {
     fn from(r: &Way) -> Self {
-        WayVx {
-            id: r.id,
-            refs: r.refs.clone(),
-            tags: tags_kv(&r.tags),
-        }
+        WayVx { id: r.id, refs: r.refs.clone(), tags: tags_kv(&r.tags) }
     }
 }
 
@@ -591,11 +536,7 @@ impl From<&Member> for MemberVx {
 
 impl From<&Relation> for RelationVx {
     fn from(r: &Relation) -> Self {
-        RelationVx {
-            id: r.id,
-            members: r.members.iter().map(MemberVx::from).collect(),
-            tags: tags_kv(&r.tags),
-        }
+        RelationVx { id: r.id, members: r.members.iter().map(MemberVx::from).collect(), tags: tags_kv(&r.tags) }
     }
 }
 
@@ -636,10 +577,7 @@ fn load() -> (Vec<Node>, Vec<Way>, Vec<Relation>, Stats) {
     // Owned blocks let the 811 MB buf drop before decode.
     let blocks: Vec<FileBlock> = common::ds_vortex_rt().block_on(async {
         use futures::TryStreamExt;
-        parse_osm_pbf(std::io::Cursor::new(&buf))
-            .try_collect()
-            .await
-            .expect("PBF parse")
+        parse_osm_pbf(std::io::Cursor::new(&buf)).try_collect().await.expect("PBF parse")
     });
     drop(buf);
 
@@ -673,11 +611,7 @@ fn load() -> (Vec<Node>, Vec<Way>, Vec<Relation>, Stats) {
                         stats.lat_max = stats.lat_max.max(lat);
                         stats.lon_min = stats.lon_min.min(lon);
                         stats.lon_max = stats.lon_max.max(lon);
-                        if lat >= AUSTRIA_LAT0
-                            && lat <= AUSTRIA_LAT1
-                            && lon >= AUSTRIA_LON0
-                            && lon <= AUSTRIA_LON1
-                        {
+                        if lat >= AUSTRIA_LAT0 && lat <= AUSTRIA_LAT1 && lon >= AUSTRIA_LON0 && lon <= AUSTRIA_LON1 {
                             stats.lat_bulk_min = stats.lat_bulk_min.min(lat);
                             stats.lat_bulk_max = stats.lat_bulk_max.max(lat);
                             stats.lon_bulk_min = stats.lon_bulk_min.min(lon);
@@ -689,22 +623,14 @@ fn load() -> (Vec<Node>, Vec<Way>, Vec<Relation>, Stats) {
                             id: n.id.0,
                             lat,
                             lon,
-                            tags: n
-                                .tags
-                                .iter()
-                                .map(|(k, v)| (SmolStr::new(&**k), v.to_string()))
-                                .collect(),
+                            tags: n.tags.iter().map(|(k, v)| (SmolStr::new(&**k), v.to_string())).collect(),
                         });
                     }
                     Element::Way(w) => {
                         ways.push(Way {
                             id: w.id.0,
                             refs: w.refs.iter().map(|id| id.0).collect(),
-                            tags: w
-                                .tags
-                                .iter()
-                                .map(|(k, v)| (SmolStr::new(&**k), v.to_string()))
-                                .collect(),
+                            tags: w.tags.iter().map(|(k, v)| (SmolStr::new(&**k), v.to_string())).collect(),
                         });
                     }
                     Element::Relation(r) => {
@@ -722,21 +648,13 @@ fn load() -> (Vec<Node>, Vec<Way>, Vec<Relation>, Stats) {
                                     MemberType::Way => stats.members_way += 1,
                                     MemberType::Relation => stats.members_relation += 1,
                                 }
-                                Member {
-                                    rtype,
-                                    ref_id: m.id.0,
-                                    role: m.role.as_deref().map(SmolStr::new),
-                                }
+                                Member { rtype, ref_id: m.id.0, role: m.role.as_deref().map(SmolStr::new) }
                             })
                             .collect();
                         relations.push(Relation {
                             id: r.id.0,
                             members,
-                            tags: r
-                                .tags
-                                .iter()
-                                .map(|(k, v)| (SmolStr::new(&**k), v.to_string()))
-                                .collect(),
+                            tags: r.tags.iter().map(|(k, v)| (SmolStr::new(&**k), v.to_string())).collect(),
                         });
                     }
                 }

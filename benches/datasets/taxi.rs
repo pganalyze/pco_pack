@@ -22,18 +22,18 @@ pub const DS: Ds = Ds {
 #[derive(Clone, Debug, PartialEq, PcoPack, serde::Serialize, serde::Deserialize)]
 #[pco_pack(timestamp = pickup_datetime)]
 pub struct Trip {
-    pub license_num: SmolStr,               // 2 distinct values, <= 6 chars
-    pub dispatching_base_num: SmolStr,      // 15 distinct
+    pub license_num: SmolStr,                  // 2 distinct values, <= 6 chars
+    pub dispatching_base_num: SmolStr,         // 15 distinct
     pub originating_base_num: Option<SmolStr>, // 19 distinct; null when non-dispatched
     pub request_datetime: DateTime<Utc>,
     pub on_scene_datetime: Option<DateTime<Utc>>, // null when non-dispatched
-    pub pickup_datetime: DateTime<Utc>,     // the `timestamp` field
+    pub pickup_datetime: DateTime<Utc>,           // the `timestamp` field
     pub dropoff_datetime: DateTime<Utc>,
-    pub pu_location_id: i32,                // 262 taxi zones
-    pub do_location_id: i32,                // 261 taxi zones
-    pub trip_miles: f64,                    // <= 3 fractional digits
-    pub trip_time: i64,                     // seconds
-    pub base_passenger_fare: f64,           // <= 2 fractional digits
+    pub pu_location_id: i32,      // 262 taxi zones
+    pub do_location_id: i32,      // 261 taxi zones
+    pub trip_miles: f64,          // <= 3 fractional digits
+    pub trip_time: i64,           // seconds
+    pub base_passenger_fare: f64, // <= 2 fractional digits
     pub tolls: f64,
     pub bcf: f64,
     pub sales_tax: f64,
@@ -41,7 +41,7 @@ pub struct Trip {
     pub airport_fee: f64,
     pub tips: f64,
     pub driver_pay: f64,
-    pub shared_request_flag: Option<bool>,  // "Y"/"N"/" " -> true/false/None
+    pub shared_request_flag: Option<bool>, // "Y"/"N"/" " -> true/false/None
     pub shared_match_flag: Option<bool>,
     pub access_a_ride_flag: Option<bool>,
     pub wav_request_flag: Option<bool>,
@@ -67,30 +67,20 @@ pub fn bench() {
         .iter()
         .map(|(w, _)| {
             let tmax = tmin + *w;
-            (
-                tmin.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-                tmax.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-            )
+            (tmin.format("%Y-%m-%dT%H:%M:%SZ").to_string(), tmax.format("%Y-%m-%dT%H:%M:%SZ").to_string())
         })
         .collect();
     let exp: Vec<usize> = us_ranges
         .iter()
-        .map(|(a, b)| {
-            data
-                .iter()
-                .filter(|r| (*a..=*b).contains(&r.pickup_datetime.timestamp_micros()))
-                .count()
-        })
+        .map(|(a, b)| data.iter().filter(|r| (*a..=*b).contains(&r.pickup_datetime.timestamp_micros())).count())
         .collect();
     let labels: Vec<String> = exp.iter().map(|&e| common::filter_label(e, n)).collect();
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
 
     println!("### taxi ({n} rows)\n");
 
-    let queries: Vec<serde_json::Value> = us_ranges
-        .iter()
-        .map(|(a, b)| serde_json::json!({ "pickup_datetime": { "start": a, "end": b } }))
-        .collect();
+    let queries: Vec<serde_json::Value> =
+        us_ranges.iter().map(|(a, b)| serde_json::json!({ "pickup_datetime": { "start": a, "end": b } })).collect();
     let pco_filters: Vec<(&serde_json::Value, usize)> = queries.iter().zip(exp.iter()).map(|(q, e)| (q, *e)).collect();
 
     let pco = common::bench_pco_pack(&data, &pco_filters, |back| verify_identity(&data, back));
@@ -118,26 +108,17 @@ pub fn bench() {
 
     let sc = common::bench_serde_columnar(
         n,
-        || taxi_sc::TripScStore {
-            data: data.iter().map(taxi_sc::TripScRow::from).collect(),
-        },
+        || taxi_sc::TripScStore { data: data.iter().map(taxi_sc::TripScRow::from).collect() },
         &us_filters,
         |s: &taxi_sc::TripScStore, k: &(i64, i64)| {
-            s.data
-                .iter()
-                .filter(|r| k.0 <= r.pickup_datetime && r.pickup_datetime <= k.1)
-                .count()
+            s.data.iter().filter(|r| k.0 <= r.pickup_datetime && r.pickup_datetime <= k.1).count()
         },
     );
 
-    let mp = common::bench_msgpack(
-        &data,
-        &us_filters,
-        |r: &Trip, k: &(i64, i64)| {
-            let us = r.pickup_datetime.timestamp_micros();
-            k.0 <= us && us <= k.1
-        },
-    );
+    let mp = common::bench_msgpack(&data, &us_filters, |r: &Trip, k: &(i64, i64)| {
+        let us = r.pickup_datetime.timestamp_micros();
+        k.0 <= us && us <= k.1
+    });
 
     // Vortex consumes Trip directly: no enums, flags are nullable bools;
     // `bench_vortex_ds`'s `from_samples` covers SmolStr/chrono.
@@ -401,10 +382,7 @@ fn lstr<'a>(batch: &'a arrow_array::RecordBatch, name: &str) -> &'a arrow_array:
         .unwrap_or_else(|| panic!("column {name} is not LargeString"))
 }
 
-fn tms<'a>(
-    batch: &'a arrow_array::RecordBatch,
-    name: &str,
-) -> &'a arrow_array::TimestampMicrosecondArray {
+fn tms<'a>(batch: &'a arrow_array::RecordBatch, name: &str) -> &'a arrow_array::TimestampMicrosecondArray {
     batch
         .column_by_name(name)
         .unwrap()
@@ -582,11 +560,7 @@ fn verify_identity(data: &[Trip], back: &[Trip]) {
             );
         };
         ($f:ident, f64) => {
-            check_f64(
-                stringify!($f),
-                data.iter().map(|r| r.$f).collect(),
-                back.iter().map(|r| r.$f).collect(),
-            );
+            check_f64(stringify!($f), data.iter().map(|r| r.$f).collect(), back.iter().map(|r| r.$f).collect());
         };
     }
     check!(license_num);

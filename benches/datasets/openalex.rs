@@ -122,24 +122,24 @@ pub enum InstType {
 
 #[derive(Clone, Debug, PartialEq, PcoPack, serde::Serialize, serde::Deserialize)]
 pub struct Work {
-    pub id: i64, // digit tail after the last `/`, e.g. W2741809807
+    pub id: i64,             // digit tail after the last `/`, e.g. W2741809807
     pub doi: Option<String>, // payload after `https://doi.org/`
     pub title: Option<String>,
     pub publication_year: Option<i32>,
     pub publication_date: Option<DateTime<Utc>>, // "2018-02-13" -> midnight
-    pub language: Option<SmolStr>, // ISO-639-3, ~100 values
-    pub work_type: WorkType, // 25 values; the api always sends it
-    pub cited_by_count: i32, // zero-spike + right skew
+    pub language: Option<SmolStr>,               // ISO-639-3, ~100 values
+    pub work_type: WorkType,                     // 25 values; the api always sends it
+    pub cited_by_count: i32,                     // zero-spike + right skew
     pub fwci: Option<f32>,
     pub is_retracted: Option<bool>, // null on 209/558,403 records
-    pub oa_status: OaStatus, // 6 values incl. `closed`; the api always sends it
+    pub oa_status: OaStatus,        // 6 values incl. `closed`; the api always sends it
     pub is_oa: bool,
     pub oa_url: Option<String>,
     pub source: Option<String>, // primary_location.source.display_name
     pub source_type: Option<SourceType>,
-    pub authorships: Vec<Authorship>, // up to 5,000
-    pub topics: Vec<Topic>, // <= 3
-    pub keywords: Vec<Kw>, // <= 31
+    pub authorships: Vec<Authorship>,                                // up to 5,000
+    pub topics: Vec<Topic>,                                          // <= 3
+    pub keywords: Vec<Kw>,                                           // <= 31
     pub abstract_inverted_index: Option<HashMap<SmolStr, Vec<i32>>>, // ~75% present
     pub updated_date: DateTime<Utc>,
     pub created_date: DateTime<Utc>,
@@ -158,8 +158,8 @@ pub struct Authorship {
 #[derive(Clone, Debug, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
 pub struct Institution {
     pub id: i64,
-    pub name: String, // display_name
-    pub ror: Option<SmolStr>, // payload after `https://ror.org/` (variable length)
+    pub name: String,             // display_name
+    pub ror: Option<SmolStr>,     // payload after `https://ror.org/` (variable length)
     pub country: Option<SmolStr>, // ISO-2
     pub inst_type: Option<InstType>,
 }
@@ -197,10 +197,8 @@ pub fn bench() {
 
     println!("### openalex ({n} works)\n");
 
-    let queries: Vec<serde_json::Value> = keys
-        .iter()
-        .map(|(disc, _)| serde_json::json!({ "work_type": disc }))
-        .collect();
+    let queries: Vec<serde_json::Value> =
+        keys.iter().map(|(disc, _)| serde_json::json!({ "work_type": disc })).collect();
     let pco_filters: Vec<(&serde_json::Value, usize)> = queries.iter().zip(exps.iter()).map(|(q, e)| (q, *e)).collect();
 
     let pco = common::bench_pco_pack(&data, &pco_filters, |back| verify(&data, back));
@@ -228,32 +226,17 @@ pub fn bench() {
 
     let sc = common::bench_serde_columnar(
         n,
-        || openalex_sc::WorkScStore {
-            data: data.iter().map(openalex_sc::WorkScRow::from).collect(),
-        },
+        || openalex_sc::WorkScStore { data: data.iter().map(openalex_sc::WorkScRow::from).collect() },
         &key_filters,
-        |s: &openalex_sc::WorkScStore, k: &(u8, &str)| {
-            s.data.iter().filter(|r| r.work_type == k.0).count()
-        },
+        |s: &openalex_sc::WorkScStore, k: &(u8, &str)| s.data.iter().filter(|r| r.work_type == k.0).count(),
     );
 
-    let mp = common::bench_msgpack(
-        &data,
-        &key_filters,
-        |w: &Work, k: &(u8, &str)| work_type_u8(&w.work_type) == k.0,
-    );
+    let mp = common::bench_msgpack(&data, &key_filters, |w: &Work, k: &(u8, &str)| work_type_u8(&w.work_type) == k.0);
 
     let data_vx: Vec<WorkVx> = data.iter().map(WorkVx::from).collect();
-    let vx = common::bench_vortex_ds(
-        &data_vx,
-        &key_filters,
-        |k: &(u8, &str)| {
-            vortex::array::expr::eq(
-                vortex::array::expr::col("work_type"),
-                vortex::array::expr::lit(k.1),
-            )
-        },
-    );
+    let vx = common::bench_vortex_ds(&data_vx, &key_filters, |k: &(u8, &str)| {
+        vortex::array::expr::eq(vortex::array::expr::col("work_type"), vortex::array::expr::lit(k.1))
+    });
 
     CodecResults {
         pco_pack: pco,
@@ -264,7 +247,6 @@ pub fn bench() {
         vortex: vx,
     }
     .print(&label_refs);
-
 }
 
 // ---- lossy mirror: `float_round = 4` on structs owning floats; Authorship/Institution have none and are reused as-is ----
@@ -357,11 +339,7 @@ pub struct KwF {
 
 impl From<&Kw> for KwF {
     fn from(r: &Kw) -> Self {
-        KwF {
-            id: r.id.clone(),
-            name: r.name.clone(),
-            score: r.score,
-        }
+        KwF { id: r.id.clone(), name: r.name.clone(), score: r.score }
     }
 }
 
@@ -503,8 +481,7 @@ fn inst_type_u8(t: &InstType) -> u8 {
 }
 
 fn abstract_kv(m: &Option<HashMap<SmolStr, Vec<i32>>>) -> Option<Vec<(String, Vec<i32>)>> {
-    m.as_ref()
-        .map(|m| m.iter().map(|(k, v)| (k.to_string(), v.clone())).collect())
+    m.as_ref().map(|m| m.iter().map(|(k, v)| (k.to_string(), v.clone())).collect())
 }
 
 impl From<&Work> for WorkCol {
@@ -575,11 +552,7 @@ impl From<&Topic> for TopicCol {
 
 impl From<&Kw> for KwCol {
     fn from(r: &Kw) -> Self {
-        KwCol {
-            id: r.id.to_string(),
-            name: r.name.clone(),
-            score: r.score,
-        }
+        KwCol { id: r.id.to_string(), name: r.name.clone(), score: r.score }
     }
 }
 
@@ -754,11 +727,7 @@ mod openalex_sc {
 
     impl From<&Kw> for KwScRow {
         fn from(r: &Kw) -> Self {
-            KwScRow {
-                id: r.id.to_string(),
-                name: r.name.clone(),
-                score: r.score,
-            }
+            KwScRow { id: r.id.to_string(), name: r.name.clone(), score: r.score }
         }
     }
 }
@@ -975,11 +944,7 @@ impl From<&Topic> for TopicVx {
 
 impl From<&Kw> for KwVx {
     fn from(r: &Kw) -> Self {
-        KwVx {
-            id: r.id.to_string(),
-            name: r.name.clone(),
-            score: r.score,
-        }
+        KwVx { id: r.id.to_string(), name: r.name.clone(), score: r.score }
     }
 }
 
@@ -1082,9 +1047,7 @@ struct IdJson {
 fn openalex_id(s: &str) -> i64 {
     let tail = s.rsplit('/').next().unwrap_or(s);
     let digits = tail.trim_start_matches(|c: char| c.is_ascii_alphabetic());
-    digits
-        .parse()
-        .unwrap_or_else(|_| panic!("openalex id {s:?} has no numeric tail"))
+    digits.parse().unwrap_or_else(|_| panic!("openalex id {s:?} has no numeric tail"))
 }
 
 fn strip_prefix(s: &str, prefix: &str) -> String {
@@ -1100,9 +1063,7 @@ fn date_midnight(s: &str) -> DateTime<Utc> {
 }
 
 fn rfc3339(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .unwrap_or_else(|_| panic!("timestamp {s:?} is not RFC 3339"))
-        .with_timezone(&Utc)
+    DateTime::parse_from_rfc3339(s).unwrap_or_else(|_| panic!("timestamp {s:?} is not RFC 3339")).with_timezone(&Utc)
 }
 
 /// Vocabulary checks live in these matches: an unknown source value panics
@@ -1204,10 +1165,7 @@ impl From<WorkJson> for Work {
             is_oa: j.open_access.is_oa,
             oa_url: j.open_access.oa_url,
             source: source.as_ref().map(|s| s.display_name.clone()),
-            source_type: source
-                .as_ref()
-                .and_then(|s| s.source_type.as_deref())
-                .map(|t| source_type(t)),
+            source_type: source.as_ref().and_then(|s| s.source_type.as_deref()).map(|t| source_type(t)),
             authorships: j.authorships.into_iter().map(Authorship::from).collect(),
             topics: j.topics.into_iter().map(Topic::from).collect(),
             keywords: j.keywords.into_iter().map(Kw::from).collect(),
@@ -1226,18 +1184,8 @@ impl From<AuthorshipJson> for Authorship {
             author_id: j.author.id.as_deref().map(openalex_id),
             author_name: j.author.display_name,
             position: position(&j.author_position),
-            institutions: j
-                .institutions
-                .unwrap_or_default()
-                .into_iter()
-                .map(Institution::from)
-                .collect(),
-            countries: j
-                .countries
-                .unwrap_or_default()
-                .into_iter()
-                .map(SmolStr::new)
-                .collect(),
+            institutions: j.institutions.unwrap_or_default().into_iter().map(Institution::from).collect(),
+            countries: j.countries.unwrap_or_default().into_iter().map(SmolStr::new).collect(),
             is_corresponding: j.is_corresponding,
         }
     }
@@ -1248,9 +1196,7 @@ impl From<InstitutionJson> for Institution {
         Institution {
             id: openalex_id(&j.id),
             name: j.display_name,
-            ror: j
-                .ror
-                .map(|r| SmolStr::new(strip_prefix(&r, "https://ror.org/").as_str())),
+            ror: j.ror.map(|r| SmolStr::new(strip_prefix(&r, "https://ror.org/").as_str())),
             country: j.country_code.map(SmolStr::new),
             inst_type: j.inst_type.as_deref().map(inst_type),
         }
@@ -1292,8 +1238,8 @@ fn load() -> Vec<Work> {
         let mut n = 0usize;
         for line in reader.lines() {
             let line = line.unwrap_or_else(|e| panic!("gzip line in {}: {e}", ds.name));
-            let wj: WorkJson = serde_json::from_str(&line)
-                .unwrap_or_else(|e| panic!("work json in {}: {e}\n{line}", ds.name));
+            let wj: WorkJson =
+                serde_json::from_str(&line).unwrap_or_else(|e| panic!("work json in {}: {e}\n{line}", ds.name));
             works.push(Work::from(wj));
             n += 1;
         }

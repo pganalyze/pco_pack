@@ -78,29 +78,26 @@ pub fn bench() {
     let exp_pcof: Vec<usize> = us_ranges
         .iter()
         .map(|(a, b)| {
-            data
-                .iter()
+            data.iter()
                 .filter(|r| (*a..=*b).contains(&common::ts_rounded(&r.timestamp, 1_000_000).timestamp_micros()))
                 .count()
         })
         .collect();
     let exp_ns: Vec<usize> = ns_ranges
         .iter()
-        .map(|(a, b)| {
-            data.iter().filter(|r| (*a..=*b).contains(&r.timestamp.timestamp_nanos_opt().unwrap())).count()
-        })
+        .map(|(a, b)| data.iter().filter(|r| (*a..=*b).contains(&r.timestamp.timestamp_nanos_opt().unwrap())).count())
         .collect();
     let labels: Vec<String> = exp_pco.iter().map(|&e| common::filter_label(e, n)).collect();
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
 
     println!("### air_quality ({n} rows)\n");
 
-    let queries: Vec<serde_json::Value> = us_ranges
-        .iter()
-        .map(|(a, b)| serde_json::json!({ "timestamp": { "start": a, "end": b } }))
-        .collect();
-    let pco_filters: Vec<(&serde_json::Value, usize)> = queries.iter().zip(exp_pco.iter()).map(|(q, e)| (q, *e)).collect();
-    let pcof_filters: Vec<(&serde_json::Value, usize)> = queries.iter().zip(exp_pcof.iter()).map(|(q, e)| (q, *e)).collect();
+    let queries: Vec<serde_json::Value> =
+        us_ranges.iter().map(|(a, b)| serde_json::json!({ "timestamp": { "start": a, "end": b } })).collect();
+    let pco_filters: Vec<(&serde_json::Value, usize)> =
+        queries.iter().zip(exp_pco.iter()).map(|(q, e)| (q, *e)).collect();
+    let pcof_filters: Vec<(&serde_json::Value, usize)> =
+        queries.iter().zip(exp_pcof.iter()).map(|(q, e)| (q, *e)).collect();
 
     let pco = common::bench_pco_pack(&data, &pco_filters, |back| {
         verify(data.iter().map(|r| r.floored()).collect(), back);
@@ -137,23 +134,17 @@ pub fn bench() {
 
     let sc = common::bench_serde_columnar(
         n,
-        || aq_sc::AqScStore {
-            data: data.iter().map(aq_sc::AqScRow::from).collect(),
-        },
+        || aq_sc::AqScStore { data: data.iter().map(aq_sc::AqScRow::from).collect() },
         &ns_filters,
         |s: &aq_sc::AqScStore, k: &(i64, i64)| {
             s.data.iter().filter(|r| k.0 <= r.timestamp && r.timestamp <= k.1).count()
         },
     );
 
-    let mp = common::bench_msgpack(
-        &data,
-        &ns_filters,
-        |r: &AirQuality, k: &(i64, i64)| {
-            let ns = r.timestamp.timestamp_nanos_opt().unwrap();
-            k.0 <= ns && ns <= k.1
-        },
-    );
+    let mp = common::bench_msgpack(&data, &ns_filters, |r: &AirQuality, k: &(i64, i64)| {
+        let ns = r.timestamp.timestamp_nanos_opt().unwrap();
+        k.0 <= ns && ns <= k.1
+    });
 
     // Vortex uses the i64-ns mirror + numeric ranges; chrono strings vary in
     // fractional digits, so lexicographic range != temporal range.
