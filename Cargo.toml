@@ -6,7 +6,7 @@ license = "MIT"
 description = "Zero-config columnar compression"
 keywords = ["compression", "columnar", "timeseries"]
 repository = "https://github.com/pganalyze/pco_pack"
-exclude = ["src/test*.rs", "src/test/*", "tests/*.rs", "benches/*.rs"]
+exclude = ["src/test*.rs", "src/test/*", "tests/*.rs", "benches/*.rs", "examples/*"]
 
 [workspace]
 members = [".", "pco_pack_derive"]
@@ -29,8 +29,8 @@ uuid = { version = "1.0", features = ["serde", "std"] }
 zstd = "0.13"
 
 [dev-dependencies]
-arrow-array = "58"
-arrow-schema = "58"
+arrow-array = "59"
+arrow-schema = "59"
 bytemuck = "1.0"
 columnar = { version = "0.13", features = ["serde", "std"] }
 flate2 = "1"
@@ -40,13 +40,13 @@ md-5 = "0.10"
 # the Geofabrik extract's data blobs are zlib-compressed
 osm-pbf = { version = "0.3", default-features = false, features = ["zlib"] }
 osm-types = "0.1"
-parquet = "58"
+parquet = "59"
 peak_alloc = "0.3"
-serde_arrow = { version = "0.15", features = ["arrow-58"] }
+serde_arrow = { version = "0.15", features = ["arrow-59"] }
 serde_columnar = "0.3"
 tokio = { version = "1", features = ["rt"] }
 uuid = { version = "1.0", features = ["v4"] }
-vortex = { version = "0.85", features = ["tokio"] }
+vortex = { version = "0.88", features = ["tokio"] }
 
 [[bench]]
 name = "chunk_size"

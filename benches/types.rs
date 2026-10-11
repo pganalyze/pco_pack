@@ -120,6 +120,38 @@ macro_rules! row2 {
     }};
 }
 
+/// Two rows over one dataset: the struct-promoted vortex column (default
+/// tracing) and the native `vortex.map` column (`map_as_struct(false)`);
+/// PcoPack and msgpack cells are shared.
+macro_rules! row2_native {
+    ($rows:expr, $label:expr, $n:expr, $gen:expr) => {{
+        let data = ($gen)($n);
+        let (name, pp_t, pp_s) = bench_write($label, $n, $gen);
+        let mp_s = to_msgpack_zstd(&data).len();
+        let mp_t = bench_msgpack(&data);
+        let (vx_s, vx_t) = vortex_cell(&data);
+        $rows.push(SlimRow {
+            type_name: format!("`{name}`"),
+            pco_pack_size: format_bytes(pp_s),
+            mp_size: format_bytes(mp_s),
+            vortex_size: vx_s,
+            pco_pack_time: format_ms(pp_t),
+            mp_time: format_ms(mp_t),
+            vortex_time: vx_t,
+        });
+        let (nv_s, nv_t) = vortex_cell_native_map(&data);
+        $rows.push(SlimRow {
+            type_name: format!("`{name} (vortex.map)`"),
+            pco_pack_size: format_bytes(pp_s),
+            mp_size: format_bytes(mp_s),
+            vortex_size: nv_s,
+            pco_pack_time: format_ms(pp_t),
+            mp_time: format_ms(mp_t),
+            vortex_time: nv_t,
+        });
+    }};
+}
+
 /// The SmolStr-map rows measure msgpack on the String-converted data.
 macro_rules! row2_smolstr {
     ($rows:expr, $label:expr, $n:expr, $gen:expr, $map:ident) => {{
@@ -137,8 +169,9 @@ macro_rules! row2_smolstr {
             to_msgpack_zstd(&string_data)
         });
         // Vortex runs on the original SmolStr data, not the String
-        // conversion.
+        // conversion; the native twin keeps the map un-promoted.
         let (vx_s, vx_t) = vortex_cell(&data);
+        let (nv_s, nv_t) = vortex_cell_native_map(&data);
         $rows.push(SlimRow {
             type_name: format!("`{name}`"),
             pco_pack_size: format_bytes(pp_s),
@@ -147,6 +180,15 @@ macro_rules! row2_smolstr {
             pco_pack_time: format_ms(pp_t),
             mp_time: format_ms(mp_rt),
             vortex_time: vx_t,
+        });
+        $rows.push(SlimRow {
+            type_name: format!("`{name} (vortex.map)`"),
+            pco_pack_size: format_bytes(pp_s),
+            mp_size: format_bytes(mp_size),
+            vortex_size: nv_s,
+            pco_pack_time: format_ms(pp_t),
+            mp_time: format_ms(mp_rt),
+            vortex_time: nv_t,
         });
     }};
 }
@@ -326,21 +368,51 @@ fn strings_bytes_table() {
     row2!(&mut rows, "ByteBuf (avg 128B)", N, generate_bytebuf_data);
     row2!(&mut rows, "Vec<String> (avg 4)", 50_000, generate_vec_string_data);
     row2!(&mut rows, "serde_json::Value", N, generate_json_value_data);
+    row2!(&mut rows, "serde_json::Value (5 stable keys, 50k rows)", 50_000, generate_json_stable_data);
 
     print_slim_table(&rows);
     println!();
 }
 
-// Maps: PcoPack vs msgpack+zstd only (dynamic-size keys/values).
+// Maps: PcoPack vs msgpack+zstd, dynamic-size keys and values. Vortex runs
+// each row twice. The default serde_arrow tracing promotes stable-key maps to
+// a struct, one columnar payload per key; key names then live in the schema,
+// not the data. The `(vortex.map)` twin keeps the native arrow Map, which
+// vortex compresses structurally (keys varbin->zstd, values pco, offsets
+// sequence). Tuple keys fail tracing ("cannot interpret key as string"), and
+// string keys would silently drop entries missing from a sample-derived
+// schema; the harness roundtrip reports both as "-" (examples/map_probe.rs,
+// sections E and F). Native maps take all shapes and sit ~1.6x above the
+// promoted cells on stable-key data (tmp/MAP_AS_STRUCT_PLAN.md).
 
 fn maps_table() {
     println!("### Maps\n");
     let mut rows: Vec<SlimRow> = Vec::new();
 
-    row2!(&mut rows, "BTreeMap<String, i32>", 10_000, generate_btremap_string_data);
+    row2_native!(&mut rows, "BTreeMap<String, i32>", 10_000, generate_btremap_string_data);
+    row2_native!(&mut rows, "HashMap<String, i32>", 10_000, generate_hashmap_string_data);
     row2_smolstr!(&mut rows, "BTreeMap<SmolStr, i32>", 10_000, generate_btremap_smolstr_data, BTreeMap);
-    row2!(&mut rows, "HashMap<String, i32>", 10_000, generate_hashmap_string_data);
     row2_smolstr!(&mut rows, "HashMap<SmolStr, i32>", 10_000, generate_hashmap_smolstr_data, HashMap);
+
+    // Stable tag vocabulary (osm-tags shape): every row carries every key, so
+    // tracing promotes it. PcoPack flattens to counts+keys+values regardless;
+    // the struct mirror skips the keys entirely and encodes one column per key.
+    // The native twin pays ~one extra dict-cached key stream in exchange for
+    // not freezing the schema.
+    let n = 10_000;
+    row2_native!(&mut rows, "HashMap<SmolStr, i32> (8 stable keys)", n, generate_tagmap_dense_data);
+    row2_native!(&mut rows, "HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null)", n, generate_tagmap_sparse_data);
+
+    // Chunk-sized walk rows: each key's value autocorrelates along row order
+    // (the time-sorted indexed-capture shape), the regime where per-key
+    // columns separate signal that one interleaved values stream dilutes.
+    row2_native!(&mut rows, "HashMap<SmolStr, i32> (8 stable keys, walk)", CHUNK_ROWS, generate_walkmap_data);
+    row2_native!(
+        &mut rows,
+        "HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null, walk)",
+        CHUNK_ROWS,
+        generate_walkmap_sparse_data
+    );
 
     print_slim_table(&rows);
     println!();
@@ -881,6 +953,28 @@ fn generate_vec_string_data(n: usize) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// Stable-shape JSON objects: the same five keys in every row, homogeneous
+/// types, `note` null on every fourth row. `from_samples` traces this into a
+/// struct, so Vortex columnarizes it exactly like the stable-key map rows.
+fn generate_json_stable_data(n: usize) -> Vec<serde_json::Value> {
+    use serde_json::{Map, Value, json};
+    let notes = ["", "ok", "warn", "error"];
+    (0..n)
+        .map(|i| {
+            let mut m = Map::new();
+            m.insert("level".into(), json!((i % 5) as i64));
+            m.insert("count".into(), json!(skew_small(i)));
+            m.insert("ok".into(), json!(unit64(i.wrapping_mul(7).wrapping_add(3)) < 0.7));
+            m.insert("score".into(), json!((lognorm_small(i) * 100.0).round() / 100.0));
+            match notes[i % notes.len()] {
+                "" => m.insert("note".into(), Value::Null),
+                s => m.insert("note".into(), json!(s)),
+            };
+            Value::Object(m)
+        })
+        .collect()
+}
+
 fn generate_json_value_data(n: usize) -> Vec<serde_json::Value> {
     use serde_json::json;
     (0..n)
@@ -954,6 +1048,105 @@ fn generate_hashmap_smolstr_data(n: usize) -> Vec<HashMap<(smol_str::SmolStr, i3
             map
         })
         .collect()
+}
+
+/// A short closed tag vocabulary: keys duplicate on every row (the osm-tags
+/// shape), which is what map_as_struct columnarization rewards.
+fn tag_keys() -> [smol_str::SmolStr; 8] {
+    [
+        "name".into(),
+        "amenity".into(),
+        "highway".into(),
+        "building".into(),
+        "shop".into(),
+        "surface".into(),
+        "lit".into(),
+        "width".into(),
+    ]
+}
+
+/// Stable-vocabulary dense map: every row carries all 8 keys.
+fn generate_tagmap_dense_data(n: usize) -> Vec<HashMap<smol_str::SmolStr, i32>> {
+    let keys = tag_keys();
+    (0..n)
+        .map(|i| {
+            keys.iter()
+                .enumerate()
+                .map(|(j, k)| (k.clone(), skew_small(i.wrapping_mul(31).wrapping_add(j * 7)) as i32))
+                .collect()
+        })
+        .collect()
+}
+
+/// Stable-vocabulary sparse map: all 8 keys stay present on every row (a
+/// struct mirror cannot express absence, only null), ~60% of values are None.
+fn generate_tagmap_sparse_data(n: usize) -> Vec<HashMap<smol_str::SmolStr, Option<i32>>> {
+    let keys = tag_keys();
+    (0..n)
+        .map(|i| {
+            keys.iter()
+                .enumerate()
+                .map(|(j, k)| {
+                    let v = if unit64(i.wrapping_mul(7919).wrapping_add(j * 131)) < 0.4 {
+                        Some(skew_small(i.wrapping_add(j * 7)) as i32)
+                    } else {
+                        None
+                    };
+                    (k.clone(), v)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Stable keys, autocorrelated values ("walk"): every row carries every key
+/// and each key's value drifts on ~5% of rows (sticky state between changes),
+/// the shape of a time-sorted indexed capture.
+fn generate_walkmap_data(n: usize) -> Vec<HashMap<smol_str::SmolStr, i32>> {
+    let keys = tag_keys();
+    let mut cur = [0i32; 8];
+    for (j, c) in cur.iter_mut().enumerate() {
+        *c = (splitmix64(1_000 + j) % 50) as i32;
+    }
+    let mut rows = Vec::with_capacity(n);
+    for i in 0..n {
+        for j in 0..8 {
+            if unit64(i.wrapping_mul(7919).wrapping_add(j * 131)) < 0.05 {
+                cur[j] = (cur[j] + (splitmix64(i.wrapping_mul(31).wrapping_add(j)) % 9) as i32 - 4).max(0);
+            }
+        }
+        let mut row = HashMap::with_capacity(8);
+        for (j, k) in keys.iter().enumerate() {
+            row.insert(k.clone(), cur[j]);
+        }
+        rows.push(row);
+    }
+    rows
+}
+
+/// Same autocorrelated walk, ~60% of cells null (the struct mirror encodes
+/// absence as null; absent-vs-null collapses).
+fn generate_walkmap_sparse_data(n: usize) -> Vec<HashMap<smol_str::SmolStr, Option<i32>>> {
+    let keys = tag_keys();
+    let mut cur = [0i32; 8];
+    for (j, c) in cur.iter_mut().enumerate() {
+        *c = (splitmix64(0xC0FFEE + j) % 50) as i32;
+    }
+    let mut rows = Vec::with_capacity(n);
+    for i in 0..n {
+        for j in 0..8 {
+            if unit64(i.wrapping_mul(7919).wrapping_add(j * 131)) < 0.05 {
+                cur[j] = (cur[j] + (splitmix64(i.wrapping_mul(31).wrapping_add(j)) % 9) as i32 - 4).max(0);
+            }
+        }
+        let mut row = HashMap::with_capacity(8);
+        for (j, k) in keys.iter().enumerate() {
+            let v = if unit64(i.wrapping_mul(1_047_291).wrapping_add(j * 97)) < 0.4 { Some(cur[j]) } else { None };
+            row.insert(k.clone(), v);
+        }
+        rows.push(row);
+    }
+    rows
 }
 
 // --- Floats (normal: a CLT sum of 12 uniforms, centered) -------------------------------

@@ -450,8 +450,8 @@ async fn write_vortex_file(session: &VortexSession, data: &[Record]) -> Vec<u8> 
     let schema_in = batch.schema();
     let array = session.arrow().from_arrow_record_batch(batch, &schema_in).unwrap();
     let mut bytes: Vec<u8> = vec![];
-    let strategy = WriteStrategyBuilder::default()
-        .with_btrblocks_builder(BtrBlocksCompressorBuilder::default().with_compact())
+    let strategy = WriteStrategyBuilder::from_session(session)
+        .with_btrblocks_builder(BtrBlocksCompressorBuilder::from_session(session).with_compact())
         .build();
     session.write_options().with_strategy(strategy).write(&mut bytes, array.to_array_stream()).await.unwrap();
     bytes
@@ -470,7 +470,7 @@ async fn vortex_scan(
     let file = session.open_options().open_buffer(buffer).unwrap();
     let mut scan = file.scan().unwrap();
     if let Some(expr) = filter {
-        let bound = expr.optimize_recursive(file.dtype()).unwrap().bind(file.dtype()).unwrap();
+        let bound = expr.bind(file.dtype()).unwrap().optimize_recursive().unwrap();
         scan = scan.with_filter(bound);
     }
     // Materialize the compressed scan result through Arrow (the session's stable export path).

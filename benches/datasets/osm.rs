@@ -471,7 +471,10 @@ impl common::ScStore for osm_sc::RelationScStore {
 }
 
 // ---------------------------------------------------------------------------
-// Vortex mirrors: map -> Vec<(K, V)> (no map schema), SmolStr -> String,
+// Vortex mirrors: tags stay native HashMap, stored as `vortex.map` via
+// `map_as_struct(false)` (promoting this open tag vocabulary to a
+// sample-derived schema would silently drop unseen keys),
+// SmolStr -> String,
 // MemberType -> utf8 (rare `relation` variant -> Union, which Vortex can't encode)
 // ---------------------------------------------------------------------------
 
@@ -480,14 +483,14 @@ pub struct NodeVx {
     pub id: i64,
     pub lat: f64,
     pub lon: f64,
-    pub tags: Vec<(String, String)>,
+    pub tags: HashMap<SmolStr, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WayVx {
     pub id: i64,
     pub refs: Vec<i64>,
-    pub tags: Vec<(String, String)>,
+    pub tags: HashMap<SmolStr, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -501,7 +504,7 @@ pub struct MemberVx {
 pub struct RelationVx {
     pub id: i64,
     pub members: Vec<MemberVx>,
-    pub tags: Vec<(String, String)>,
+    pub tags: HashMap<SmolStr, String>,
 }
 
 fn rtype_str(t: &MemberType) -> &'static str {
@@ -514,13 +517,13 @@ fn rtype_str(t: &MemberType) -> &'static str {
 
 impl From<&Node> for NodeVx {
     fn from(r: &Node) -> Self {
-        NodeVx { id: r.id, lat: r.lat, lon: r.lon, tags: tags_kv(&r.tags) }
+        NodeVx { id: r.id, lat: r.lat, lon: r.lon, tags: r.tags.clone() }
     }
 }
 
 impl From<&Way> for WayVx {
     fn from(r: &Way) -> Self {
-        WayVx { id: r.id, refs: r.refs.clone(), tags: tags_kv(&r.tags) }
+        WayVx { id: r.id, refs: r.refs.clone(), tags: r.tags.clone() }
     }
 }
 
@@ -536,7 +539,7 @@ impl From<&Member> for MemberVx {
 
 impl From<&Relation> for RelationVx {
     fn from(r: &Relation) -> Self {
-        RelationVx { id: r.id, members: r.members.iter().map(MemberVx::from).collect(), tags: tags_kv(&r.tags) }
+        RelationVx { id: r.id, members: r.members.iter().map(MemberVx::from).collect(), tags: r.tags.clone() }
     }
 }
 

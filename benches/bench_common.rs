@@ -252,6 +252,19 @@ fn vortex_session() -> &'static vortex::session::VortexSession {
 pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug>(
     data: &[T],
 ) -> Result<(f64, usize), String> {
+    bench_vortex_map_mode(data, true)
+}
+
+/// [`bench_vortex`] with the serde_arrow map tracing mode explicit.
+/// `map_as_struct=true` promotes stable-key maps to structs, putting key names
+/// in the schema instead of the data. `false` keeps the native arrow `Map`,
+/// which vortex stores as `vortex.map`.
+#[allow(dead_code)]
+pub fn bench_vortex_map_mode<
+    T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
+>(
+    data: &[T], map_as_struct: bool,
+) -> Result<(f64, usize), String> {
     use arrow_schema::FieldRef;
     use serde_arrow::schema::{SchemaLike, TracingOptions};
     use serde_arrow::utils::{Item, Items};
@@ -270,7 +283,10 @@ pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clo
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // Schema: `from_type` for self-describing types, `from_samples` for
         // the rest; unit enums via `enums_without_data_as_strings`.
-        let options = TracingOptions::default().enums_without_data_as_strings(true).allow_null_fields(true);
+        let options = TracingOptions::default()
+            .enums_without_data_as_strings(true)
+            .allow_null_fields(true)
+            .map_as_struct(map_as_struct);
         let fields: Vec<FieldRef> = match <Vec<FieldRef>>::from_type::<Item<T>>(options.clone()) {
             Ok(f) => f,
             Err(_) => {
@@ -289,8 +305,8 @@ pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clo
                 let schema_in = batch.schema();
                 let array = session.arrow().from_arrow_record_batch(batch, &schema_in).unwrap();
                 let mut out: Vec<u8> = vec![];
-                let strategy = WriteStrategyBuilder::default()
-                    .with_btrblocks_builder(BtrBlocksCompressorBuilder::default().with_compact())
+                let strategy = WriteStrategyBuilder::from_session(session)
+                    .with_btrblocks_builder(BtrBlocksCompressorBuilder::from_session(session).with_compact())
                     .build();
                 session.write_options().with_strategy(strategy).write(&mut out, array.to_array_stream()).await.unwrap();
                 out
@@ -328,6 +344,20 @@ pub fn vortex_cell<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clon
     data: &[T],
 ) -> (String, String) {
     match bench_vortex(data) {
+        Ok((t, s)) => (format_bytes(s), format_ms(t)),
+        Err(_) => ("-".to_string(), "-".to_string()),
+    }
+}
+
+/// [`vortex_cell`] for map rows stored as native `vortex.map` instead of the
+/// struct-promoted layout.
+#[allow(dead_code)]
+pub fn vortex_cell_native_map<
+    T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
+>(
+    data: &[T],
+) -> (String, String) {
+    match bench_vortex_map_mode(data, false) {
         Ok((t, s)) => (format_bytes(s), format_ms(t)),
         Err(_) => ("-".to_string(), "-".to_string()),
     }

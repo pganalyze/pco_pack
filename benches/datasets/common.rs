@@ -231,7 +231,11 @@ where
 
         // Schema: `from_type` with a `from_samples` fallback (chrono/uuid).
         // Samples are plain rows, not `Items` (which wraps each row).
-        let options = TracingOptions::default().enums_without_data_as_strings(true).allow_null_fields(true);
+        // Maps stay native arrow Map -> vortex.map. Promoting an open
+        // vocabulary to a sample-derived schema silently drops entries whose
+        // keys missed the sample. Rows without maps are unaffected.
+        let options =
+            TracingOptions::default().enums_without_data_as_strings(true).allow_null_fields(true).map_as_struct(false);
         let fields: Vec<FieldRef> = match <Vec<FieldRef>>::from_type::<T>(options.clone()) {
             Ok(f) => f,
             Err(_) => {
@@ -250,8 +254,8 @@ where
                 let schema_in = batch.schema();
                 let array = session.arrow().from_arrow_record_batch(batch, &schema_in).unwrap();
                 let mut out: Vec<u8> = vec![];
-                let strategy = WriteStrategyBuilder::default()
-                    .with_btrblocks_builder(BtrBlocksCompressorBuilder::default().with_compact())
+                let strategy = WriteStrategyBuilder::from_session(session)
+                    .with_btrblocks_builder(BtrBlocksCompressorBuilder::from_session(session).with_compact())
                     .build();
                 session.write_options().with_strategy(strategy).write(&mut out, array.to_array_stream()).await.unwrap();
                 out
@@ -266,7 +270,7 @@ where
                 let file = session.open_options().open_buffer(buffer.clone()).unwrap();
                 let mut scan = file.scan().unwrap();
                 if let Some(expr) = filter {
-                    let bound = expr.optimize_recursive(file.dtype()).unwrap().bind(file.dtype()).unwrap();
+                    let bound = expr.bind(file.dtype()).unwrap().optimize_recursive().unwrap();
                     scan = scan.with_filter(bound);
                 }
                 let array = scan.into_array_stream().unwrap().read_all().await.unwrap();
