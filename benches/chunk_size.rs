@@ -443,9 +443,9 @@ fn generate<T: FromIndex>() -> Vec<T> {
 struct ChunkResult {
     power: u32,
     chunk_size: usize,
+    size_bytes: usize,
     serial_ms: f64,
     deserial_ms: f64,
-    size_bytes: usize,
     num_chunks: usize,
     /// Peak additional heap (bytes) while serializing; excludes the resident input rows
     write_peak: usize,
@@ -460,15 +460,15 @@ struct ResultRow<'a> {
 
 impl MarkdownTableRow for ResultRow<'_> {
     fn column_names() -> Vec<&'static str> {
-        vec!["Chunk size", "Serialize", "Deserialize", "Size", "Chunks", "Write peak", "Read peak"]
+        vec!["Chunk size", "Size", "Serialize", "Deserialize", "Chunks", "Write peak", "Read peak"]
     }
 
     fn column_values(&self) -> Vec<String> {
         vec![
             format!("2^{} = {}", self.r.power, self.r.chunk_size.to_string()),
+            format_bytes(self.r.size_bytes),
             format_ms(self.r.serial_ms),
             format_ms(self.r.deserial_ms),
-            format_bytes(self.r.size_bytes),
             self.r.num_chunks.to_string(),
             format_bytes(self.r.write_peak),
             format_bytes(self.r.read_peak),

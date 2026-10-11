@@ -27,16 +27,16 @@ include!("bench_common.rs");
 #[path = "datasets/common.rs"]
 mod common;
 
-use common::CodecMetrics;
 use anyhow::Context as _;
+use backend_snapshot::{BackendSnapshot, BackendSnapshotKey, BackendSnapshotTimeRound, BackendSnapshotTimeline};
 use chrono::{DateTime, Utc};
+use common::CodecMetrics;
 use pco_pack::{PcoPack, Timeline, rmp_serde, zstd};
+use query_stats::{QueryStat, QueryStatTimeRound};
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use backend_snapshot::{BackendSnapshot, BackendSnapshotKey, BackendSnapshotTimeline, BackendSnapshotTimeRound};
-use query_stats::{QueryStat, QueryStatTimeRound};
 
 fn main() -> anyhow::Result<()> {
     println!("## Postgres\n");
@@ -78,8 +78,7 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
     let db0 = rows[0].database_id;
 
     let keys = [Sk::Time(last_us - 3_600_000_000, last_us), Sk::Loud, Sk::Db(db0)];
-    let kf: Vec<(Sk, usize)> =
-        keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches(r)).count())).collect();
+    let kf: Vec<(Sk, usize)> = keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches(r)).count())).collect();
     let labels: Vec<String> = kf.iter().map(|(_, e)| common::filter_label(*e, n)).collect();
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
 
@@ -93,19 +92,15 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
     let pco_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf.iter()).map(|(q, (_, e))| (q, *e)).collect();
 
-    let pco = common::bench_pco_pack(&rows, &pco_filters, |back| {
-        assert_eq!(back.len(), rows.len(), "{name} row count")
-    });
+    let pco =
+        common::bench_pco_pack(&rows, &pco_filters, |back| assert_eq!(back.len(), rows.len(), "{name} row count"));
 
     // The TimeRound write rounds collected_at to whole seconds, so the window
     // filter's expected count folds collected_at through the same rounding;
     // float_round rounds no filter column.
-    let time_round_rows: Vec<QueryStatTimeRound> =
-        rows.iter().map(QueryStatTimeRound::from).collect();
-    let kf_time_round: Vec<(Sk, usize)> = keys
-        .iter()
-        .map(|k| (*k, rows.iter().filter(|r| k.matches_time_round(r)).count()))
-        .collect();
+    let time_round_rows: Vec<QueryStatTimeRound> = rows.iter().map(QueryStatTimeRound::from).collect();
+    let kf_time_round: Vec<(Sk, usize)> =
+        keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches_time_round(r)).count())).collect();
     let time_round_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_time_round.iter()).map(|(q, (_, e))| (q, *e)).collect();
     let pco_time_round = common::bench_pco_pack(&time_round_rows, &time_round_filters, |back| {
@@ -114,31 +109,33 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
     drop(time_round_rows);
 
     let col_rows: Vec<QueryStatCol> = rows.iter().map(QueryStatCol::from).collect();
-    let col = common::bench_columnar(n, move || col_rows, &kf, |decoded: &columnar::BorrowedOf<QueryStatCol>, k: &Sk| {
-        let count = columnar::Len::len(decoded);
-        (0..count)
-            .filter(|&i| {
-                let r = columnar::Index::get(decoded, i);
-                match k {
-                    Sk::Time(a, b) => {
-                        let us = *r.collected_at;
-                        *a <= us && us <= *b
+    let col = common::bench_columnar(
+        n,
+        move || col_rows,
+        &kf,
+        |decoded: &columnar::BorrowedOf<QueryStatCol>, k: &Sk| {
+            let count = columnar::Len::len(decoded);
+            (0..count)
+                .filter(|&i| {
+                    let r = columnar::Index::get(decoded, i);
+                    match k {
+                        Sk::Time(a, b) => {
+                            let us = *r.collected_at;
+                            *a <= us && us <= *b
+                        }
+                        Sk::Loud => r.toplevel && *r.calls >= 10,
+                        Sk::Db(id) => *r.database_id == *id,
                     }
-                    Sk::Loud => r.toplevel && *r.calls >= 10,
-                    Sk::Db(id) => *r.database_id == *id,
-                }
-            })
-            .count()
-    });
+                })
+                .count()
+        },
+    );
 
     let vx_rows: Vec<QueryStatCol> = rows.iter().map(QueryStatCol::from).collect();
     let vx = common::bench_vortex_ds(&vx_rows, &kf, |k: &Sk| {
         use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq};
         match k {
-            Sk::Time(a, b) => and(
-                gt_eq(col("collected_at"), lit(*a)),
-                lt_eq(col("collected_at"), lit(*b)),
-            ),
+            Sk::Time(a, b) => and(gt_eq(col("collected_at"), lit(*a)), lt_eq(col("collected_at"), lit(*b))),
             Sk::Loud => and(eq(col("toplevel"), lit(true)), gt_eq(col("calls"), lit(10i64))),
             Sk::Db(id) => eq(col("database_id"), lit(*id)),
         }
@@ -147,9 +144,7 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
 
     let sc = common::bench_serde_columnar(
         n,
-        || stats_sc::QueryStatsScStore {
-            data: rows.iter().map(stats_sc::QueryStatsScRow::from).collect(),
-        },
+        || stats_sc::QueryStatsScStore { data: rows.iter().map(stats_sc::QueryStatsScRow::from).collect() },
         &kf,
         |s: &stats_sc::QueryStatsScStore, k: &Sk| {
             s.data
@@ -165,7 +160,7 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
 
     let mp = common::bench_msgpack(&rows, &kf, |r: &QueryStat, k: &Sk| k.matches(r));
 
-    let metrics = ["Serialize", "Deserialize", "Size"];
+    let metrics = ["Size", "Serialize", "Deserialize"];
     let mut out: Vec<CodecRow> = metrics
         .iter()
         .map(|m| CodecRow {
@@ -206,8 +201,7 @@ fn bench_backends(rows: &[BackendSnapshot]) {
     let last_us = rows.iter().map(|r| r.collected_at.timestamp_micros()).max().unwrap();
 
     let keys = [Bk::Time(last_us - 3_600_000_000, last_us), Bk::Active, Bk::Waits];
-    let kf: Vec<(Bk, usize)> =
-        keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches(r)).count())).collect();
+    let kf: Vec<(Bk, usize)> = keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches(r)).count())).collect();
     let labels: Vec<String> = kf.iter().map(|(_, e)| common::filter_label(*e, n)).collect();
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
 
@@ -227,8 +221,7 @@ fn bench_backends(rows: &[BackendSnapshot]) {
 
     // The time_round = 1 s write stores rounded collected_at values, so the
     // window filter's expected count is computed over those stored values.
-    let time_round_rows: Vec<BackendSnapshotTimeRound> =
-        rows.iter().map(BackendSnapshotTimeRound::from).collect();
+    let time_round_rows: Vec<BackendSnapshotTimeRound> = rows.iter().map(BackendSnapshotTimeRound::from).collect();
     let kf_time_round: Vec<(Bk, usize)> =
         keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches_time_round(r)).count())).collect();
     let time_round_filters: Vec<(&serde_json::Value, usize)> =
@@ -265,14 +258,8 @@ fn bench_backends(rows: &[BackendSnapshot]) {
     let vx = common::bench_vortex_ds(&vx_rows, &kf, |k: &Bk| {
         use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq, or};
         match k {
-            Bk::Time(a, b) => and(
-                gt_eq(col("collected_at"), lit(*a)),
-                lt_eq(col("collected_at"), lit(*b)),
-            ),
-            Bk::Active => or(
-                eq(col("backend_state"), lit(1i8)),
-                eq(col("backend_state"), lit(2i8)),
-            ),
+            Bk::Time(a, b) => and(gt_eq(col("collected_at"), lit(*a)), lt_eq(col("collected_at"), lit(*b))),
+            Bk::Active => or(eq(col("backend_state"), lit(1i8)), eq(col("backend_state"), lit(2i8))),
             Bk::Waits => gt_eq(col("wait_event"), lit(1i16)),
         }
     });
@@ -280,9 +267,7 @@ fn bench_backends(rows: &[BackendSnapshot]) {
 
     let sc = common::bench_serde_columnar(
         n,
-        || backends_sc::BackendsScStore {
-            data: rows.iter().map(backends_sc::BackendsScRow::from).collect(),
-        },
+        || backends_sc::BackendsScStore { data: rows.iter().map(backends_sc::BackendsScRow::from).collect() },
         &kf,
         |s: &backends_sc::BackendsScStore, k: &Bk| {
             s.data
@@ -311,17 +296,15 @@ fn bench_backends(rows: &[BackendSnapshot]) {
     // captured size numbers) are reproducible across runs.
     tl_rows.sort_by_key(|r| (r.server_id, r.backend_pid, r.collected_at.start().unwrap_or(0)));
     let nd = tl_rows.len();
-    let kf_tl: Vec<(Bk, usize)> = keys
-        .iter()
-        .map(|k| (*k, tl_rows.iter().filter(|r| k.matches_timeline(r)).count()))
-        .collect();
+    let kf_tl: Vec<(Bk, usize)> =
+        keys.iter().map(|k| (*k, tl_rows.iter().filter(|r| k.matches_timeline(r)).count())).collect();
     let tl_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_tl.iter()).map(|(q, (_, e))| (q, *e)).collect();
     let pco_timeline = common::bench_pco_pack(&tl_rows, &tl_filters, |back| {
         assert_eq!(back.len(), nd, "backend_snapshots (Timeline) row count")
     });
 
-    let metrics = ["Serialize", "Deserialize", "Size"];
+    let metrics = ["Size", "Serialize", "Deserialize"];
     let mut out: Vec<CodecRowTimeline> = metrics
         .iter()
         .map(|m| CodecRowTimeline {
@@ -435,8 +418,7 @@ impl Bk {
 mod query_stats {
     use super::*;
 
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    #[derive(PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, PcoPack)]
     #[pco_pack(timestamp = collected_at, index = [database_id, granularity])]
     pub struct QueryStat {
         pub database_id: i64,
@@ -460,8 +442,7 @@ mod query_stats {
     /// (`float_round = 2` on the aggregate f64s, `time_round = 1 s` on the
     /// timestamps), so stored rows differ from the capture by rounding only.
     /// This is the `PcoPack time_round` column.
-    #[derive(Clone, Debug, PartialEq)]
-    #[derive(PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(
         timestamp = collected_at,
         index = [database_id, granularity],
@@ -515,8 +496,7 @@ mod query_stats {
 mod backend_snapshot {
     use super::*;
 
-    #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-    #[derive(PcoPack)]
+    #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, PcoPack)]
     #[pco_pack(index = [server_id, granularity], timestamp = collected_at)]
     pub struct BackendSnapshot {
         pub server_id: i64,
@@ -541,8 +521,7 @@ mod backend_snapshot {
     /// backend snapshots with `time_round = 1 s`. Tick jitter carries no
     /// signal, and rounding the us timestamps shrinks the timestamp columns.
     /// This is the `PcoPack time_round` column.
-    #[derive(Clone, Debug, Default, PartialEq)]
-    #[derive(PcoPack)]
+    #[derive(Clone, Debug, Default, PartialEq, PcoPack)]
     #[pco_pack(
         index = [server_id, granularity],
         timestamp = collected_at,
@@ -637,8 +616,7 @@ mod backend_snapshot {
     /// row per distinct backend state, every tick it was observed at folded
     /// into an exact-us `Timeline` (lossless; bucketing would lie about the
     /// collection time). Same index layout as production.
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    #[derive(PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, PcoPack)]
     #[pco_pack(index = [server_id, granularity], timestamp = collected_at)]
     pub struct BackendSnapshotTimeline {
         pub server_id: i64,
@@ -906,9 +884,7 @@ struct CodecRow {
 
 impl markdown_tables::MarkdownTableRow for CodecRow {
     fn column_names() -> Vec<&'static str> {
-        vec![
-            "Metric", "PcoPack", "PcoPack time_round", "Vortex", "columnar", "serde_columnar", "msgpack",
-        ]
+        vec!["Metric", "PcoPack", "PcoPack time_round", "Vortex", "columnar", "serde_columnar", "msgpack"]
     }
     fn column_values(&self) -> Vec<String> {
         vec![
@@ -995,8 +971,7 @@ fn data_dir() -> PathBuf {
 fn read_blob<T: serde::de::DeserializeOwned>(name: &str) -> anyhow::Result<Vec<T>> {
     let path = data_dir().join(name);
     eprintln!("decoding {name}");
-    let file = std::fs::File::open(&path)
-        .with_context(|| format!("{} missing: run `git lfs pull`", path.display()))?;
+    let file = std::fs::File::open(&path).with_context(|| format!("{} missing: run `git lfs pull`", path.display()))?;
     let decoder = zstd::stream::read::Decoder::new(std::io::BufReader::new(file))?;
     Ok(rmp_serde::decode::from_read(decoder)?)
 }

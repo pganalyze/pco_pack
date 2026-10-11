@@ -83,8 +83,8 @@ pub fn cdf_index(cdf: &[f64], r: f64) -> usize {
 /// rest a Pareto tail.
 pub fn skew_small(i: usize) -> i64 {
     const SPIKE_CDF: [f64; 22] = [
-        0.6248, 0.7810, 0.8504, 0.8895, 0.9145, 0.9318, 0.9446, 0.9543, 0.9620, 0.9683, 0.9735,
-        0.9778, 0.9815, 0.9847, 0.9875, 0.9899, 0.9921, 0.9940, 0.9957, 0.9973, 0.9987, 1.0,
+        0.6248, 0.7810, 0.8504, 0.8895, 0.9145, 0.9318, 0.9446, 0.9543, 0.9620, 0.9683, 0.9735, 0.9778, 0.9815, 0.9847,
+        0.9875, 0.9899, 0.9921, 0.9940, 0.9957, 0.9973, 0.9987, 1.0,
     ];
     if unit64(i) < 0.64 {
         1 + cdf_index(&SPIKE_CDF, unit64(i.wrapping_add(0x5eed))) as i64
@@ -166,11 +166,7 @@ pub fn bench_write<T: pco_pack::PcoSerde + Clone + PartialEq + std::fmt::Debug, 
     let mut cursor = Cursor::new(&buf[..]);
     let mut reader = T::read(&mut cursor, 0, Default::default()).unwrap();
     for idx in 0..n_rows {
-        assert_eq!(
-            T::get(&mut reader, idx).unwrap(),
-            Some(data[idx].clone()),
-            "roundtrip mismatch at row {idx}"
-        );
+        assert_eq!(T::get(&mut reader, idx).unwrap(), Some(data[idx].clone()), "roundtrip mismatch at row {idx}");
     }
     (label.to_string(), ms, buf.len())
 }
@@ -189,11 +185,7 @@ pub fn bench_write_round<
     let mut cursor = Cursor::new(&buf[..]);
     let mut reader = T::read(&mut cursor, float_round, time_round).unwrap();
     for idx in 0..n_rows {
-        assert_eq!(
-            T::get(&mut reader, idx).unwrap(),
-            Some(expect(&data[idx])),
-            "roundtrip mismatch at row {idx}"
-        );
+        assert_eq!(T::get(&mut reader, idx).unwrap(), Some(expect(&data[idx])), "roundtrip mismatch at row {idx}");
     }
     (label.to_string(), ms, buf.len())
 }
@@ -278,9 +270,7 @@ pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clo
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // Schema: `from_type` for self-describing types, `from_samples` for
         // the rest; unit enums via `enums_without_data_as_strings`.
-        let options = TracingOptions::default()
-            .enums_without_data_as_strings(true)
-            .allow_null_fields(true);
+        let options = TracingOptions::default().enums_without_data_as_strings(true).allow_null_fields(true);
         let fields: Vec<FieldRef> = match <Vec<FieldRef>>::from_type::<Item<T>>(options.clone()) {
             Ok(f) => f,
             Err(_) => {
@@ -302,12 +292,7 @@ pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clo
                 let strategy = WriteStrategyBuilder::default()
                     .with_btrblocks_builder(BtrBlocksCompressorBuilder::default().with_compact())
                     .build();
-                session
-                    .write_options()
-                    .with_strategy(strategy)
-                    .write(&mut out, array.to_array_stream())
-                    .await
-                    .unwrap();
+                session.write_options().with_strategy(strategy).write(&mut out, array.to_array_stream()).await.unwrap();
                 out
             })
         });
@@ -318,19 +303,15 @@ pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clo
             let scan = file.scan().unwrap();
             let array = scan.into_array_stream().unwrap().read_all().await.unwrap();
             let schema_out = session.arrow().to_arrow_schema(array.dtype()).unwrap();
+            use vortex::array::VortexSessionExecute;
             #[allow(deprecated)]
             use vortex::arrow::ArrowArrayExecutor as _;
-            use vortex::array::VortexSessionExecute;
             let mut ctx = session.create_execution_ctx();
             #[allow(deprecated)]
             let batch = array.execute_record_batch(&schema_out, &mut ctx).unwrap();
             serde_arrow::from_record_batch(&batch).unwrap()
         });
-        assert_eq!(
-            back.iter().map(|i| i.0.clone()).collect::<Vec<_>>(),
-            data.to_vec(),
-            "vortex roundtrip mismatch"
-        );
+        assert_eq!(back.iter().map(|i| i.0.clone()).collect::<Vec<_>>(), data.to_vec(), "vortex roundtrip mismatch");
         Ok((ms, bytes.len()))
     }));
     std::panic::set_hook(old_hook);
@@ -340,30 +321,30 @@ pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clo
     }
 }
 
-/// [`bench_vortex`] as formatted table cells: "-" where the vortex pipeline
-/// cannot express the type (complex enums, heterogeneous values, maps).
+/// [`bench_vortex`] as formatted table cells, size first: "-" where the vortex
+/// pipeline cannot express the type (complex enums, heterogeneous values, maps).
 #[allow(dead_code)]
 pub fn vortex_cell<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug>(
     data: &[T],
 ) -> (String, String) {
     match bench_vortex(data) {
-        Ok((t, s)) => (format_ms(t), format_bytes(s)),
+        Ok((t, s)) => (format_bytes(s), format_ms(t)),
         Err(_) => ("-".to_string(), "-".to_string()),
     }
 }
 
 /// Row for the four-codec comparison table: pco, PcoPack, msgpack+zstd, and
-/// Vortex (write time, then size).
+/// Vortex (size first, then write time).
 pub struct ComparisonRow {
     pub type_name: String,
-    pub pco_time: String,
-    pub pco_pack_time: String,
-    pub mp_time: String,
-    pub vortex_time: String,
     pub pco_size: String,
     pub pco_pack_size: String,
     pub mp_size: String,
     pub vortex_size: String,
+    pub pco_time: String,
+    pub pco_pack_time: String,
+    pub mp_time: String,
+    pub vortex_time: String,
 }
 
 impl markdown_tables::MarkdownTableRow for ComparisonRow {
@@ -374,14 +355,14 @@ impl markdown_tables::MarkdownTableRow for ComparisonRow {
     fn column_values(&self) -> Vec<String> {
         vec![
             self.type_name.clone(),
-            self.pco_time.clone(),
-            self.pco_pack_time.clone(),
-            self.mp_time.clone(),
-            self.vortex_time.clone(),
             self.pco_size.clone(),
             self.pco_pack_size.clone(),
             self.mp_size.clone(),
             self.vortex_size.clone(),
+            self.pco_time.clone(),
+            self.pco_pack_time.clone(),
+            self.mp_time.clone(),
+            self.vortex_time.clone(),
         ]
     }
 }
@@ -393,15 +374,16 @@ pub fn print_comparison_table(rows: &[ComparisonRow]) {
 }
 
 /// Row for the three-codec table: types where pco has no applicable
-/// representation compare PcoPack, msgpack+zstd, and Vortex (time, then size).
+/// representation compare PcoPack, msgpack+zstd, and Vortex (size first, then
+/// time).
 pub struct SlimRow {
     pub type_name: String,
-    pub pco_pack_time: String,
-    pub mp_time: String,
-    pub vortex_time: String,
     pub pco_pack_size: String,
     pub mp_size: String,
     pub vortex_size: String,
+    pub pco_pack_time: String,
+    pub mp_time: String,
+    pub vortex_time: String,
 }
 
 impl markdown_tables::MarkdownTableRow for SlimRow {
@@ -412,12 +394,12 @@ impl markdown_tables::MarkdownTableRow for SlimRow {
     fn column_values(&self) -> Vec<String> {
         vec![
             self.type_name.clone(),
-            self.pco_pack_time.clone(),
-            self.mp_time.clone(),
-            self.vortex_time.clone(),
             self.pco_pack_size.clone(),
             self.mp_size.clone(),
             self.vortex_size.clone(),
+            self.pco_pack_time.clone(),
+            self.mp_time.clone(),
+            self.vortex_time.clone(),
         ]
     }
 }

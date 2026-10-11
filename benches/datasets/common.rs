@@ -33,11 +33,7 @@ pub struct CodecMetrics {
 /// PcoPack runner. Serialize: clone + `write` + `to_bytes`. Deserialize:
 /// `from_bytes` + full read. `verify` may assume stored order; filter counts
 /// assert.
-pub fn bench_pco_pack<T, V>(
-    data: &[T],
-    filters: &[(&serde_json::Value, usize)],
-    verify: V,
-) -> CodecMetrics
+pub fn bench_pco_pack<T, V>(data: &[T], filters: &[(&serde_json::Value, usize)], verify: V) -> CodecMetrics
 where
     T: pco_pack::PcoPack + Clone + std::fmt::Debug,
     V: FnOnce(&[T]),
@@ -74,21 +70,13 @@ where
         }
         filter_ms.push(Some(ms));
     }
-    CodecMetrics {
-        serial_ms: Some(serial_ms),
-        deserial_ms: Some(deserial_ms),
-        size: Some(bytes.len()),
-        filter_ms,
-    }
+    CodecMetrics { serial_ms: Some(serial_ms), deserial_ms: Some(deserial_ms), size: Some(bytes.len()), filter_ms }
 }
 
 /// columnar runner. Serialize: mirror to `Container` + indexed encode +
 /// zstd L3. Deserialize/filter: decode + per-row `Index::get` + count assert.
 pub fn bench_columnar<R, B, K, F>(
-    n_rows: usize,
-    build_rows: B,
-    filters: &[(K, usize)],
-    count_matches: F,
+    n_rows: usize, build_rows: B, filters: &[(K, usize)], count_matches: F,
 ) -> CodecMetrics
 where
     R: columnar::Columnar + std::fmt::Debug,
@@ -109,8 +97,7 @@ where
     let (deserial_ms, count) = one_pass(|| {
         let decompressed = zstd::decode_all(&*buf).unwrap();
         let words: &[u64] = bytemuck::cast_slice(&decompressed);
-        let decoded =
-            columnar::BorrowedOf::<R>::from_bytes(&mut columnar::bytes::indexed::decode(words));
+        let decoded = columnar::BorrowedOf::<R>::from_bytes(&mut columnar::bytes::indexed::decode(words));
         let count = Len::len(&decoded);
         for i in 0..count {
             std::hint::black_box(Index::get(&decoded, i));
@@ -123,19 +110,13 @@ where
         let (ms, matched) = one_pass(|| {
             let decompressed = zstd::decode_all(&*buf).unwrap();
             let words: &[u64] = bytemuck::cast_slice(&decompressed);
-            let decoded =
-                columnar::BorrowedOf::<R>::from_bytes(&mut columnar::bytes::indexed::decode(words));
+            let decoded = columnar::BorrowedOf::<R>::from_bytes(&mut columnar::bytes::indexed::decode(words));
             count_matches(&decoded, k)
         });
         assert_eq!(matched, *expected, "columnar filter count");
         filter_ms.push(Some(ms));
     }
-    CodecMetrics {
-        serial_ms: Some(serial_ms),
-        deserial_ms: Some(deserial_ms),
-        size: Some(buf.len()),
-        filter_ms,
-    }
+    CodecMetrics { serial_ms: Some(serial_ms), deserial_ms: Some(deserial_ms), size: Some(buf.len()), filter_ms }
 }
 
 /// A serde_columnar store: the per-dataset `#[columnar(ser, de)]` wrapper over
@@ -147,10 +128,7 @@ pub trait ScStore: serde::Serialize + for<'de> serde::Deserialize<'de> {
 /// serde_columnar runner. Serialize: mirror store `to_vec` + zstd L3.
 /// Deserialize/filter: full decode + in-Rust store predicate + count assert.
 pub fn bench_serde_columnar<S, B, K, F>(
-    n_rows: usize,
-    build_store: B,
-    filters: &[(K, usize)],
-    count_matches: F,
+    n_rows: usize, build_store: B, filters: &[(K, usize)], count_matches: F,
 ) -> CodecMetrics
 where
     S: ScStore,
@@ -178,21 +156,12 @@ where
         assert_eq!(matched, *expected, "serde_columnar filter count");
         filter_ms.push(Some(ms));
     }
-    CodecMetrics {
-        serial_ms: Some(serial_ms),
-        deserial_ms: Some(deserial_ms),
-        size: Some(buf.len()),
-        filter_ms,
-    }
+    CodecMetrics { serial_ms: Some(serial_ms), deserial_ms: Some(deserial_ms), size: Some(buf.len()), filter_ms }
 }
 
 /// msgpack+zstd runner. Serialize uses `to_msgpack_zstd` (262k-row frames,
 /// zstd L3). Deserialize is a full multi-frame decode + full value roundtrip.
-pub fn bench_msgpack<T, K, F>(
-    data: &[T],
-    filters: &[(K, usize)],
-    matches: F,
-) -> CodecMetrics
+pub fn bench_msgpack<T, K, F>(data: &[T], filters: &[(K, usize)], matches: F) -> CodecMetrics
 where
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
     F: Fn(&T, &K) -> bool,
@@ -220,12 +189,7 @@ where
         assert_eq!(matched, *expected, "msgpack filter count");
         filter_ms.push(Some(ms));
     }
-    CodecMetrics {
-        serial_ms: Some(serial_ms),
-        deserial_ms: Some(deserial_ms),
-        size: Some(buf.len()),
-        filter_ms,
-    }
+    CodecMetrics { serial_ms: Some(serial_ms), deserial_ms: Some(deserial_ms), size: Some(buf.len()), filter_ms }
 }
 
 /// Current-thread tokio runtime, shared across the dataset benches.
@@ -246,11 +210,7 @@ fn ds_vortex_session() -> &'static vortex::session::VortexSession {
 
 /// Vortex runner. Compact btrblocks file (serde_arrow->arrow->vortex),
 /// roundtrip-verified unmeasured. A caught panic degrades all metrics to "-".
-pub fn bench_vortex_ds<T, K, E>(
-    data: &[T],
-    filters: &[(K, usize)],
-    build_expr: E,
-) -> CodecMetrics
+pub fn bench_vortex_ds<T, K, E>(data: &[T], filters: &[(K, usize)], build_expr: E) -> CodecMetrics
 where
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
     E: Fn(&K) -> vortex::array::expr::Expression,
@@ -293,12 +253,7 @@ where
                 let strategy = WriteStrategyBuilder::default()
                     .with_btrblocks_builder(BtrBlocksCompressorBuilder::default().with_compact())
                     .build();
-                session
-                    .write_options()
-                    .with_strategy(strategy)
-                    .write(&mut out, array.to_array_stream())
-                    .await
-                    .unwrap();
+                session.write_options().with_strategy(strategy).write(&mut out, array.to_array_stream()).await.unwrap();
                 out
             })
         });
@@ -339,12 +294,7 @@ where
             assert_eq!(rows.len(), *expected, "vortex filter count");
             filter_ms.push(Some(ms));
         }
-        CodecMetrics {
-            serial_ms: Some(serial_ms),
-            deserial_ms: Some(deserial_ms),
-            size: Some(bytes.len()),
-            filter_ms,
-        }
+        CodecMetrics { serial_ms: Some(serial_ms), deserial_ms: Some(deserial_ms), size: Some(bytes.len()), filter_ms }
     }));
     std::panic::set_hook(old_hook);
     match result {
@@ -508,9 +458,10 @@ pub struct CodecResults {
 
 impl CodecResults {
     /// The dataset codec table: `Metric | PcoPack | [PcoPack (lossy)] | Vortex
-    /// | columnar | serde_columnar | msgpack`; `-` = not expressible.
+    /// | columnar | serde_columnar | msgpack`, with Size first; `-` = not
+    /// expressible.
     pub fn print(self, filter_labels: &[&str]) {
-        let metrics = ["Serialize", "Deserialize", "Size"];
+        let metrics = ["Size", "Serialize", "Deserialize"];
         if let Some(l) = &self.pco_pack_lossy {
             let mut rows: Vec<CodecRowLossy> = metrics
                 .iter()

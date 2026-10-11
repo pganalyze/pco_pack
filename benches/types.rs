@@ -65,17 +65,17 @@ macro_rules! row3 {
         let (p_t, p_s) = $pco(&data);
         let mp_s = to_msgpack_zstd(&data).len();
         let mp_t = bench_msgpack(&data);
-        let (vx_t, vx_s) = vortex_cell(&data);
+        let (vx_s, vx_t) = vortex_cell(&data);
         $rows.push(ComparisonRow {
             type_name: format!("`{name}`"),
-            pco_time: format_ms(p_t),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(mp_t),
-            vortex_time: vx_t,
             pco_size: format_bytes(p_s),
             pco_pack_size: format_bytes(pp_s),
             mp_size: format_bytes(mp_s),
             vortex_size: vx_s,
+            pco_time: format_ms(p_t),
+            pco_pack_time: format_ms(pp_t),
+            mp_time: format_ms(mp_t),
+            vortex_time: vx_t,
         });
     }};
 }
@@ -86,17 +86,17 @@ macro_rules! row3_nopco {
         let (name, pp_t, pp_s) = bench_write($label, $n, $gen);
         let mp_s = to_msgpack_zstd(&data).len();
         let mp_t = bench_msgpack(&data);
-        let (vx_t, vx_s) = vortex_cell(&data);
+        let (vx_s, vx_t) = vortex_cell(&data);
         $rows.push(ComparisonRow {
             type_name: format!("`{name}`"),
-            pco_time: "-".to_string(),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(mp_t),
-            vortex_time: vx_t,
             pco_size: "-".to_string(),
             pco_pack_size: format_bytes(pp_s),
             mp_size: format_bytes(mp_s),
             vortex_size: vx_s,
+            pco_time: "-".to_string(),
+            pco_pack_time: format_ms(pp_t),
+            mp_time: format_ms(mp_t),
+            vortex_time: vx_t,
         });
     }};
 }
@@ -107,15 +107,15 @@ macro_rules! row2 {
         let (name, pp_t, pp_s) = bench_write($label, $n, $gen);
         let mp_s = to_msgpack_zstd(&data).len();
         let mp_t = bench_msgpack(&data);
-        let (vx_t, vx_s) = vortex_cell(&data);
+        let (vx_s, vx_t) = vortex_cell(&data);
         $rows.push(SlimRow {
             type_name: format!("`{name}`"),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(mp_t),
-            vortex_time: vx_t,
             pco_pack_size: format_bytes(pp_s),
             mp_size: format_bytes(mp_s),
             vortex_size: vx_s,
+            pco_pack_time: format_ms(pp_t),
+            mp_time: format_ms(mp_t),
+            vortex_time: vx_t,
         });
     }};
 }
@@ -125,10 +125,8 @@ macro_rules! row2_smolstr {
     ($rows:expr, $label:expr, $n:expr, $gen:expr, $map:ident) => {{
         let data = ($gen)($n);
         let (name, pp_t, pp_s) = bench_write($label, $n, $gen);
-        let string_data: Vec<$map<(String, i32), i32>> = data
-            .iter()
-            .map(|m| m.iter().map(|((k, v), val)| ((k.as_ref().to_string(), *v), *val)).collect())
-            .collect();
+        let string_data: Vec<$map<(String, i32), i32>> =
+            data.iter().map(|m| m.iter().map(|((k, v), val)| ((k.as_ref().to_string(), *v), *val)).collect()).collect();
         let mp_size = to_msgpack_zstd(&string_data).len();
         let mp_rt = avg_ms(|| {
             let data = ($gen)($n);
@@ -140,15 +138,15 @@ macro_rules! row2_smolstr {
         });
         // Vortex runs on the original SmolStr data, not the String
         // conversion.
-        let (vx_t, vx_s) = vortex_cell(&data);
+        let (vx_s, vx_t) = vortex_cell(&data);
         $rows.push(SlimRow {
             type_name: format!("`{name}`"),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(mp_rt),
-            vortex_time: vx_t,
             pco_pack_size: format_bytes(pp_s),
             mp_size: format_bytes(mp_size),
             vortex_size: vx_s,
+            pco_pack_time: format_ms(pp_t),
+            mp_time: format_ms(mp_rt),
+            vortex_time: vx_t,
         });
     }};
 }
@@ -184,13 +182,21 @@ fn numbers_table() {
 
     // --- sparsity placement: same marginal, placement decides ---
     row3!(&mut rows, "i64 (93% zeros, scattered)", CHUNK_ROWS, zero_spike_i64, |d: &Vec<i64>| bench_pco_col(d));
-    row3!(&mut rows, "i64 (93% zeros, clustered windows)", CHUNK_ROWS, zero_window_i64, |d: &Vec<i64>| bench_pco_col(d));
+    row3!(&mut rows, "i64 (93% zeros, clustered windows)", CHUNK_ROWS, zero_window_i64, |d: &Vec<i64>| bench_pco_col(
+        d
+    ));
 
     // --- tiny alphabet: i.i.d. floor + dwell sweep (run length) ---
     row3!(&mut rows, "u8 (tiny alphabet i.i.d., d=4)", CHUNK_ROWS, states_u8, |d: &Vec<u8>| bench_pco_col_8bit(d));
-    row3!(&mut rows, "u8 (dwell sweep, d=3, run~16)", CHUNK_ROWS, |n| dwell_u8(n, 16), |d: &Vec<u8>| bench_pco_col_8bit(d));
-    row3!(&mut rows, "u8 (dwell sweep, d=3, run~256)", CHUNK_ROWS, |n| dwell_u8(n, 256), |d: &Vec<u8>| bench_pco_col_8bit(d));
-    row3!(&mut rows, "u8 (dwell sweep, d=3, run~4096)", CHUNK_ROWS, |n| dwell_u8(n, 4096), |d: &Vec<u8>| bench_pco_col_8bit(d));
+    row3!(&mut rows, "u8 (dwell sweep, d=3, run~16)", CHUNK_ROWS, |n| dwell_u8(n, 16), |d: &Vec<u8>| {
+        bench_pco_col_8bit(d)
+    });
+    row3!(&mut rows, "u8 (dwell sweep, d=3, run~256)", CHUNK_ROWS, |n| dwell_u8(n, 256), |d: &Vec<u8>| {
+        bench_pco_col_8bit(d)
+    });
+    row3!(&mut rows, "u8 (dwell sweep, d=3, run~4096)", CHUNK_ROWS, |n| dwell_u8(n, 4096), |d: &Vec<u8>| {
+        bench_pco_col_8bit(d)
+    });
 
     // --- distinct-count sweep @ writer chunk: dictionary-territory crossover;
     //     8191/8193 bracket the CAP=8192 gate, 32768 is the churn ceiling ---
@@ -203,18 +209,44 @@ fn numbers_table() {
     row3!(&mut rows, "i64 (d-sweep, d=32768)", CHUNK_ROWS, |n| pool_iid_i64(n, 32768), |d: &Vec<i64>| bench_pco_col(d));
 
     // --- placement pair: same d=574 multiset, order decides the winner ---
-    row3!(&mut rows, "i64 (placement pair, d=574 grouped)", CHUNK_ROWS, |n| placement_pair_d574(n, true), |d: &Vec<i64>| bench_pco_col(d));
-    row3!(&mut rows, "i64 (placement pair, d=574 shuffled)", CHUNK_ROWS, |n| placement_pair_d574(n, false), |d: &Vec<i64>| bench_pco_col(d));
+    row3!(&mut rows, "i64 (placement pair, d=574 grouped)", CHUNK_ROWS, |n| placement_pair_d574(n, true), |d: &Vec<
+        i64,
+    >| {
+        bench_pco_col(d)
+    });
+    row3!(
+        &mut rows,
+        "i64 (placement pair, d=574 shuffled)",
+        CHUNK_ROWS,
+        |n| placement_pair_d574(n, false),
+        |d: &Vec<i64>| bench_pco_col(d)
+    );
 
     // --- recurrence-distance pair: same alphabet and d=4096, repeat
     //     spacing ~512 vs ~4096 (match-offset cost, LZ vs bitpack) ---
-    row3!(&mut rows, "i64 (recurrence pair, d=4096 local-block)", CHUNK_ROWS, |n| recurrence_i64(n, true), |d: &Vec<i64>| bench_pco_col(d));
-    row3!(&mut rows, "i64 (recurrence pair, d=4096 full-cycle)", CHUNK_ROWS, |n| recurrence_i64(n, false), |d: &Vec<i64>| bench_pco_col(d));
+    row3!(
+        &mut rows,
+        "i64 (recurrence pair, d=4096 local-block)",
+        CHUNK_ROWS,
+        |n| recurrence_i64(n, true),
+        |d: &Vec<i64>| bench_pco_col(d)
+    );
+    row3!(
+        &mut rows,
+        "i64 (recurrence pair, d=4096 full-cycle)",
+        CHUNK_ROWS,
+        |n| recurrence_i64(n, false),
+        |d: &Vec<i64>| bench_pco_col(d)
+    );
 
     // --- chunk fixed costs: same shape (d=64 pool), tiny tail chunk vs
     //     writer chunk; shows the per-chunk frame overhead ---
-    row3!(&mut rows, "i64 (d=64 pool, N=2k tail chunk)", 2_048, |n| pool_iid_i64(n, 64), |d: &Vec<i64>| bench_pco_col(d));
-    row3!(&mut rows, "i64 (d=64 pool, full writer chunk)", CHUNK_ROWS, |n| pool_iid_i64(n, 64), |d: &Vec<i64>| bench_pco_col(d));
+    row3!(&mut rows, "i64 (d=64 pool, N=2k tail chunk)", 2_048, |n| pool_iid_i64(n, 64), |d: &Vec<i64>| bench_pco_col(
+        d
+    ));
+    row3!(&mut rows, "i64 (d=64 pool, full writer chunk)", CHUNK_ROWS, |n| pool_iid_i64(n, 64), |d: &Vec<i64>| {
+        bench_pco_col(d)
+    });
 
     print_comparison_table(&rows);
     println!();
@@ -271,21 +303,11 @@ fn enums_table() {
     let mut rows: Vec<ComparisonRow> = Vec::new();
 
     row3_nopco!(&mut rows, "Enum (simple, skewed 68/27/5)", N, generate_status_data);
-    row3!(
-        &mut rows,
-        "u8 (skewed 68/27/5, plain integer)",
-        N,
-        status_disc_u8,
-        |d: &Vec<u8>| bench_pco_col_8bit(d)
-    );
+    row3!(&mut rows, "u8 (skewed 68/27/5, plain integer)", N, status_disc_u8, |d: &Vec<u8>| bench_pco_col_8bit(d));
     row3_nopco!(&mut rows, "Enum (complex, repeating pattern + payloads)", N, generate_event_data);
-    row3!(
-        &mut rows,
-        "u8 (repeating-pattern discriminant, plain integer)",
-        N,
-        event_disc_u8,
-        |d: &Vec<u8>| bench_pco_col_8bit(d)
-    );
+    row3!(&mut rows, "u8 (repeating-pattern discriminant, plain integer)", N, event_disc_u8, |d: &Vec<u8>| {
+        bench_pco_col_8bit(d)
+    });
 
     print_comparison_table(&rows);
     println!();
@@ -336,7 +358,7 @@ fn floats_table() {
     let (f64_p_t, f64_p_s) = bench_pco_col(&f64_data);
     let f64_mp_s = to_msgpack_zstd(&f64_data).len();
     let f64_mp_t = bench_msgpack(&f64_data);
-    let (f64_vx_t, f64_vx_s) = vortex_cell(&f64_data);
+    let (f64_vx_s, f64_vx_t) = vortex_cell(&f64_data);
     for round in [0u32, 1, 2] {
         let label = if round == 0 {
             "f64 (normal, no round)".to_string()
@@ -347,14 +369,14 @@ fn floats_table() {
         let (_name, pp_t, pp_s) = bench_write_round(&label, N, normal_f64, round, Duration::default(), expect);
         rows.push(ComparisonRow {
             type_name: format!("`{label}`"),
-            pco_time: format_ms(f64_p_t),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(f64_mp_t),
-            vortex_time: f64_vx_t.clone(),
             pco_size: format_bytes(f64_p_s),
             pco_pack_size: format_bytes(pp_s),
             mp_size: format_bytes(f64_mp_s),
             vortex_size: f64_vx_s.clone(),
+            pco_time: format_ms(f64_p_t),
+            pco_pack_time: format_ms(pp_t),
+            mp_time: format_ms(f64_mp_t),
+            vortex_time: f64_vx_t.clone(),
         });
     }
 
@@ -362,7 +384,7 @@ fn floats_table() {
     let (f32_p_t, f32_p_s) = bench_pco_col(&f32_data);
     let f32_mp_s = to_msgpack_zstd(&f32_data).len();
     let f32_mp_t = bench_msgpack(&f32_data);
-    let (f32_vx_t, f32_vx_s) = vortex_cell(&f32_data);
+    let (f32_vx_s, f32_vx_t) = vortex_cell(&f32_data);
     for round in [0u32, 1, 2] {
         let label = if round == 0 {
             "f32 (normal, no round)".to_string()
@@ -373,14 +395,14 @@ fn floats_table() {
         let (_name, pp_t, pp_s) = bench_write_round(&label, N, normal_f32, round, Duration::default(), expect);
         rows.push(ComparisonRow {
             type_name: format!("`{label}`"),
-            pco_time: format_ms(f32_p_t),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(f32_mp_t),
-            vortex_time: f32_vx_t.clone(),
             pco_size: format_bytes(f32_p_s),
             pco_pack_size: format_bytes(pp_s),
             mp_size: format_bytes(f32_mp_s),
             vortex_size: f32_vx_s.clone(),
+            pco_time: format_ms(f32_p_t),
+            pco_pack_time: format_ms(pp_t),
+            mp_time: format_ms(f32_mp_t),
+            vortex_time: f32_vx_t.clone(),
         });
     }
 
@@ -414,7 +436,7 @@ fn timestamps_table() {
     let (p_t, p_s) = bench_pco_col(&micros);
     let mp_s = to_msgpack_zstd(&data).len();
     let mp_t = bench_msgpack(&data);
-    let (vx_t, vx_s) = vortex_cell(&data);
+    let (vx_s, vx_t) = vortex_cell(&data);
 
     for (label, g) in [
         ("DateTime (60s step, no round)", 0i64),
@@ -426,14 +448,14 @@ fn timestamps_table() {
         let (_name, pp_t, pp_s) = bench_write_round(label, N, generate_datetime_data, 0, dur, expect);
         rows.push(ComparisonRow {
             type_name: format!("`{label}`"),
-            pco_time: format_ms(p_t),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(mp_t),
-            vortex_time: vx_t.clone(),
             pco_size: format_bytes(p_s),
             pco_pack_size: format_bytes(pp_s),
             mp_size: format_bytes(mp_s),
             vortex_size: vx_s.clone(),
+            pco_time: format_ms(p_t),
+            pco_pack_time: format_ms(pp_t),
+            mp_time: format_ms(mp_t),
+            vortex_time: vx_t.clone(),
         });
     }
 
@@ -488,13 +510,15 @@ fn bool_runs_low(n: usize) -> Vec<bool> {
     let mut out = Vec::with_capacity(n);
     let mut b = 0usize;
     while out.len() < n {
-        for _ in 0..(20 + (splitmix64(b.wrapping_mul(104729)) % 40) as usize) { // false 20..59
+        for _ in 0..(20 + (splitmix64(b.wrapping_mul(104729)) % 40) as usize) {
+            // false 20..59
             if out.len() == n {
                 return out;
             }
             out.push(false);
         }
-        for _ in 0..(4 + (splitmix64(b.wrapping_mul(1299709)) % 8) as usize) { // true 4..11
+        for _ in 0..(4 + (splitmix64(b.wrapping_mul(1299709)) % 8) as usize) {
+            // true 4..11
             if out.len() == n {
                 return out;
             }
@@ -771,22 +795,12 @@ fn status_disc_u8(n: usize) -> Vec<u8> {
 /// Repeating-pattern enum (wait_event_types-like marginal) in multi-value
 /// "snapshot" patterns; payloads are realistic counters and low-card keys.
 fn generate_event_data(n: usize) -> Vec<Event> {
-    let disc = gen_repeating(
-        n,
-        &[0u8, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3],
-        &[0u8, 1, 2, 3],
-        &[0.34, 0.30, 0.20, 0.16],
-    );
+    let disc = gen_repeating(n, &[0u8, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3], &[0u8, 1, 2, 3], &[0.34, 0.30, 0.20, 0.16]);
     (0..n)
         .map(|i| match disc[i] {
             0 => Event::Unknown,
-            1 => Event::Click(Click {
-                x: skew_small(i) as i32,
-                y: skew_small(i.wrapping_add(7)) as i32,
-            }),
-            2 => Event::KeyPress(KeyPress {
-                key: format!("key_{}", splitmix64(i.wrapping_add(13)) % 1000),
-            }),
+            1 => Event::Click(Click { x: skew_small(i) as i32, y: skew_small(i.wrapping_add(7)) as i32 }),
+            2 => Event::KeyPress(KeyPress { key: format!("key_{}", splitmix64(i.wrapping_add(13)) % 1000) }),
             _ => Event::Resize,
         })
         .collect()
@@ -824,11 +838,7 @@ fn zero_option_parts(n: usize, frac: f64, scattered: bool) -> (Vec<bool>, Vec<i3
 
 fn option_i32_data(n: usize, frac: f64, scattered: bool) -> Vec<Option<i32>> {
     let (is_zero, values) = zero_option_parts(n, frac, scattered);
-    is_zero
-        .iter()
-        .zip(values.iter())
-        .map(|(&z, v)| if z { None } else { Some(*v) })
-        .collect()
+    is_zero.iter().zip(values.iter()).map(|(&z, v)| if z { None } else { Some(*v) }).collect()
 }
 
 fn sentinel_i32_data(n: usize, frac: f64, scattered: bool) -> Vec<i32> {
@@ -839,15 +849,11 @@ fn sentinel_i32_data(n: usize, frac: f64, scattered: bool) -> Vec<i32> {
 // --- Strings / bytes / JSON -------------------------------------------------------------
 
 fn generate_string_data(n: usize) -> Vec<String> {
-    (0..n)
-        .map(|i| format!("string_{}_{}", i % 5000, splitmix64(i) % 16))
-        .collect()
+    (0..n).map(|i| format!("string_{}_{}", i % 5000, splitmix64(i) % 16)).collect()
 }
 
 fn generate_smol_str_data(n: usize) -> Vec<smol_str::SmolStr> {
-    (0..n)
-        .map(|i| smol_str::SmolStr::from(format!("string_{}_{}", i % 5000, splitmix64(i) % 16).leak()))
-        .collect()
+    (0..n).map(|i| smol_str::SmolStr::from(format!("string_{}_{}", i % 5000, splitmix64(i) % 16).leak())).collect()
 }
 
 /// Truly random (v4) UUIDs: incompressible 128 bits (`uuid`'s `v4` feature,

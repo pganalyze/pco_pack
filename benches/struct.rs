@@ -209,6 +209,14 @@ fn main() {
 
     let rows = vec![
         StructRow {
+            metric: "Size".to_string(),
+            pco_pack: format_bytes(pco_buf.len()),
+            columnar: format_bytes(columnar_size_bytes),
+            serde_columnar: format_bytes(sc_buf.len()),
+            msgpack: format_bytes(map_buf.len()),
+            vortex: format_bytes(vortex_buf.len()),
+        },
+        StructRow {
             metric: "Serialize".to_string(),
             pco_pack: format_ms(pco_serial_ms),
             columnar: format_ms(columnar_serial_ms),
@@ -223,14 +231,6 @@ fn main() {
             serde_columnar: format_ms(sc_deserial_ms),
             msgpack: format_ms(map_deserial_ms),
             vortex: format_ms(vortex_deserial_ms),
-        },
-        StructRow {
-            metric: "Size".to_string(),
-            pco_pack: format_bytes(pco_buf.len()),
-            columnar: format_bytes(columnar_size_bytes),
-            serde_columnar: format_bytes(sc_buf.len()),
-            msgpack: format_bytes(map_buf.len()),
-            vortex: format_bytes(vortex_buf.len()),
         },
         StructRow {
             metric: "Filter 20%".to_string(),
@@ -400,11 +400,7 @@ fn data(n: usize) -> Vec<Record> {
                 name: format!("name_{}", splitmix64(i.wrapping_add(0xA5A5)) % 1_000_000),
                 score: if sentinel { 500.0 } else { lognorm_small(i) },
                 active: if sentinel { true } else { unit64(i.wrapping_add(0x0707)) < 0.7 },
-                tag: if i % 50 < 25 {
-                    None
-                } else {
-                    Some(skew_small(i.wrapping_add(999)) as i32)
-                },
+                tag: if i % 50 < 25 { None } else { Some(skew_small(i.wrapping_add(999)) as i32) },
                 tags: (0..(i % 5 + 1)).map(|j| skew_small(i.wrapping_add(j * 131)) as i32).collect(),
                 color: if sentinel {
                     Color::Red

@@ -121,11 +121,11 @@ fn main() {
         });
     }
 
-    println!("### Serialization time\n");
-    println!("{}", as_table(&time_rows));
-    println!();
     println!("### Compressed size\n");
     println!("{}", as_table(&size_rows));
+    println!();
+    println!("### Serialization time\n");
+    println!("{}", as_table(&time_rows));
     println!();
 }
 
