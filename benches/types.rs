@@ -176,7 +176,6 @@ macro_rules! row2_smolstr_vx {
 // distinct count, dwell length, recurrence distance, placement, sparsity,
 // skew, chunk fixed costs. Predicted winners come from the same section 2
 // findings, so a row that disagrees with its prediction is drift signal.
-// Real-column data lives in `pg_data`.
 
 fn numbers_table() {
     println!("### Numbers\n");

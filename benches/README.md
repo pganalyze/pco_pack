@@ -1,20 +1,24 @@
 # Benchmarks
 
-All serialization times and sizes include compression (either Pcodec or zstd). These numbers are captured on an M5 Max MBP with fans set to max. There is a lot of run-to-run variance; [contributions are welcome](https://github.com/pganalyze/pco_pack/issues/3) to help smooth out the data.
+Sizes and times always include compression (pcodec or zstd), measured on an M5 Max MBP at max fan speed. Per-run variance is high; [contributions are welcome](https://github.com/pganalyze/pco_pack/issues/3) to improve the benchmark suite.
+
+- [Types](#types): measures synthetic per-field compression
+- [Structs](#structs): measures a synthetic multi-field struct
+- [Timeline](#timeline): measures structural deduplication using `pco_pack::Timeline`
+- [chunk_size](#chunk_size): measures how `chunk_size` influences size, speed, and memory use
+- [Filters](#filters): measures per-type filter timing
+- [Datasets](#datasets): measures real external datasets
+- [Postgres](#postgres): measures real Postgres monitoring datasets
 
 ## Types
 
-PcoPack vs standalone Pcodec vs msgpack+zstd vs Vortex, per field type and distribution. All rows run at PcoPack's default 262k-row chunk size. Pcodec uses zero-config defaults plus 8-bit types. msgpack+zstd uses the same chunking. Vortex is one compact btrblocks file per column, with "-" where the pipeline can't express the type: complex enums and heterogeneous-shape `serde_json::Value`. Map rows declare their Vortex layout: native `vortex.map` for open tuple-key vocabularies, struct-promoted columns for stable vocabularies.
-
-Every Numbers row is a synthetic shape that isolates exactly one axis: entropy floor, type-agnosticism, delta, skew, sparsity and placement, alphabet and dwell length, distinct count, multiset placement, recurrence distance, chunk fixed costs. Real-column bytes live in the [Postgres](#postgres) section.
-
-The `pco` column appears only where Pcodec compresses without transformation (plain numbers, bool -> u8, enum discriminants). PcoPack's structural decompositions (`Option` -> present+values, `Vec` -> lengths+values, dynamic JSON) have no standalone-Pcodec counterpart.
+Each row simulates a single data distribution: entropy, type width, delta, skew, sparsity, placement, alphabet, dwell, distinct count, recurrence, chunk costs.
 
 Where each codec wins:
-- Frequency/delta redundancy (counters, skew, i.i.d. pools): pco/PcoPack up to ~70% smaller than msgpack
-- Sequential redundancy (dwell runs, clustered zeros, grouped placement): msgpack+zstd ties or beats pco; long dwells collapse every codec to hundreds of bytes
-- Placement decides: one multiset, grouped vs shuffled, 5-6 KB vs 336-503 KB
-- Incompressible (uniform full-width): pco/PcoPack/Vortex tie within ~1%; msgpack pays its framing tax
+- Frequency and delta redundancy (counters, skew, pools): pco/PcoPack up to ~70% under msgpack
+- Sequential redundancy (dwells, clustered zeros, grouped placement): msgpack+zstd ties or wins
+- Placement decides: the same multiset stores tens of times smaller grouped than shuffled
+- Uniform full-width is the incompressible floor: every codec roughly ties
 
 ### Numbers
 
@@ -84,9 +88,7 @@ Where each codec wins:
 | `Enum (complex, repeating pattern + payloads)`       | -     | 96 KB   | 180 KB  | -      | -      | 2.4 ms  | 1.9 ms  | -      |
 | `u8 (repeating-pattern discriminant, plain integer)` | 24 KB | 24 KB   | 17 KB   | 26 KB  | 0.2 ms | 0.2 ms  | 0.3 ms  | 1.2 ms |
 
-Complex enums stay `-`: serde_arrow traces them to arrow dense unions, and
-the Vortex arrow import does not implement unions (`vortex.union` joins no
-core edition writable set).
+Note: Vortex does not currently support complex enums.
 
 ### Strings & bytes
 
@@ -100,9 +102,7 @@ core edition writable set).
 | `serde_json::Value`                           | 635 KB  | 632 KB  | -       | 13.6 ms | 4.3 ms  | -       |
 | `serde_json::Value (5 stable keys, 50k rows)` | 301 KB  | 299 KB  | 124 KB  | 14.7 ms | 4.4 ms  | 10.1 ms |
 
-Stable-shape JSON objects ride the struct-promoted layout (key names enter
-the schema once, not per object). Heterogeneous-shape `serde_json::Value`
-stays `-`: serde_arrow cannot merge mismatched samples into one schema.
+Vortex supports stable-keyed JSON using struct promotion, but does not support heterogeneous JSON.
 
 ### Maps
 
@@ -117,32 +117,11 @@ stays `-`: serde_arrow cannot merge mismatched samples into one schema.
 | `HashMap<SmolStr, i32> (8 stable keys, walk)`                    | 115 KB  | 3.3 MB  | 114 KB | 117.0 ms | 51.6 ms | 61.6 ms |
 | `HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null, walk)` | 852 KB  | 3.4 MB  | 352 KB | 100.9 ms | 52.0 ms | 77.0 ms |
 
-Each row stores maps in whichever Vortex layout wins on its distribution:
-the first four rows use native `vortex.map`, the stable-key rows use
-struct-promoted columns (one column per key, key names in the schema).
+First four rows use native `vortex.map`, the rest struct promotion. Struct promotion requires string keys from a stable vocabulary.
 
-- The first four rows stress a ~5000-key random keyspace with tuple-composed
-  keys, and use native `vortex.map`: struct promotion cannot express them.
-  Tuple keys fail serde_arrow tracing ("cannot interpret key as string"),
-  and with string keys the first-100-row schema silently drops every entry
-  outside the sample (measured: 39872 entries in, 13963 out). Native costs
-  ~10% over PcoPack here: keys stay in the entries column (varbin->zstd)
-  instead of the schema.
-- The stable-key rows declare struct promotion and trace into one Vortex
-  column per key. At 10k rows PcoPack's flattened counts+keys+values streams
-  still edge out the struct, because zstd absorbs the repeated keys. The
-  native layout measures ~1.5-1.7x above the promoted cells on this data.
-- Dense walk (chunk-sized, autocorrelated values along row order, a
-  time-sorted capture shape): struct vs PcoPack is a dead heat (114 KB vs
-  115 KB). PcoPack's zstd'd key column already neutralizes constant keys, and
-  one interleaved value stream loses little when every key moves. On this row
-  native would pay ~18x (2033 KB): one interleaved stream cannot delta-code
-  eight key-specific walks.
-- Sparse walk: per-key separation wins big. Vortex lands ~59% under PcoPack
-  (352 KB vs 852 KB): a hot-key column keeps its run/delta structure intact
-  across absent keys, while the flat layout pays a presence index per entry
-  and a gap-jumpier value stream. Native on the same distribution (1866 KB)
-  loses that separation but still beats msgpack+zstd (3.4 MB).
+- Tuple keys cannot promote, and promoting an open vocabulary silently drops entries the sampled schema missed, so random-key maps stay native. Native pays ~10% over PcoPack because keys live in the payload, not the schema.
+- Stable keys beat PcoPack once rows move: dense walk ties, sparse walk lands ~60% smaller. At 10k static rows PcoPack's flat streams still edge ahead; zstd absorbs the repeated keys.
+- Native maps interleave all keys into one stream, losing the per-key runs and deltas that make promotion win.
 
 ### Floats (float_round)
 
@@ -155,7 +134,7 @@ struct-promoted columns (one column per key, key names in the schema).
 | `f32 (normal, float_round=1)` | 296 KB | 65 KB   | 391 KB  | 299 KB | 1.6 ms | 0.7 ms  | 0.6 ms  | 4.7 ms |
 | `f32 (normal, float_round=2)` | 296 KB | 106 KB  | 391 KB  | 299 KB | 1.6 ms | 1.0 ms  | 0.6 ms  | 4.7 ms |
 
-`float_round = N` is a lossy knob (error <= 0.5 x 10^-N). Rounding is where the float win lives, not the codec: at N=1 the column is ~90% smaller than unrounded. Competitors have no quantization knob; their columns are constant across the table.
+`float_round` discards unwanted float precision, intentionally causing data loss to significantly reduce compressed size.
 
 ### Timestamps (time_round)
 
@@ -165,16 +144,15 @@ struct-promoted columns (one column per key, key names in the schema).
 | `DateTime (60s step, time_round=1s)`  | 313 KB | 69 KB   | 825 KB  | 836 KB | 1.2 ms | 1.3 ms  | 15.4 ms | 26.7 ms |
 | `DateTime (60s step, time_round=60s)` | 313 KB | 14 KB   | 825 KB  | 836 KB | 1.2 ms | 1.0 ms  | 15.4 ms | 26.7 ms |
 
-The pco column is i64 microseconds, a 1:1 representation, so Pcodec is comparable. Vortex has no time type: `DateTime` is an RFC3339 string (~2.7x the exact-instant column). `time_round` is lossy: 1s rounding cuts PcoPack's column ~78%, 60s rounding ~95%.
+`time_round` cuts PcoPack's column ~78% at 1s, ~95% at 60s. pco stores i64 microseconds (1:1). Vortex has no time type: `DateTime` is an RFC3339 string.
 
 ## Structs
 
-500k rows of a realistic metric struct: a low-cardinality `account_id` index key, random names, log-normal scores, and a clustered boolean flag. Vortex is one compact btrblocks file read back through Arrow. Standalone Pcodec is not compared: the struct holds fields Pcodec can't express (strings, `Vec`, `Option`, JSON); those rows live in [Types](#types). PcoPack stores `account_id` as per-chunk index metadata, not as a column.
+500k rows of a realistic struct: low-cardinality `account_id` index key, random names, log-normal scores, a clustered boolean flag.
 
-- Size: PcoPack and Vortex are within 2% of each other; both 13-37% under columnar, serde_columnar, and msgpack
-- Serialize: PcoPack ~33% faster than Vortex; deserialize: columnar is fastest, PcoPack ~22% faster than Vortex
-- Filters: PcoPack's `account_id` index filter is ~2.5x faster than Vortex's; Vortex's 1-row scan predicate is ~1.9x faster than PcoPack's
-- Filter methods differ: PcoPack materializes matching rows; columnar/serde_columnar/msgpack decompress everything and filter in Rust
+- PcoPack is ~1% smaller than Vortex and ~30% faster at rountrip serialization
+- columnar deserializes fastest but has the second-worst compressed size
+- PcoPack's `index` filter beats Vortex by ~2.5x. Vortex's single-row scan beats PcoPack by ~1.9x
 
 | Metric        | PcoPack | Vortex   | columnar | serde_columnar | msgpack |
 |---------------|---------|----------|----------|----------------|---------|
@@ -186,11 +164,10 @@ The pco column is i64 microseconds, a 1:1 representation, so Pcodec is comparabl
 
 ## Timeline
 
-Scenario: 100 sensors report every second for 1,000 seconds. All rows in a given second share one timestamp with sub-second jitter. Uniqueness is the probability that a sensor's readings differ from its previous second.
+100 sensors report every second for 1,000 seconds. Rows in a second share a timestamp with sub-second jitter. Uniqueness is the chance a reading differs from the previous second.
 
-Findings:
-- `Timeline` merges duplicate observations into time ranges, achieving smaller sizes depending on uniqueness. The benefit grows as readings stay stable longer (more duplicates to merge). However, it requires changing your struct field type and adds serialization overhead at high uniqueness, where the extra cost may not be worth it
-- `time_round = Duration::seconds(1)` consistently saves ~28 KB on the timestamp column across all scenarios. At low uniqueness this is a large fraction of total size (1.29x), but at high uniqueness the non-timestamp fields dominate and dilute the ratio to 1.05x
+- `Timeline` merges duplicate observations into ranges. Gains grow with stability, but costs serialization time at high uniqueness
+- `time_round = 1s` saves ~28 KB everywhere, diluted to 1.05x of total at high uniqueness
 
 ### Compressed size
 
@@ -214,9 +191,7 @@ Findings:
 
 ## chunk_size
 
-`chunk_size` helps avoid out of memory crashes when converting between a columnar and row-based layout. Larger chunks naturally provide better compression and faster serialization, though require more memory. The crate's default 2^18 chunk size provides optimal performance while using a reasonable amount of memory. For very large structs or when running on memory-constrainted systems, you may want to use a smaller chunk size.
-
-`Write peak` is the peak memory used while serializing, and `Read peak` is the peak while deserializing. Filtering to a small subset of the rows is significantly faster and uses less memory, as seen in the Filters benchmark.
+`chunk_size` caps columnar-to-row conversion memory. Bigger chunks compress better and serialize faster for more RAM; the 2^18 default is the sweet spot. `Write peak`/`Read peak` are per-phase peaks.
 
 ### SmallStruct (32 bytes/row)
 
@@ -256,7 +231,7 @@ Findings:
 
 ## Filters
 
-PcoPack is designed to skip expensive deserialization work for rows that don't match the provided filter. For most data types, a filter matching 1% of rows pays just 15% of the runtime cost that otherwise would've been needed to deserialize all rows.
+PcoPack skips deserializing non-matching rows: a 1%-selective filter pays ~15% of the full deserialize cost for most types.
 
 | Filter                                               | Time (ms) | Rows   |
 |------------------------------------------------------|-----------|--------|
@@ -313,32 +288,11 @@ PcoPack is designed to skip expensive deserialization work for rows that don't m
 
 ## Datasets
 
-Four public datasets run end to end at full scale: serialize, deserialize, size, and filtered
-reads. Each operation runs one pass, so sizes are exact and timings carry run-to-run variance.
-Run `cargo bench --bench datasets`; the pinned payloads are cached in gitignored
-`tmp/` on first run, offline afterwards; override the dir with `$PCO_PACK_BENCH_DATA`:
-
-| File                                            | Source                                                                                        | Size          | Pin                                    |
-|-------------------------------------------------|-----------------------------------------------------------------------------------------------|---------------|----------------------------------------|
-| `devinrsmith-air-quality.20220714.zstd.parquet` | https://pcodec-public.s3.amazonaws.com/devinrsmith-air-quality.20220714.zstd.parquet          | 15,661,377 B  | size (multipart ETag)                  |
-| `fhvhv_tripdata_2023-04.parquet`                | https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2023-04.parquet                | 491,826,475 B | md5 `7233505d557e0c4f7a2e64ba4bfe5c2d` |
-| `austria-260923.osm.pbf`                        | https://download.geofabrik.de/europe/austria-260923.osm.pbf (ODbL)                            | 810,746,083 B | md5 `481bb65e61d5d5d22bb8a065b22506e2` |
-| `openalex_part_0000.gz`                         | https://openalex.s3.amazonaws.com/data/jsonl/works/updated_date=2026-09-23/part_0000.gz (CC0) | 772,597,338 B | size (multipart ETag)                  |
-| `openalex_part_0001.gz`                         | https://openalex.s3.amazonaws.com/data/jsonl/works/updated_date=2026-09-23/part_0001.gz (CC0) | 771,641,892 B | size (multipart ETag)                  |
-
-Each schema maps to its most expressive Rust representation (closed vocabularies -> enums,
-sparse flags -> `Option<bool>`, small strings -> `SmolStr`), and every codec round-trips the
-same values through mirrors where needed (columnar codecs: enum as u8, `DateTime` as i64,
-maps as `Vec<(K, V)>`; Vortex: enum utf8 mirrors, maps as native `vortex.map`). Filter results are asserted against the
-counts computed from each codec's own stored precision.
+Schemas map to the most expressive Rust form (closed vocabularies -> enums, sparse flags -> `Option<bool>`, small strings -> `SmolStr`). Codecs round-trip the same values through mirrors where needed (columnar: enum u8, `DateTime` i64, maps `Vec<(K, V)>`; Vortex: utf8 enums, native `vortex.map`).
 
 ### air_quality (823743 rows)
 
-NYC AirData single-sensor stream (2022-06-22 to 07-14): wide i16 measurements, a monotonic
-i64 counter, ns-precision `DateTime` (stored as us, real truncation), and the only genuine
-default-vs-lossy pair (`time_round = 1 s`). Runs at the default chunk size (4 chunks):
-`chunk_size = 2048` measured ~2x faster window filters but ~10% worse size and ~4x slower
-serialize.
+NYC AirData single-sensor stream: wide i16 measurements, a monotonic i64 counter, ns `DateTime` stored as us.
 
 | Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
 |--------------|----------|-----------------|----------|----------|----------------|----------|
@@ -348,18 +302,12 @@ serialize.
 | Filter 0.18% | 6.6 ms   | 6.5 ms          | 2.2 ms   | 34.7 ms  | 58.4 ms        | 208.2 ms |
 | Filter 4.49% | 8.1 ms   | 7.6 ms          | 4.1 ms   | 32.9 ms  | 57.7 ms        | 209.9 ms |
 
-- Size ties Vortex (both full-fidelity), ~71% under columnar and ~74% under msgpack;
-  `time_round = 1 s` cuts another 40%
-- Deserialize ~4x faster than msgpack; window filters cost ~12-15% of the full deserialize:
-  both windows sit inside chunk 0, so the rest of the file is never touched
-- Vortex mirrors the timestamp as i64 ns (its RFC3339 string column would make the range
-  filter unsound) and is the fastest filterer here (2.2 / 4.1 ms)
+- Full-fidelity size is tied between PcoPack and Vortex
+- Lossy time rounding reduces size by 40%
 
 ### taxi (19144903 rows)
 
-NYC TLC FHV trips, April 2023, the file pcodec benchmarks as "taxi". All four timestamps
-are integer seconds (asserted); `float_round = 3` is exactly lossless (asserted): miles
-carry a third decimal on 24% of rows, amounts <= 2.
+NYC taxi trips (also seen in the upstream pcodec benchmarks). All four timestamps are integer seconds and `float_round = 3` is lossless.
 
 | Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
 |--------------|----------|-----------------|----------|----------|----------------|----------|
@@ -369,18 +317,13 @@ carry a third decimal on 24% of rows, amounts <= 2.
 | Filter 0.2%  | 93.7 ms  | 94.4 ms         | 30.7 ms  | 2.5 s    | 5.5 s          | 9.8 s    |
 | Filter 4.05% | 214.4 ms | 209.5 ms        | 443.1 ms | 2.5 s    | 6.1 s          | 9.9 s    |
 
-- Smallest codec on the table by a wide margin: ~31% under Vortex, ~57% under msgpack
-- Hour window favors Vortex (finer row-group pruning); day window favors PcoPack (~52%
-  faster): chunk bounds vs row groups
-- pcodec's published numbers for reference (M3 Max, numeric columns only): pco L8 333.6 MB,
-  parquet+zstd1 456.5 MB
+- PcoPack is the smallest by a wide margin
+- For filtering, hour window favors Vortex (finer row-group pruning) and day window favors PcoPack
+- pcodec reference (numeric columns only): pco L8 333.6 MB, parquet+zstd1 456.5 MB
 
-### osm (87800672 nodes / 9378713 ways / 180809 relations)
+### OpenStreetMap
 
-Geofabrik Austria PBF (ODbL). Node coords are nanodegree decimals (9 fractional digits);
-`float_round = 7` drops only sub-centimeter noise. Filters use padded boxes centered on the
-data centroid: cross-border geometry puts 0.013% of nodes outside the nominal country
-bbox. Ways/relations have no natural scalar filter.
+Geofabrik Austria PBF. Filters are padded boxes on the centroid: cross-border geometry puts 0.013% of nodes outside the nominal bbox. Ways and relations have no natural scalar filter.
 
 #### Node (87800672 rows)
 
@@ -392,18 +335,8 @@ bbox. Ways/relations have no natural scalar filter.
 | Filter 0.17% | 740.7 ms | 801.6 ms        | 550.0 ms | 2.2 s    | 10.0 s         | 6.9 s   |
 | Filter 4.65% | 1.2 s    | 1.3 s           | 2.2 s    | 2.2 s    | 4.1 s          | 6.0 s   |
 
-- Vortex is ~52% smaller full-fidelity; the gap is entirely the raw f64 coordinate
-columns, where PcoPack pays ~4.9 B/coord; tags favor PcoPack
-- Tags are native `vortex.map` columns. The entries column keeps every key
-  materialized (varbin->zstd), so the map type buys schema honesty, not size:
-  a flattened `Vec<(String, String)>` layout of the same tags measures ~1%
-  smaller and writes ~40% faster, with unchanged filtering. Promoting the open
-  vocabulary (serde_arrow `map_as_struct=true` plus a sampled schema) silently
-  drops ~65% of tag entries with no error, so native maps are the honest
-  representation here
-- `float_round = 7` cuts node size ~59% and lands ~13% below every full-fidelity codec
-- The wide box runs ~37% faster than Vortex (chunk bounds skip); the narrow box trails it
-  (~40% slower): Vortex's row groups prune spatial data better at fine granularity
+- Vortex automatically converts limited-precision floats into integers, which is why it outperforms PcoPack by default
+- PcoPack (lossy) uses `float_round = 7`, cutting node size ~59% and only drops sub-centimeter coordinate precision
 
 #### Way (9378713 rows)
 
@@ -421,15 +354,9 @@ columns, where PcoPack pays ~4.9 B/coord; tags favor PcoPack
 | Serialize   | 459.6 ms | 687.0 ms | 292.6 ms | 362.6 ms       | 201.4 ms |
 | Deserialize | 234.4 ms | 244.8 ms | 64.6 ms  | 197.2 ms       | 253.0 ms |
 
-Ways: PcoPack ~6% under Vortex, ~49% under columnar. Vortex stores `Member.rtype` as a
-utf8 string. `relation` members are too rare in its 100-row sampling to observe every
-enum variant, and an unobserved variant leaves an unencodable Union.
-
 ### openalex (558403 works)
 
-OpenAlex `works` snapshot (CC0): deeply nested JSON flattened to typed structs: enums,
-`Option<bool>`, maps as `Vec<(K, V)>`, nested authorship/topic collections. `float_round = 4`
-is a deliberate fidelity cut (not exact): `fwci` and scores carry ~15-digit model noise.
+OpenAlex `works` snapshot: deeply nested JSON flattened to typed structs.
 
 | Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
 |--------------|----------|-----------------|----------|----------|----------------|----------|
@@ -439,46 +366,12 @@ is a deliberate fidelity cut (not exact): `fwci` and scores carry ~15-digit mode
 | Filter 0.02% | 2.1 s    | 2.1 s           | 471.5 ms | 1.7 s    | 5.6 s          | 4.8 s    |
 | Filter 2.94% | 2.6 s    | 2.5 s           | 1.1 s    | 1.9 s    | 5.3 s          | 4.3 s    |
 
-- ~2.5% under Vortex full-fidelity; ~26% under columnar
-- Filter cost barely tracks selectivity here (~33-40% of the full deserialize either way):
-  the bench asks for whole rows (`fields = &[]`), so every surviving chunk decompresses
-  everything before matching. A narrow `fields` list would read only the filtered column
-- Vortex is the fastest filterer (row-group pruning + predicate pushdown); columnar's full
-  decode+scan costs ~1.7-1.9 s
-
-Filter selectivity: every dataset carries one highly selective (<= 1% of rows) and one
-looser (<= 30%) filter, labeled in the tables. PcoPack's advantage is largest on the flat,
-time-sorted data (air_quality, taxi) and shrinks on the deeply nested openalex schema.
+- PcoPack (lossy) `float_round = 4` saves 3% because `fwci` and scores carry ~15-digit model noise
+- Vortex filters fastest (row-group pruning + predicate pushdown)
 
 ## Postgres
 
-Real pganalyze monitoring payloads captured from a live pgaweb deployment, the only
-non-public datasets here. The captures commit as neutral msgpack+zstd input blobs on
-Git LFS (content-addressed, so no extra checksum pins), so the benchmark reproduces
-without re-capturing: `cargo bench --bench postgres` decodes them (override the dir with
-`$PCO_PACK_BENCH_DATA`) and re-encodes the same loaded rows through every codec, one
-table per data source (`backend_snapshots`, its Timeline-dedup variant, and
-`query_stats` per granularity), in the same format as [Datasets](#datasets).
-`query_stats` is trimmed to the capture's last 14 days:
-the full capture spans ~100 days for some database IDs (114.3M rows, 748 MB); keeping
-the tail (31.0M rows, 165 MB, 2026-09-09 to 2026-09-23) keeps LFS hosting cheap and
-full runs tractable. Regenerate with the capture crate in `tmp/pg_capture` against a
-live deployment, then trim to the last 14 days before committing:
-
-| File                            | Content                                                                                                                                                                                                           | Size          |
-|---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------|
-| `backend_snapshots.msgpack.zst` | every `backend_snapshots_7d` tick reconstructed with the pco backfill's exact keep rule (`application_name`/`client_addr` are empty because the raw table doesn't persist them; the enum stacks carry the signal) | 58,898,437 B  |
-| `query_stats.msgpack.zst`       | last 14 days of the pco_store `query_stats` partition parent (1min + 1hour children; 31.0M rows)                                                                                                                  | 172,956,811 B |
-
-Schemas mirror production verbatim (index + timestamp). PcoPack reports full-fidelity,
-plus the `TimeRound` storage model (production's rounded writes: `time_round = 1 s`
-and `float_round = 2` on the query_stats f64 aggregates) as the `PcoPack time_round`
-column. backend_snapshots adds `PcoPack Timeline`: the same rows deduped so unchanged
-state between ticks collapses into one row carrying a `Timeline<0>` of the
-ticks it was observed at (see [Timeline](#timeline)). Indexed writes return rows
-index-grouped, not in stored order, so PcoPack roundtrips verify row counts (the
-convention for indexed structs, see [Structs](#structs)); filter results are asserted
-against counts computed from each codec's own stored precision.
+Real Postgres monitoring datasets sourced from pganalyze.
 
 ### backend_snapshots (13328012 rows)
 
@@ -491,22 +384,8 @@ against counts computed from each codec's own stored precision.
 | Filter 29.25% | 763.0 ms | 768.5 ms           | 442.7 ms         | 794.1 ms | 526.5 ms | 1.7 s          | 4.8 s   |
 | Filter 77.25% | 1.1 s    | 1.1 s              | 365.1 ms         | 1.4 s    | 525.4 ms | 1.7 s          | 4.8 s   |
 
-(3794455 of 13328012 ticks survive the Timeline fold)
-
-- Full-fidelity ~44% under Vortex, ~31% under columnar, ~41% under msgpack;
-  `time_round = 1 s` cuts another ~17% (`backend_start`/`query_start` carry the us)
-- Vortex is the fastest selective filterer (13.2 ms); columnar's full decode+scan
-  amortizes once windows widen (sub-second across every window), where PcoPack pays
-  whole-row chunk reads
-- The last-1h window is the production dashboard query: 65,194 of 13.3M rows in ~66 ms
-- `PcoPack Timeline` re-encodes the same ticks deduped: 3,794,455 fold rows survive
-  out of 13.3M (idle backends dominate), and PcoPack's range columns make the fold
-  pay: 47.1 MB to 18.0 MB (-62%), ~1.8x faster serialize, ~2.7x faster deserialize.
-  Active ticks barely fold (their payload changes every tick), so they dominate the
-  deduped set and the window filter pays range-overlap checks across chunk boundaries
-  (~167 ms vs ~66 ms), while the wide scans still speed up (~1.7x/~3x). Filter
-  labels are per-tick fractions; the Timeline column answers the same queries over
-  the fold rows (0.44%/83.34%/52.12%), asserted internally
+- Full-fidelity PcoPack beats Vortex ~44%, columnar ~31%, msgpack ~41%. `time_round = 1s` cuts ~17% more
+- Most backends are idle, allowing PcoPack `Timeline` to cut serialization size and time in half
 
 ### query_stats_1min (29970299 rows)
 
@@ -530,12 +409,5 @@ against counts computed from each codec's own stored precision.
 | Filter 58.45% | 51.3 ms  | 49.7 ms            | 74.5 ms  | 59.4 ms  | 111.4 ms       | 179.3 ms |
 | Filter 0.03%  | 1.5 ms   | 1.6 ms             | 15.4 ms  | 59.8 ms  | 109.2 ms       | 178.9 ms |
 
-- PcoPack full-fidelity is ~10% under Vortex, ~39% under columnar, ~51% under
-  msgpack at both granularities: fingerprints and the calls/rows counters keep
-  every re-encode honest and cheap to delta-encode
-- The `PcoPack time_round` column barely moves here (116.5 MB to 116.4 MB): ticks are
-  already second-aligned and pco's float stage already squeezes the f64
-  aggregates, so the rounding knobs earn their keep on backend_snapshots, not stats
-- Vortex is again the sharpest selective filterer (87.9/19.3 ms at 1min, 2.7/15.4 ms
-  at 1hour); PcoPack's index+timestamp layout tracks it within ~70%
-  while every decode-and-scan codec pays full store decode on every window
+- PcoPack is the smallest at both granularities
+- `time_round` is less effective because data is captured once a minute versus backend_snapshots which are captured once every 10 seconds

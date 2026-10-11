@@ -1,18 +1,16 @@
-//! Benchmarks over real pganalyze monitoring data captured from a live pgaweb
-//! deployment, the only private datasets here. The neutral msgpack+zstd
-//! captures are committed as the benchmark's input data via Git LFS.
-//! query_stats covers the capture's last 14 days (full: 114.3M rows, 748 MB;
-//! kept: 31.0M rows, 164 MB) to keep LFS hosting and runtimes sane. See
-//! benches/README.md for the capture and trim flow.
+//! Benchmarks over real Postgres monitoring payloads, the only private datasets here.
+//! The neutral msgpack+zstd captures are committed as the benchmark's input data via
+//! Git LFS. query_stats covers the capture's last 14 days (full: 114.3M rows, 748 MB;
+//! kept: 31.0M rows, 164 MB) to keep LFS hosting and runtimes sane.
 //!
 //!   cargo bench --bench postgres
 //!
 //! One codec-comparison table per data source, in datasets-bench format:
 //! `backend_snapshots` and `query_stats` per granularity. Every codec
 //! re-encodes the same loaded rows (the datasets-bench convention): PcoPack
-//! full-fidelity, PcoPack time_round (what production persists: timestamps
-//! rounded to whole seconds, `float_round = 2` on the query_stats f64
-//! aggregates), Vortex, columnar, serde_columnar, and msgpack+zstd.
+//! full-fidelity, PcoPack time_round (timestamps rounded to whole seconds,
+//! `float_round = 2` on the query_stats f64 aggregates), Vortex, columnar,
+//! serde_columnar, and msgpack+zstd.
 //! `backend_snapshots` adds a `PcoPack Timeline` column, the shape from
 //! `benches/timeline.rs`: snapshots whose payload is unchanged between ticks
 //! collapse to one row whose `Timeline<0>` holds every tick they were
@@ -334,7 +332,7 @@ fn bench_backends(rows: &[BackendSnapshot]) {
     println!("({nd} of {n} ticks survive the Timeline fold)\n");
 }
 
-// ---- Filter keys: the production queries, shared by every codec runner ----
+// ---- Filter keys: the real-world queries, shared by every codec runner ----
 
 /// query_stats: last-1h window on collected_at; toplevel with calls >= 10;
 /// the first database seen in the capture.
@@ -411,9 +409,9 @@ impl Bk {
     }
 }
 
-/// Mirrors pganalyze's QueryStat exactly (field order/names/types) so the chunk
-/// layout matches production: index [database_id, granularity], timestamp
-/// collected_at. No rounding knob, so the `PcoPack` column is full-fidelity
+/// Mirrors the source `query_stats` table exactly (field order/names/types) so the
+/// chunk layout matches how the table is stored: index [database_id, granularity],
+/// timestamp collected_at. No rounding knob, so the `PcoPack` column is full-fidelity
 /// like every competitor's.
 mod query_stats {
     use super::*;
@@ -438,7 +436,7 @@ mod query_stats {
         pub temp_blks_written: i64,
     }
 
-    /// The TimeRound model: production writes this table to pco_store rounded
+    /// The TimeRound model: pco_store persists this table rounded
     /// (`float_round = 2` on the aggregate f64s, `time_round = 1 s` on the
     /// timestamps), so stored rows differ from the capture by rounding only.
     /// This is the `PcoPack time_round` column.
@@ -490,8 +488,8 @@ mod query_stats {
     }
 }
 
-/// Mirrors pganalyze's BackendSnapshot exactly (field order/names/types) so the
-/// chunk layout matches the production backfill: index [server_id, granularity],
+/// Mirrors the source `backend_snapshots` table exactly (field order/names/types)
+/// so the chunk layout matches the backfill schema: index [server_id, granularity],
 /// timestamp collected_at. No rounding knob (full-fidelity baseline).
 mod backend_snapshot {
     use super::*;
@@ -517,10 +515,10 @@ mod backend_snapshot {
         pub client_addr: SmolStr,
     }
 
-    /// The TimeRound model (see `QueryStatTimeRound`): production writes
-    /// backend snapshots with `time_round = 1 s`. Tick jitter carries no
-    /// signal, and rounding the us timestamps shrinks the timestamp columns.
-    /// This is the `PcoPack time_round` column.
+    /// The TimeRound model (see `QueryStatTimeRound`): backend snapshots persist
+    /// with `time_round = 1 s`. Tick jitter carries no signal, and rounding the
+    /// us timestamps shrinks the timestamp columns. This is the
+    /// `PcoPack time_round` column.
     #[derive(Clone, Debug, Default, PartialEq, PcoPack)]
     #[pco_pack(
         index = [server_id, granularity],
@@ -615,7 +613,7 @@ mod backend_snapshot {
     /// The deduped shape (see `benches/timeline.rs`'s `TimelineRecord`): one
     /// row per distinct backend state, every tick it was observed at folded
     /// into an exact-us `Timeline` (lossless; bucketing would lie about the
-    /// collection time). Same index layout as production.
+    /// collection time). Same index layout as the source schema.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, PcoPack)]
     #[pco_pack(index = [server_id, granularity], timestamp = collected_at)]
     pub struct BackendSnapshotTimeline {

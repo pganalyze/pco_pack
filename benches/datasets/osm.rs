@@ -89,7 +89,7 @@ pub fn bench() {
     let (nodes, ways, rels, stats) = load();
     let (n_nodes, n_ways, n_rels) = (nodes.len(), ways.len(), rels.len());
 
-    println!("### osm ({n_nodes} nodes / {n_ways} ways / {n_rels} relations)\n");
+    println!("### OpenStreetMap\n");
 
     // ---- Node: the lossy + two-filter table ----
     {
