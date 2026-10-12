@@ -149,11 +149,11 @@ pub fn bench() -> anyhow::Result<()> {
     else {
         return Ok(());
     };
-    bench_explains(&rows);
+    bench_explains(rows);
     Ok(())
 }
 
-fn bench_explains(rows: &[QueryExplain]) {
+fn bench_explains(rows: Vec<QueryExplain>) {
     let n = rows.len();
     let last_us = rows.iter().map(|r| r.seen_at.timestamp_micros()).max().unwrap();
     let srv0 = rows[0].server_id;
@@ -175,19 +175,14 @@ fn bench_explains(rows: &[QueryExplain]) {
     let pco_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf.iter()).map(|(q, (_, e))| (q, *e)).collect();
 
-    let pco = common::bench_pco_pack(rows, &pco_filters, |back| {
-        assert_eq!(back.len(), rows.len(), "query_explains row count")
-    });
-
     // Window and slow-plan filter counts fold through the stored rounded
     // values.
     let lossy_rows: Vec<QueryExplainLossy> = rows.iter().map(QueryExplainLossy::from).collect();
     let lossy_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_lossy.iter()).map(|(q, (_, e))| (q, *e)).collect();
-    let pco_lossy = common::bench_pco_pack(&lossy_rows, &lossy_filters, |back| {
-        assert_eq!(back.len(), rows.len(), "query_explains (lossy) row count")
+    let pco_lossy = common::bench_pco_pack(lossy_rows, &lossy_filters, |back| {
+        assert_eq!(back.len(), n, "query_explains (lossy) row count")
     });
-    drop(lossy_rows);
 
     let col_rows: Vec<QueryExplainCol> = rows.iter().map(QueryExplainCol::from).collect();
     let col = common::bench_columnar(
@@ -239,7 +234,9 @@ fn bench_explains(rows: &[QueryExplain]) {
         },
     );
 
-    let mp = common::bench_msgpack(rows, &kf, |r: &QueryExplain, k: &Ek| k.matches(r));
+    let mp = common::bench_msgpack(&rows, &kf, |r: &QueryExplain, k: &Ek| k.matches(r));
+
+    let pco = common::bench_pco_pack(rows, &pco_filters, |back| assert_eq!(back.len(), n, "query_explains row count"));
 
     let metrics = ["Size", "Serialize", "Deserialize"];
     let mut out: Vec<CodecRowLossy> = metrics

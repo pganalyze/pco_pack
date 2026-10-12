@@ -228,11 +228,11 @@ pub fn bench() -> anyhow::Result<()> {
     let Some(rows) = common::read_blob(name, &common::data_dir(), &common::lfs_warning(name))? else {
         return Ok(());
     };
-    bench_backends(&rows);
+    bench_backends(rows);
     Ok(())
 }
 
-fn bench_backends(rows: &[BackendSnapshot]) {
+fn bench_backends(rows: Vec<BackendSnapshot>) {
     let n = rows.len();
     let last_us = rows.iter().map(|r| r.collected_at.timestamp_micros()).max().unwrap();
 
@@ -251,20 +251,15 @@ fn bench_backends(rows: &[BackendSnapshot]) {
     let pco_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf.iter()).map(|(q, (_, e))| (q, *e)).collect();
 
-    let pco = common::bench_pco_pack(rows, &pco_filters, |back| {
-        assert_eq!(back.len(), rows.len(), "backend_snapshots row count")
-    });
-
     // Counts fold over the rounded collected_at values the write stores.
     let time_round_rows: Vec<BackendSnapshotTimeRound> = rows.iter().map(BackendSnapshotTimeRound::from).collect();
     let kf_time_round: Vec<(Bk, usize)> =
         keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches_time_round(r)).count())).collect();
     let time_round_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_time_round.iter()).map(|(q, (_, e))| (q, *e)).collect();
-    let pco_time_round = common::bench_pco_pack(&time_round_rows, &time_round_filters, |back| {
-        assert_eq!(back.len(), rows.len(), "backend_snapshots (TimeRound) row count")
+    let pco_time_round = common::bench_pco_pack(time_round_rows, &time_round_filters, |back| {
+        assert_eq!(back.len(), n, "backend_snapshots (TimeRound) row count")
     });
-    drop(time_round_rows);
 
     let col_rows: Vec<BackendSnapshotCol> = rows.iter().map(BackendSnapshotCol::from).collect();
     let col = common::bench_columnar(
@@ -316,13 +311,13 @@ fn bench_backends(rows: &[BackendSnapshot]) {
         },
     );
 
-    let mp = common::bench_msgpack(rows, &kf, |r: &BackendSnapshot, k: &Bk| k.matches(r));
+    let mp = common::bench_msgpack(&rows, &kf, |r: &BackendSnapshot, k: &Bk| k.matches(r));
 
     // Timeline filters use range-overlap semantics and verify counts over
     // the deduped rows themselves: the same queries cover different
     // fractions of the two row sets.
     let mut groups: HashMap<BackendSnapshotKey, Timeline<0>> = HashMap::new();
-    for r in rows {
+    for r in &rows {
         let ts = r.collected_at.timestamp_micros();
         groups.entry(BackendSnapshotKey::from(r)).or_default().add(ts, ts);
     }
@@ -336,9 +331,12 @@ fn bench_backends(rows: &[BackendSnapshot]) {
         keys.iter().map(|k| (*k, tl_rows.iter().filter(|r| k.matches_timeline(r)).count())).collect();
     let tl_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_tl.iter()).map(|(q, (_, e))| (q, *e)).collect();
-    let pco_timeline = common::bench_pco_pack(&tl_rows, &tl_filters, |back| {
+    let pco_timeline = common::bench_pco_pack(tl_rows, &tl_filters, |back| {
         assert_eq!(back.len(), nd, "backend_snapshots (Timeline) row count")
     });
+
+    let pco =
+        common::bench_pco_pack(rows, &pco_filters, |back| assert_eq!(back.len(), n, "backend_snapshots row count"));
 
     let metrics = ["Size", "Serialize", "Deserialize"];
     let mut out: Vec<CodecRowTimeline> = metrics

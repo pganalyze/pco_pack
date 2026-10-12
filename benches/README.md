@@ -2,6 +2,7 @@
 
 Sizes and times always include compression (pcodec or zstd), measured on an M5 Max MBP at max fan speed. Per-run variance is high; [contributions are welcome](https://github.com/pganalyze/pco_pack/issues/3) to improve the benchmark suite.
 
+- [Summary](#summary): where each codec wins and loses
 - [Types](#types): measures synthetic per-field compression
 - [Structs](#structs): measures a synthetic multi-field struct
 - [Timeline](#timeline): measures structural deduplication using `pco_pack::Timeline`
@@ -9,6 +10,15 @@ Sizes and times always include compression (pcodec or zstd), measured on an M5 M
 - [Filters](#filters): measures per-type filter timing
 - [Datasets](#datasets): measures real external datasets
 - [Postgres](#postgres): measures real Postgres monitoring datasets
+
+## Summary
+
+Every codec bets on a different kind of redundancy. PcoPack bets that redundancy lives in the schema: numbers trend, timestamps drift, keys repeat, and most float precision is noise. That pays off: every real dataset measured compresses smallest with PcoPack by default, with our optional features offering even better performance.
+
+PcoPack is less effective in some scenarios:
+- LZ compression absorbs byte-level repetition for free, so msgpack+zstd wins on clustered zeros, dwells, and repeating enum discriminants
+- Vortex filtering is often faster because its per-field min/max bounds can skip entire chunks without decompression
+- columnar offers the fastest decode by handing the user references instead of building structs
 
 ## Types
 
@@ -24,44 +34,44 @@ Where each codec wins:
 
 | Type                                        | pco     | PcoPack | msgpack | Vortex  | pco    | PcoPack | msgpack | Vortex |
 |---------------------------------------------|---------|---------|---------|---------|--------|---------|---------|--------|
-| `u8 (uniform, full width)`                  | 256 KB  | 256 KB  | 302 KB  | 258 KB  | 1.2 ms | 1.8 ms  | 1.6 ms  | 2.5 ms |
+| `u8 (uniform, full width)`                  | 256 KB  | 256 KB  | 302 KB  | 258 KB  | 1.2 ms | 1.6 ms  | 1.6 ms  | 2.5 ms |
 | `i16 (uniform, full width)`                 | 512 KB  | 512 KB  | 634 KB  | 514 KB  | 1.6 ms | 1.7 ms  | 1.6 ms  | 3.5 ms |
-| `i32 (uniform, full width)`                 | 1024 KB | 1024 KB | 1175 KB | 1026 KB | 1.7 ms | 1.8 ms  | 2.0 ms  | 5.3 ms |
-| `i64 (uniform, full width)`                 | 2.0 MB  | 2.0 MB  | 2.2 MB  | 2.0 MB  | 2.0 ms | 2.1 ms  | 3.0 ms  | 5.7 ms |
-| `i16 (uniform 0..1000)`                     | 320 KB  | 320 KB  | 419 KB  | 322 KB  | 1.5 ms | 1.5 ms  | 3.3 ms  | 3.1 ms |
-| `i32 (uniform 0..1000)`                     | 320 KB  | 320 KB  | 419 KB  | 322 KB  | 1.5 ms | 1.6 ms  | 3.3 ms  | 3.2 ms |
-| `i64 (counter, monotonic)`                  | 181 KB  | 181 KB  | 346 KB  | 185 KB  | 2.2 ms | 2.2 ms  | 3.2 ms  | 7.0 ms |
-| `i16 (counter, cyclic ~20% range)`          | 183 KB  | 183 KB  | 431 KB  | 185 KB  | 2.0 ms | 2.0 ms  | 3.1 ms  | 5.2 ms |
-| `u8 (counter, cyclic 8-bit)`                | 181 KB  | 181 KB  | 271 KB  | 258 KB  | 1.9 ms | 2.0 ms  | 1.6 ms  | 2.5 ms |
-| `i64 (right-skew, sparse variant)`          | 138 KB  | 138 KB  | 155 KB  | 141 KB  | 1.9 ms | 1.9 ms  | 1.6 ms  | 5.1 ms |
-| `i64 (right-skew)`                          | 140 KB  | 140 KB  | 158 KB  | 143 KB  | 1.9 ms | 2.0 ms  | 1.6 ms  | 5.6 ms |
-| `i64 (93% zeros, scattered)`                | 25 KB   | 25 KB   | 39 KB   | 28 KB   | 1.4 ms | 1.5 ms  | 1.1 ms  | 5.3 ms |
-| `i64 (93% zeros, clustered windows)`        | 26 KB   | 26 KB   | 15 KB   | 17 KB   | 1.4 ms | 1.4 ms  | 0.9 ms  | 4.4 ms |
+| `i32 (uniform, full width)`                 | 1024 KB | 1024 KB | 1175 KB | 1026 KB | 1.7 ms | 1.8 ms  | 2.0 ms  | 5.5 ms |
+| `i64 (uniform, full width)`                 | 2.0 MB  | 2.0 MB  | 2.2 MB  | 2.0 MB  | 2.1 ms | 2.2 ms  | 2.9 ms  | 6.1 ms |
+| `i16 (uniform 0..1000)`                     | 320 KB  | 320 KB  | 419 KB  | 322 KB  | 1.5 ms | 1.6 ms  | 3.3 ms  | 3.0 ms |
+| `i32 (uniform 0..1000)`                     | 320 KB  | 320 KB  | 419 KB  | 322 KB  | 1.6 ms | 1.6 ms  | 3.2 ms  | 3.2 ms |
+| `i64 (counter, monotonic)`                  | 181 KB  | 181 KB  | 346 KB  | 185 KB  | 2.3 ms | 2.4 ms  | 3.2 ms  | 7.4 ms |
+| `i16 (counter, cyclic ~20% range)`          | 183 KB  | 183 KB  | 431 KB  | 186 KB  | 2.0 ms | 2.1 ms  | 3.0 ms  | 5.3 ms |
+| `u8 (counter, cyclic 8-bit)`                | 181 KB  | 181 KB  | 271 KB  | 258 KB  | 2.0 ms | 2.0 ms  | 1.6 ms  | 2.5 ms |
+| `i64 (right-skew, sparse variant)`          | 138 KB  | 138 KB  | 155 KB  | 141 KB  | 2.0 ms | 2.0 ms  | 1.6 ms  | 5.7 ms |
+| `i64 (right-skew)`                          | 140 KB  | 140 KB  | 158 KB  | 143 KB  | 2.1 ms | 2.1 ms  | 1.6 ms  | 5.8 ms |
+| `i64 (93% zeros, scattered)`                | 25 KB   | 25 KB   | 39 KB   | 28 KB   | 1.5 ms | 1.5 ms  | 1.2 ms  | 5.6 ms |
+| `i64 (93% zeros, clustered windows)`        | 26 KB   | 26 KB   | 15 KB   | 17 KB   | 1.5 ms | 1.5 ms  | 0.9 ms  | 4.3 ms |
 | `u8 (tiny alphabet i.i.d., d=4)`            | 35 KB   | 35 KB   | 55 KB   | 66 KB   | 0.9 ms | 0.9 ms  | 0.7 ms  | 3.3 ms |
-| `u8 (dwell sweep, d=3, run~16)`             | 14 KB   | 14 KB   | 12 KB   | 14 KB   | 1.1 ms | 1.1 ms  | 0.5 ms  | 3.4 ms |
-| `u8 (dwell sweep, d=3, run~256)`            | 1 KB    | 1 KB    | 1 KB    | 4 KB    | 1.2 ms | 1.2 ms  | 0.3 ms  | 3.7 ms |
-| `u8 (dwell sweep, d=3, run~4096)`           | 235 B   | 235 B   | 274 B   | 3 KB    | 1.2 ms | 1.2 ms  | 0.3 ms  | 3.3 ms |
-| `i64 (d-sweep, d=4)`                        | 64 KB   | 64 KB   | 220 KB  | 67 KB   | 1.4 ms | 1.4 ms  | 3.7 ms  | 5.3 ms |
-| `i64 (d-sweep, d=35)`                       | 164 KB  | 164 KB  | 375 KB  | 167 KB  | 2.2 ms | 2.2 ms  | 4.3 ms  | 5.0 ms |
-| `i64 (d-sweep, d=86)`                       | 206 KB  | 206 KB  | 422 KB  | 209 KB  | 2.4 ms | 2.5 ms  | 4.4 ms  | 5.3 ms |
-| `i64 (d-sweep, d=1024)`                     | 375 KB  | 375 KB  | 544 KB  | 330 KB  | 8.0 ms | 8.0 ms  | 5.1 ms  | 4.2 ms |
-| `i64 (d-sweep, d=8191)`                     | 559 KB  | 559 KB  | 681 KB  | 2.0 MB  | 8.0 ms | 8.0 ms  | 6.7 ms  | 3.5 ms |
-| `i64 (d-sweep, d=8193)`                     | 558 KB  | 558 KB  | 681 KB  | 2.0 MB  | 8.0 ms | 8.0 ms  | 6.6 ms  | 3.6 ms |
-| `i64 (d-sweep, d=32768)`                    | 1194 KB | 1194 KB | 1195 KB | 2.0 MB  | 7.9 ms | 7.9 ms  | 7.7 ms  | 4.0 ms |
-| `i64 (placement pair, d=574 grouped)`       | 5 KB    | 5 KB    | 6 KB    | 8 KB    | 2.0 ms | 2.0 ms  | 1.0 ms  | 3.4 ms |
-| `i64 (placement pair, d=574 shuffled)`      | 336 KB  | 336 KB  | 503 KB  | 278 KB  | 7.6 ms | 7.6 ms  | 4.6 ms  | 6.2 ms |
-| `i64 (recurrence pair, d=4096 local-block)` | 174 KB  | 174 KB  | 315 KB  | 154 KB  | 7.0 ms | 7.0 ms  | 4.2 ms  | 5.9 ms |
-| `i64 (recurrence pair, d=4096 full-cycle)`  | 40 KB   | 40 KB   | 35 KB   | 35 KB   | 6.3 ms | 6.3 ms  | 1.5 ms  | 5.0 ms |
-| `i64 (d=64 pool, N=2k tail chunk)`          | 2 KB    | 2 KB    | 3 KB    | 4 KB    | 0.1 ms | 0.1 ms  | 0.0 ms  | 0.4 ms |
-| `i64 (d=64 pool, full writer chunk)`        | 192 KB  | 192 KB  | 407 KB  | 195 KB  | 2.4 ms | 2.4 ms  | 4.2 ms  | 3.7 ms |
+| `u8 (dwell sweep, d=3, run~16)`             | 14 KB   | 14 KB   | 12 KB   | 14 KB   | 1.2 ms | 1.2 ms  | 0.5 ms  | 3.2 ms |
+| `u8 (dwell sweep, d=3, run~256)`            | 1 KB    | 1 KB    | 1 KB    | 4 KB    | 1.2 ms | 1.2 ms  | 0.4 ms  | 3.3 ms |
+| `u8 (dwell sweep, d=3, run~4096)`           | 235 B   | 235 B   | 274 B   | 3 KB    | 1.2 ms | 1.2 ms  | 0.3 ms  | 3.0 ms |
+| `i64 (d-sweep, d=4)`                        | 64 KB   | 64 KB   | 220 KB  | 67 KB   | 1.4 ms | 1.5 ms  | 3.5 ms  | 5.4 ms |
+| `i64 (d-sweep, d=35)`                       | 164 KB  | 164 KB  | 375 KB  | 167 KB  | 2.3 ms | 2.4 ms  | 4.1 ms  | 5.2 ms |
+| `i64 (d-sweep, d=86)`                       | 206 KB  | 206 KB  | 422 KB  | 209 KB  | 2.6 ms | 2.6 ms  | 4.2 ms  | 5.6 ms |
+| `i64 (d-sweep, d=1024)`                     | 375 KB  | 375 KB  | 544 KB  | 330 KB  | 8.1 ms | 8.3 ms  | 5.0 ms  | 4.4 ms |
+| `i64 (d-sweep, d=8191)`                     | 559 KB  | 559 KB  | 681 KB  | 2.0 MB  | 8.4 ms | 8.5 ms  | 6.6 ms  | 4.1 ms |
+| `i64 (d-sweep, d=8193)`                     | 558 KB  | 558 KB  | 681 KB  | 2.0 MB  | 8.5 ms | 8.5 ms  | 6.9 ms  | 4.2 ms |
+| `i64 (d-sweep, d=32768)`                    | 1194 KB | 1194 KB | 1195 KB | 2.0 MB  | 8.3 ms | 8.4 ms  | 7.6 ms  | 4.7 ms |
+| `i64 (placement pair, d=574 grouped)`       | 5 KB    | 5 KB    | 6 KB    | 8 KB    | 2.2 ms | 2.2 ms  | 0.9 ms  | 3.6 ms |
+| `i64 (placement pair, d=574 shuffled)`      | 336 KB  | 336 KB  | 503 KB  | 278 KB  | 8.1 ms | 8.2 ms  | 4.5 ms  | 6.7 ms |
+| `i64 (recurrence pair, d=4096 local-block)` | 174 KB  | 174 KB  | 315 KB  | 154 KB  | 7.6 ms | 7.6 ms  | 4.2 ms  | 6.4 ms |
+| `i64 (recurrence pair, d=4096 full-cycle)`  | 40 KB   | 40 KB   | 35 KB   | 35 KB   | 6.6 ms | 6.6 ms  | 1.2 ms  | 5.2 ms |
+| `i64 (d=64 pool, N=2k tail chunk)`          | 2 KB    | 2 KB    | 3 KB    | 4 KB    | 0.1 ms | 0.1 ms  | 0.0 ms  | 0.3 ms |
+| `i64 (d=64 pool, full writer chunk)`        | 192 KB  | 192 KB  | 407 KB  | 195 KB  | 2.4 ms | 2.5 ms  | 4.2 ms  | 3.9 ms |
 
 ### Booleans
 
 | Type                               | pco   | PcoPack | msgpack | Vortex | pco    | PcoPack | msgpack | Vortex |
 |------------------------------------|-------|---------|---------|--------|--------|---------|---------|--------|
-| `bool (i.i.d. 50% true)`           | 12 KB | 18 KB   | 18 KB   | 14 KB  | 0.1 ms | 0.3 ms  | 0.3 ms  | 1.2 ms |
+| `bool (i.i.d. 50% true)`           | 12 KB | 18 KB   | 18 KB   | 14 KB  | 0.2 ms | 0.3 ms  | 0.3 ms  | 1.3 ms |
 | `bool (i.i.d. 90% true)`           | 5 KB  | 12 KB   | 12 KB   | 14 KB  | 0.3 ms | 0.2 ms  | 0.2 ms  | 0.9 ms |
-| `bool (clustered runs)`            | 1 KB  | 1 KB    | 1 KB    | 14 KB  | 0.4 ms | 0.1 ms  | 0.1 ms  | 0.9 ms |
+| `bool (clustered runs)`            | 1 KB  | 1 KB    | 1 KB    | 14 KB  | 0.4 ms | 0.1 ms  | 0.2 ms  | 0.9 ms |
 | `bool (alternating, period 2)`     | 12 KB | 24 B    | 24 B    | 14 KB  | 0.1 ms | 0.1 ms  | 0.1 ms  | 0.9 ms |
 | `bool (i.i.d. 5% true)`            | 3 KB  | 7 KB    | 7 KB    | 14 KB  | 0.3 ms | 0.2 ms  | 0.2 ms  | 0.9 ms |
 | `bool (clustered, ~20% true runs)` | 3 KB  | 6 KB    | 6 KB    | 14 KB  | 0.4 ms | 0.2 ms  | 0.2 ms  | 0.9 ms |
@@ -70,22 +80,22 @@ Where each codec wins:
 
 | Type                                 | PcoPack | msgpack | Vortex | PcoPack | msgpack | Vortex |
 |--------------------------------------|---------|---------|--------|---------|---------|--------|
-| `Option<i32> (80% null, clustered)`  | 10 KB   | 12 KB   | 26 KB  | 0.3 ms  | 0.2 ms  | 1.4 ms |
-| `i32 (80% zero sentinel, clustered)` | 20 KB   | 12 KB   | 14 KB  | 0.6 ms  | 0.3 ms  | 1.8 ms |
-| `Option<i32> (80% null, scattered)`  | 24 KB   | 33 KB   | 29 KB  | 0.5 ms  | 0.3 ms  | 2.0 ms |
-| `i32 (80% zero sentinel, scattered)` | 24 KB   | 33 KB   | 26 KB  | 0.6 ms  | 0.4 ms  | 1.8 ms |
+| `Option<i32> (80% null, clustered)`  | 10 KB   | 12 KB   | 26 KB  | 0.3 ms  | 0.2 ms  | 1.3 ms |
+| `i32 (80% zero sentinel, clustered)` | 20 KB   | 12 KB   | 14 KB  | 0.6 ms  | 0.4 ms  | 1.7 ms |
+| `Option<i32> (80% null, scattered)`  | 24 KB   | 33 KB   | 29 KB  | 0.5 ms  | 0.4 ms  | 1.9 ms |
+| `i32 (80% zero sentinel, scattered)` | 24 KB   | 33 KB   | 26 KB  | 0.6 ms  | 0.5 ms  | 1.8 ms |
 | `Option<i32> (90% null, clustered)`  | 5 KB    | 6 KB    | 20 KB  | 0.2 ms  | 0.2 ms  | 1.2 ms |
-| `i32 (90% zero sentinel, clustered)` | 11 KB   | 6 KB    | 8 KB   | 0.6 ms  | 0.3 ms  | 1.6 ms |
-| `Option<i32> (90% null, scattered)`  | 13 KB   | 20 KB   | 22 KB  | 0.3 ms  | 0.2 ms  | 1.6 ms |
-| `i32 (90% zero sentinel, scattered)` | 13 KB   | 20 KB   | 16 KB  | 0.5 ms  | 0.4 ms  | 2.1 ms |
+| `i32 (90% zero sentinel, clustered)` | 11 KB   | 6 KB    | 8 KB   | 0.6 ms  | 0.3 ms  | 1.5 ms |
+| `Option<i32> (90% null, scattered)`  | 13 KB   | 20 KB   | 22 KB  | 0.3 ms  | 0.3 ms  | 1.5 ms |
+| `i32 (90% zero sentinel, scattered)` | 13 KB   | 20 KB   | 16 KB  | 0.5 ms  | 0.4 ms  | 2.0 ms |
 
 ### Enums vs enum-as-integer
 
 | Type                                                 | pco   | PcoPack | msgpack | Vortex | pco    | PcoPack | msgpack | Vortex |
 |------------------------------------------------------|-------|---------|---------|--------|--------|---------|---------|--------|
-| `Enum (simple, skewed 68/27/5)`                      | -     | 13 KB   | 55 KB   | 16 KB  | -      | 0.6 ms  | 0.8 ms  | 4.6 ms |
+| `Enum (simple, skewed 68/27/5)`                      | -     | 13 KB   | 55 KB   | 16 KB  | -      | 0.6 ms  | 0.8 ms  | 5.0 ms |
 | `u8 (skewed 68/27/5, plain integer)`                 | 13 KB | 13 KB   | 21 KB   | 26 KB  | 0.3 ms | 0.3 ms  | 0.3 ms  | 1.2 ms |
-| `Enum (complex, repeating pattern + payloads)`       | -     | 96 KB   | 180 KB  | -      | -      | 2.4 ms  | 1.9 ms  | -      |
+| `Enum (complex, repeating pattern + payloads)`       | -     | 96 KB   | 180 KB  | -      | -      | 2.3 ms  | 2.0 ms  | -      |
 | `u8 (repeating-pattern discriminant, plain integer)` | 24 KB | 24 KB   | 17 KB   | 26 KB  | 0.2 ms | 0.2 ms  | 0.3 ms  | 1.2 ms |
 
 Note: Vortex does not currently support complex enums.
@@ -94,13 +104,13 @@ Note: Vortex does not currently support complex enums.
 
 | Type                                          | PcoPack | msgpack | Vortex  | PcoPack | msgpack | Vortex  |
 |-----------------------------------------------|---------|---------|---------|---------|---------|---------|
-| `String`                                      | 291 KB  | 288 KB  | 328 KB  | 5.2 ms  | 2.7 ms  | 10.5 ms |
-| `SmolStr`                                     | 291 KB  | 288 KB  | 328 KB  | 3.2 ms  | 2.8 ms  | 10.3 ms |
-| `Uuid (v4 random)`                            | 1692 KB | 1692 KB | 2001 KB | 1.6 ms  | 1.4 ms  | 23.0 ms |
-| `ByteBuf (avg 128B)`                          | 12.4 MB | 12.4 MB | 12.6 MB | 13.2 ms | 10.4 ms | 18.8 ms |
-| `Vec<String> (avg 4)`                         | 139 KB  | 138 KB  | 183 KB  | 9.9 ms  | 4.1 ms  | 14.3 ms |
-| `serde_json::Value`                           | 635 KB  | 632 KB  | -       | 13.6 ms | 4.3 ms  | -       |
-| `serde_json::Value (5 stable keys, 50k rows)` | 301 KB  | 299 KB  | 124 KB  | 14.7 ms | 4.4 ms  | 10.1 ms |
+| `String`                                      | 291 KB  | 288 KB  | 328 KB  | 4.3 ms  | 2.9 ms  | 13.4 ms |
+| `SmolStr`                                     | 291 KB  | 288 KB  | 328 KB  | 3.1 ms  | 3.1 ms  | 14.0 ms |
+| `Uuid (v4 random)`                            | 1692 KB | 1691 KB | 2001 KB | 1.8 ms  | 1.7 ms  | 31.5 ms |
+| `ByteBuf (avg 128B)`                          | 12.4 MB | 12.4 MB | 12.3 MB | 13.3 ms | 11.3 ms | 35.3 ms |
+| `Vec<String> (avg 4)`                         | 139 KB  | 138 KB  | 183 KB  | 8.5 ms  | 4.4 ms  | 18.3 ms |
+| `serde_json::Value`                           | 635 KB  | 632 KB  | -       | 10.0 ms | 4.4 ms  | -       |
+| `serde_json::Value (5 stable keys, 50k rows)` | 301 KB  | 299 KB  | 124 KB  | 9.6 ms  | 4.4 ms  | 10.2 ms |
 
 Vortex supports stable-keyed JSON using struct promotion, but does not support heterogeneous JSON.
 
@@ -108,14 +118,14 @@ Vortex supports stable-keyed JSON using struct promotion, but does not support h
 
 | Type                                                             | PcoPack | msgpack | Vortex | PcoPack  | msgpack | Vortex  |
 |------------------------------------------------------------------|---------|---------|--------|----------|---------|---------|
-| `BTreeMap<String, i32>`                                          | 125 KB  | 123 KB  | 138 KB | 2.2 ms   | 1.2 ms  | 5.9 ms  |
-| `HashMap<String, i32>`                                           | 125 KB  | 130 KB  | 142 KB | 2.8 ms   | 1.3 ms  | 5.8 ms  |
-| `BTreeMap<SmolStr, i32>`                                         | 125 KB  | 123 KB  | 138 KB | 1.7 ms   | 3.9 ms  | 5.8 ms  |
-| `HashMap<SmolStr, i32>`                                          | 125 KB  | 130 KB  | 142 KB | 2.5 ms   | 4.2 ms  | 5.8 ms  |
-| `HashMap<SmolStr, i32> (8 stable keys)`                          | 43 KB   | 148 KB  | 51 KB  | 3.5 ms   | 1.9 ms  | 4.7 ms  |
-| `HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null)`       | 26 KB   | 127 KB  | 36 KB  | 3.5 ms   | 1.9 ms  | 4.5 ms  |
-| `HashMap<SmolStr, i32> (8 stable keys, walk)`                    | 115 KB  | 3.3 MB  | 114 KB | 117.0 ms | 51.6 ms | 61.6 ms |
-| `HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null, walk)` | 852 KB  | 3.4 MB  | 352 KB | 100.9 ms | 52.0 ms | 77.0 ms |
+| `BTreeMap<String, i32>`                                          | 125 KB  | 123 KB  | 138 KB | 1.9 ms   | 1.3 ms  | 5.8 ms  |
+| `HashMap<String, i32>`                                           | 125 KB  | 130 KB  | 142 KB | 2.5 ms   | 1.3 ms  | 5.8 ms  |
+| `BTreeMap<SmolStr, i32>`                                         | 125 KB  | 123 KB  | 138 KB | 1.6 ms   | 3.7 ms  | 5.8 ms  |
+| `HashMap<SmolStr, i32>`                                          | 125 KB  | 130 KB  | 142 KB | 2.4 ms   | 4.2 ms  | 5.8 ms  |
+| `HashMap<SmolStr, i32> (8 stable keys)`                          | 43 KB   | 148 KB  | 51 KB  | 3.3 ms   | 1.9 ms  | 4.6 ms  |
+| `HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null)`       | 26 KB   | 127 KB  | 36 KB  | 3.3 ms   | 1.8 ms  | 4.6 ms  |
+| `HashMap<SmolStr, i32> (8 stable keys, walk)`                    | 115 KB  | 3.3 MB  | 114 KB | 112.9 ms | 51.7 ms | 61.5 ms |
+| `HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null, walk)` | 852 KB  | 3.4 MB  | 352 KB | 95.9 ms  | 52.0 ms | 78.5 ms |
 
 First four rows use native `vortex.map`, the rest struct promotion. Struct promotion requires string keys from a stable vocabulary.
 
@@ -127,9 +137,9 @@ First four rows use native `vortex.map`, the rest struct promotion. Struct promo
 
 | Type                          | pco    | PcoPack | msgpack | Vortex | pco    | PcoPack | msgpack | Vortex |
 |-------------------------------|--------|---------|---------|--------|--------|---------|---------|--------|
-| `f64 (normal, no round)`      | 650 KB | 650 KB  | 792 KB  | 653 KB | 1.7 ms | 1.7 ms  | 0.8 ms  | 5.0 ms |
-| `f64 (normal, float_round=1)` | 650 KB | 65 KB   | 792 KB  | 653 KB | 1.7 ms | 0.7 ms  | 0.8 ms  | 5.0 ms |
-| `f64 (normal, float_round=2)` | 650 KB | 106 KB  | 792 KB  | 653 KB | 1.7 ms | 1.0 ms  | 0.8 ms  | 5.0 ms |
+| `f64 (normal, no round)`      | 650 KB | 650 KB  | 792 KB  | 653 KB | 1.7 ms | 1.7 ms  | 0.8 ms  | 4.6 ms |
+| `f64 (normal, float_round=1)` | 650 KB | 65 KB   | 792 KB  | 653 KB | 1.7 ms | 0.7 ms  | 0.8 ms  | 4.6 ms |
+| `f64 (normal, float_round=2)` | 650 KB | 106 KB  | 792 KB  | 653 KB | 1.7 ms | 1.0 ms  | 0.8 ms  | 4.6 ms |
 | `f32 (normal, no round)`      | 296 KB | 296 KB  | 391 KB  | 299 KB | 1.6 ms | 1.5 ms  | 0.6 ms  | 4.7 ms |
 | `f32 (normal, float_round=1)` | 296 KB | 65 KB   | 391 KB  | 299 KB | 1.6 ms | 0.7 ms  | 0.6 ms  | 4.7 ms |
 | `f32 (normal, float_round=2)` | 296 KB | 106 KB  | 391 KB  | 299 KB | 1.6 ms | 1.0 ms  | 0.6 ms  | 4.7 ms |
@@ -140,9 +150,9 @@ First four rows use native `vortex.map`, the rest struct promotion. Struct promo
 
 | Type                                  | pco    | PcoPack | msgpack | Vortex | pco    | PcoPack | msgpack | Vortex  |
 |---------------------------------------|--------|---------|---------|--------|--------|---------|---------|---------|
-| `DateTime (60s step, no round)`       | 313 KB | 313 KB  | 825 KB  | 836 KB | 1.2 ms | 1.3 ms  | 15.4 ms | 26.7 ms |
-| `DateTime (60s step, time_round=1s)`  | 313 KB | 69 KB   | 825 KB  | 836 KB | 1.2 ms | 1.3 ms  | 15.4 ms | 26.7 ms |
-| `DateTime (60s step, time_round=60s)` | 313 KB | 14 KB   | 825 KB  | 836 KB | 1.2 ms | 1.0 ms  | 15.4 ms | 26.7 ms |
+| `DateTime (60s step, no round)`       | 313 KB | 313 KB  | 825 KB  | 836 KB | 1.2 ms | 1.4 ms  | 14.9 ms | 34.6 ms |
+| `DateTime (60s step, time_round=1s)`  | 313 KB | 69 KB   | 825 KB  | 836 KB | 1.2 ms | 1.3 ms  | 14.9 ms | 34.6 ms |
+| `DateTime (60s step, time_round=60s)` | 313 KB | 14 KB   | 825 KB  | 836 KB | 1.2 ms | 1.0 ms  | 14.9 ms | 34.6 ms |
 
 `time_round` cuts PcoPack's column ~78% at 1s, ~95% at 60s. pco stores i64 microseconds (1:1). Vortex has no time type: `DateTime` is an RFC3339 string.
 
@@ -150,17 +160,17 @@ First four rows use native `vortex.map`, the rest struct promotion. Struct promo
 
 500k rows of a realistic struct: low-cardinality `account_id` index key, random names, log-normal scores, a clustered boolean flag.
 
-- PcoPack is ~1% smaller than Vortex and ~30% faster at rountrip serialization
+- PcoPack is ~1% smaller than Vortex and ~37% faster round trip
 - columnar deserializes fastest but has the second-worst compressed size
-- PcoPack's `index` filter beats Vortex by ~2.5x. Vortex's single-row scan beats PcoPack by ~1.9x
+- PcoPack's `index` filter beats Vortex by ~2.8x. Vortex's single-row scan beats PcoPack by ~3.1x
 
 | Metric        | PcoPack | Vortex   | columnar | serde_columnar | msgpack |
 |---------------|---------|----------|----------|----------------|---------|
 | Size          | 6.2 MB  | 6.3 MB   | 8.1 MB   | 7.1 MB         | 9.9 MB  |
-| Serialize     | 83.5 ms | 125.1 ms | 61.0 ms  | 66.3 ms        | 88.8 ms |
-| Deserialize   | 43.6 ms | 56.0 ms  | 21.3 ms  | 40.0 ms        | 80.1 ms |
-| Filter 20%    | 8.7 ms  | 22.4 ms  | 22.7 ms  | 40.9 ms        | 79.1 ms |
-| Filter <0.01% | 3.2 ms  | 1.7 ms   | 23.6 ms  | 41.1 ms        | 80.8 ms |
+| Serialize     | 77.9 ms | 129.5 ms | 61.0 ms  | 66.2 ms        | 87.8 ms |
+| Deserialize   | 38.4 ms | 54.3 ms  | 21.3 ms  | 41.6 ms        | 80.0 ms |
+| Filter 20%    | 7.8 ms  | 21.5 ms  | 22.7 ms  | 41.8 ms        | 80.6 ms |
+| Filter <0.01% | 3.4 ms  | 1.1 ms   | 23.8 ms  | 41.8 ms        | 80.7 ms |
 
 ## Timeline
 
@@ -183,11 +193,11 @@ First four rows use native `vortex.map`, the rest struct promotion. Struct promo
 
 | Uniqueness | Timeline | DateTime | time_round=1s | Time ratio (TL/DT) | Time ratio (TR/DT) |
 |------------|----------|----------|---------------|--------------------|--------------------|
-| 10%        | 2.0 ms   | 7.4 ms   | 7.1 ms        | 3.7x               | 1.04x              |
-| 20%        | 2.3 ms   | 7.6 ms   | 7.4 ms        | 3.3x               | 1.03x              |
-| 50%        | 5.2 ms   | 6.6 ms   | 6.3 ms        | 1.3x               | 1.05x              |
-| 80%        | 8.2 ms   | 4.6 ms   | 4.3 ms        | 0.6x               | 1.07x              |
-| 90%        | 9.1 ms   | 4.6 ms   | 4.3 ms        | 0.5x               | 1.07x              |
+| 10%        | 2.0 ms   | 7.4 ms   | 7.0 ms        | 3.7x               | 1.06x              |
+| 20%        | 2.3 ms   | 7.5 ms   | 7.2 ms        | 3.3x               | 1.04x              |
+| 50%        | 5.1 ms   | 6.4 ms   | 6.2 ms        | 1.3x               | 1.03x              |
+| 80%        | 8.0 ms   | 4.5 ms   | 4.3 ms        | 0.6x               | 1.05x              |
+| 90%        | 9.1 ms   | 4.5 ms   | 4.2 ms        | 0.5x               | 1.07x              |
 
 ## chunk_size
 
@@ -197,93 +207,93 @@ First four rows use native `vortex.map`, the rest struct promotion. Struct promo
 
 | Chunk size    | Size   | Serialize | Deserialize | Chunks | Write peak | Read peak |
 |---------------|--------|-----------|-------------|--------|------------|-----------|
-| 2^13 = 8192   | 157 KB | 25.7 ms   | 8.3 ms      | 64     | 6.0 MB     | 24.4 MB   |
-| 2^14 = 16384  | 147 KB | 20.7 ms   | 8.1 ms      | 32     | 6.0 MB     | 24.6 MB   |
-| 2^15 = 32768  | 142 KB | 18.2 ms   | 7.9 ms      | 16     | 6.5 MB     | 25.1 MB   |
-| 2^16 = 65536  | 139 KB | 16.6 ms   | 7.7 ms      | 8      | 8.8 MB     | 26.1 MB   |
-| 2^17 = 131072 | 138 KB | 15.7 ms   | 7.7 ms      | 4      | 13.4 MB    | 28.1 MB   |
-| 2^18 = 262144 | 138 KB | 16.4 ms   | 7.7 ms      | 2      | 22.6 MB    | 32.1 MB   |
-| 2^19 = 524288 | 137 KB | 16.4 ms   | 7.7 ms      | 1      | 27.1 MB    | 32.1 MB   |
+| 2^13 = 8192   | 157 KB | 25.8 ms   | 8.3 ms      | 64     | 6.0 MB     | 24.4 MB   |
+| 2^14 = 16384  | 147 KB | 20.6 ms   | 8.2 ms      | 32     | 6.0 MB     | 24.6 MB   |
+| 2^15 = 32768  | 142 KB | 18.0 ms   | 7.8 ms      | 16     | 6.5 MB     | 25.1 MB   |
+| 2^16 = 65536  | 139 KB | 16.5 ms   | 7.6 ms      | 8      | 8.8 MB     | 26.1 MB   |
+| 2^17 = 131072 | 138 KB | 15.9 ms   | 7.6 ms      | 4      | 13.4 MB    | 28.1 MB   |
+| 2^18 = 262144 | 138 KB | 16.3 ms   | 7.6 ms      | 2      | 22.6 MB    | 32.1 MB   |
+| 2^19 = 524288 | 137 KB | 16.2 ms   | 7.6 ms      | 1      | 27.1 MB    | 32.1 MB   |
 
 ### MediumStruct (80 bytes/row)
 
 | Chunk size    | Size   | Serialize | Deserialize | Chunks | Write peak | Read peak |
 |---------------|--------|-----------|-------------|--------|------------|-----------|
-| 2^13 = 8192   | 683 KB | 84.3 ms   | 49.2 ms     | 64     | 6.0 MB     | 65.9 MB   |
-| 2^14 = 16384  | 836 KB | 80.1 ms   | 50.3 ms     | 32     | 7.3 MB     | 66.8 MB   |
-| 2^15 = 32768  | 773 KB | 80.1 ms   | 49.7 ms     | 16     | 9.5 MB     | 68.3 MB   |
-| 2^16 = 65536  | 742 KB | 73.1 ms   | 48.7 ms     | 8      | 14.2 MB    | 71.3 MB   |
-| 2^17 = 131072 | 726 KB | 73.5 ms   | 48.1 ms     | 4      | 23.6 MB    | 77.4 MB   |
-| 2^18 = 262144 | 718 KB | 71.8 ms   | 47.0 ms     | 2      | 42.4 MB    | 89.6 MB   |
-| 2^19 = 524288 | 714 KB | 71.9 ms   | 49.8 ms     | 1      | 79.9 MB    | 89.6 MB   |
+| 2^13 = 8192   | 683 KB | 73.1 ms   | 40.5 ms     | 64     | 6.0 MB     | 65.9 MB   |
+| 2^14 = 16384  | 836 KB | 70.4 ms   | 40.3 ms     | 32     | 7.3 MB     | 66.8 MB   |
+| 2^15 = 32768  | 773 KB | 65.4 ms   | 39.6 ms     | 16     | 9.5 MB     | 68.3 MB   |
+| 2^16 = 65536  | 742 KB | 63.6 ms   | 39.3 ms     | 8      | 14.2 MB    | 71.3 MB   |
+| 2^17 = 131072 | 726 KB | 62.0 ms   | 39.4 ms     | 4      | 23.6 MB    | 77.4 MB   |
+| 2^18 = 262144 | 718 KB | 61.7 ms   | 38.4 ms     | 2      | 42.4 MB    | 89.6 MB   |
+| 2^19 = 524288 | 714 KB | 61.0 ms   | 38.3 ms     | 1      | 79.9 MB    | 89.6 MB   |
 
 ### LargeStruct (176 bytes/row)
 
 | Chunk size    | Size    | Serialize | Deserialize | Chunks | Write peak | Read peak |
 |---------------|---------|-----------|-------------|--------|------------|-----------|
-| 2^13 = 8192   | 1309 KB | 204.1 ms  | 102.7 ms    | 64     | 7.6 MB     | 146.7 MB  |
-| 2^14 = 16384  | 1246 KB | 185.3 ms  | 101.7 ms    | 32     | 9.6 MB     | 148.4 MB  |
-| 2^15 = 32768  | 1216 KB | 174.8 ms  | 100.6 ms    | 16     | 13.9 MB    | 151.8 MB  |
-| 2^16 = 65536  | 1202 KB | 171.0 ms  | 101.1 ms    | 8      | 22.5 MB    | 158.7 MB  |
-| 2^17 = 131072 | 1197 KB | 167.4 ms  | 98.8 ms     | 4      | 39.8 MB    | 172.6 MB  |
-| 2^18 = 262144 | 1194 KB | 168.4 ms  | 98.3 ms     | 2      | 74.3 MB    | 200.5 MB  |
-| 2^19 = 524288 | 1193 KB | 167.6 ms  | 99.8 ms     | 1      | 143.3 MB   | 200.5 MB  |
+| 2^13 = 8192   | 1309 KB | 184.5 ms  | 85.6 ms     | 64     | 7.6 MB     | 146.7 MB  |
+| 2^14 = 16384  | 1246 KB | 167.0 ms  | 85.7 ms     | 32     | 9.6 MB     | 148.4 MB  |
+| 2^15 = 32768  | 1216 KB | 159.6 ms  | 84.9 ms     | 16     | 13.9 MB    | 151.8 MB  |
+| 2^16 = 65536  | 1202 KB | 155.8 ms  | 82.9 ms     | 8      | 22.5 MB    | 158.7 MB  |
+| 2^17 = 131072 | 1197 KB | 152.6 ms  | 82.5 ms     | 4      | 39.8 MB    | 172.6 MB  |
+| 2^18 = 262144 | 1194 KB | 155.4 ms  | 82.5 ms     | 2      | 74.3 MB    | 200.5 MB  |
+| 2^19 = 524288 | 1193 KB | 150.1 ms  | 82.9 ms     | 1      | 143.3 MB   | 200.5 MB  |
 
 ## Filters
 
-PcoPack skips deserializing non-matching rows: a 1%-selective filter pays ~15% of the full deserialize cost for most types.
+PcoPack skips deserializing non-matching rows: a 1%-selective filter pays ~20% of the full deserialize cost for most types.
 
 | Filter                                               | Time (ms) | Rows   |
 |------------------------------------------------------|-----------|--------|
-| no filter                                            | 38.7 ms   | 100000 |
-| empty filter                                         | 38.5 ms   | 100000 |
-| i64 exact (id == 50_000)                             | 6.4 ms    | 1000   |
-| i64 range (50_000..=50_999)                          | 6.4 ms    | 1000   |
-| i64 inclusion (100 values, 1 match)                  | 6.5 ms    | 1000   |
-| i32 exact (int32_val == 50)                          | 6.3 ms    | 1000   |
-| i32 range (50..=50.99)                               | 6.4 ms    | 1000   |
-| i32 inclusion (100 values, 1 match)                  | 6.4 ms    | 1000   |
-| i8 exact (int8_val == 50)                            | 6.3 ms    | 1000   |
-| i8 range (50..=50.99)                                | 6.3 ms    | 1000   |
-| i8 inclusion (100 values, 1 match)                   | 6.4 ms    | 1000   |
-| u8 exact (u8_val == 50)                              | 6.3 ms    | 1000   |
-| u8 range (50..=50.99)                                | 6.3 ms    | 1000   |
-| u8 inclusion (100 values, 1 match)                   | 6.5 ms    | 1000   |
-| f64 exact (float64_val == 50.0)                      | 6.4 ms    | 1000   |
-| f64 range (50.0..=50.99)                             | 6.3 ms    | 1000   |
-| f64 inclusion (100 values, 1 match)                  | 8.8 ms    | 1000   |
-| f32 exact (float32_val == 50.0)                      | 6.3 ms    | 1000   |
-| f32 range (50.0..=50.99)                             | 6.2 ms    | 1000   |
-| f32 inclusion (100 values, 1 match)                  | 9.0 ms    | 1000   |
-| f16 exact (f16_val == 50.0)                          | 6.4 ms    | 1000   |
-| f16 range (50.0..=50.99)                             | 6.4 ms    | 1000   |
-| f16 inclusion (100 values, 1 match)                  | 9.1 ms    | 1000   |
-| string exact                                         | 8.0 ms    | 1000   |
-| string inclusion (10 values)                         | 8.4 ms    | 10000  |
-| bool exact (bool_val == true)                        | 19.4 ms   | 1000   |
-| bool exact (bool_val == false)                       | 38.5 ms   | 99000  |
-| enum exact (status == V50)                           | 6.3 ms    | 1000   |
-| enum inclusion (status in 0..9)                      | 6.8 ms    | 10000  |
-| option exact (option_val == 50)                      | 6.4 ms    | 1000   |
-| option range (50..=50.99)                            | 6.3 ms    | 1000   |
-| option inclusion (100 values, 1 match)               | 6.5 ms    | 1000   |
-| vec contains (vec_val has 5000)                      | 6.4 ms    | 1000   |
-| vec contains inclusion (any of 10 values)            | 6.8 ms    | 10000  |
-| bytes exact (hex match)                              | 7.9 ms    | 1000   |
-| map exact (has key 'key_50')                         | 14.4 ms   | 1000   |
-| map inclusion (any of key_0..key_9)                  | 15.0 ms   | 10000  |
-| json exact (tag_50 string)                           | 8.5 ms    | 1000   |
-| uuid exact (bucket 50)                               | 6.4 ms    | 1000   |
-| uuid inclusion (100 values, 1 match)                 | 6.5 ms    | 1000   |
-| nested (nested.inner_id == 50_000)                   | 6.4 ms    | 1000   |
-| nested (nested.inner_id range 50_000..=50_000.99)    | 6.4 ms    | 1000   |
-| nested (nested.inner_name exact)                     | 8.1 ms    | 1000   |
-| nested (nested.inner_name inclusion, 10 values)      | 8.5 ms    | 10000  |
-| partial fields (id + string_val)                     | 0.8 ms    | 1000   |
+| no filter                                            | 32.4 ms   | 100000 |
+| empty filter                                         | 32.2 ms   | 100000 |
+| i64 exact (id == 50_000)                             | 6.6 ms    | 1000   |
+| i64 range (50_000..=50_999)                          | 6.1 ms    | 1000   |
+| i64 inclusion (100 values, 1 match)                  | 6.2 ms    | 1000   |
+| i32 exact (int32_val == 50)                          | 6.1 ms    | 1000   |
+| i32 range (50..=50.99)                               | 6.2 ms    | 1000   |
+| i32 inclusion (100 values, 1 match)                  | 6.3 ms    | 1000   |
+| i8 exact (int8_val == 50)                            | 6.2 ms    | 1000   |
+| i8 range (50..=50.99)                                | 6.2 ms    | 1000   |
+| i8 inclusion (100 values, 1 match)                   | 6.6 ms    | 1000   |
+| u8 exact (u8_val == 50)                              | 6.6 ms    | 1000   |
+| u8 range (50..=50.99)                                | 6.6 ms    | 1000   |
+| u8 inclusion (100 values, 1 match)                   | 6.8 ms    | 1000   |
+| f64 exact (float64_val == 50.0)                      | 6.6 ms    | 1000   |
+| f64 range (50.0..=50.99)                             | 6.5 ms    | 1000   |
+| f64 inclusion (100 values, 1 match)                  | 8.9 ms    | 1000   |
+| f32 exact (float32_val == 50.0)                      | 6.1 ms    | 1000   |
+| f32 range (50.0..=50.99)                             | 6.1 ms    | 1000   |
+| f32 inclusion (100 values, 1 match)                  | 8.8 ms    | 1000   |
+| f16 exact (f16_val == 50.0)                          | 6.1 ms    | 1000   |
+| f16 range (50.0..=50.99)                             | 6.2 ms    | 1000   |
+| f16 inclusion (100 values, 1 match)                  | 8.8 ms    | 1000   |
+| string exact                                         | 7.8 ms    | 1000   |
+| string inclusion (10 values)                         | 7.9 ms    | 10000  |
+| bool exact (bool_val == true)                        | 13.9 ms   | 1000   |
+| bool exact (bool_val == false)                       | 31.8 ms   | 99000  |
+| enum exact (status == V50)                           | 6.1 ms    | 1000   |
+| enum inclusion (status in 0..9)                      | 6.1 ms    | 10000  |
+| option exact (option_val == 50)                      | 6.2 ms    | 1000   |
+| option range (50..=50.99)                            | 6.1 ms    | 1000   |
+| option inclusion (100 values, 1 match)               | 6.3 ms    | 1000   |
+| vec contains (vec_val has 5000)                      | 6.2 ms    | 1000   |
+| vec contains inclusion (any of 10 values)            | 6.2 ms    | 10000  |
+| bytes exact (hex match)                              | 7.8 ms    | 1000   |
+| map exact (has key 'key_50')                         | 12.4 ms   | 1000   |
+| map inclusion (any of key_0..key_9)                  | 13.7 ms   | 10000  |
+| json exact (tag_50 string)                           | 9.0 ms    | 1000   |
+| uuid exact (bucket 50)                               | 7.0 ms    | 1000   |
+| uuid inclusion (100 values, 1 match)                 | 7.1 ms    | 1000   |
+| nested (nested.inner_id == 50_000)                   | 6.9 ms    | 1000   |
+| nested (nested.inner_id range 50_000..=50_000.99)    | 6.9 ms    | 1000   |
+| nested (nested.inner_name exact)                     | 8.4 ms    | 1000   |
+| nested (nested.inner_name inclusion, 10 values)      | 8.4 ms    | 10000  |
+| partial fields (id + string_val)                     | 0.7 ms    | 1000   |
 | multi-field (id + int32_val)                         | 6.3 ms    | 1000   |
-| multi-field (bytes_val + u8_val)                     | 7.1 ms    | 1000   |
-| multi-field (string_val + u8_val)                    | 7.3 ms    | 1000   |
-| multi-field (json_val + u8_val)                      | 7.2 ms    | 1000   |
+| multi-field (bytes_val + u8_val)                     | 7.0 ms    | 1000   |
+| multi-field (string_val + u8_val)                    | 7.1 ms    | 1000   |
+| multi-field (json_val + u8_val)                      | 7.0 ms    | 1000   |
 | multi-field zero-match (id + int32_val + string_val) | 0.4 ms    | 0      |
 
 ## Datasets
@@ -297,10 +307,10 @@ NYC AirData single-sensor stream: wide i16 measurements, a monotonic i64 counter
 | Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
 |--------------|----------|-----------------|----------|----------|----------------|----------|
 | Size         | 4.1 MB   | 2.5 MB          | 4.1 MB   | 14.0 MB  | 5.4 MB         | 15.9 MB  |
-| Serialize    | 118.0 ms | 111.4 ms        | 221.4 ms | 106.5 ms | 133.2 ms       | 300.5 ms |
-| Deserialize  | 52.7 ms  | 52.0 ms         | 67.5 ms  | 34.7 ms  | 57.8 ms        | 210.0 ms |
-| Filter 0.18% | 6.6 ms   | 6.5 ms          | 2.2 ms   | 34.7 ms  | 58.4 ms        | 208.2 ms |
-| Filter 4.49% | 8.1 ms   | 7.6 ms          | 4.1 ms   | 32.9 ms  | 57.7 ms        | 209.9 ms |
+| Serialize    | 120.7 ms | 109.1 ms        | 224.0 ms | 110.4 ms | 136.1 ms       | 308.8 ms |
+| Deserialize  | 55.9 ms  | 53.7 ms         | 69.8 ms  | 36.1 ms  | 59.4 ms        | 211.0 ms |
+| Filter 0.18% | 6.8 ms   | 6.7 ms          | 2.2 ms   | 34.2 ms  | 61.9 ms        | 217.9 ms |
+| Filter 4.49% | 8.3 ms   | 8.1 ms          | 3.4 ms   | 34.2 ms  | 59.8 ms        | 220.4 ms |
 
 - Full-fidelity size is tied between PcoPack and Vortex
 - Lossy time rounding reduces size by 40%
@@ -311,11 +321,11 @@ NYC taxi trips (also seen in the upstream pcodec benchmarks). All four timestamp
 
 | Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
 |--------------|----------|-----------------|----------|----------|----------------|----------|
-| Size         | 285.5 MB | 275.7 MB        | 413.8 MB | 572.5 MB | 523.4 MB       | 661.5 MB |
-| Serialize    | 9.0 s    | 8.7 s           | 20.2 s   | 7.8 s    | 10.0 s         | 12.3 s   |
-| Deserialize  | 3.6 s    | 3.5 s           | 9.4 s    | 2.6 s    | 5.2 s          | 9.8 s    |
-| Filter 0.2%  | 93.7 ms  | 94.4 ms         | 30.7 ms  | 2.5 s    | 5.5 s          | 9.8 s    |
-| Filter 4.05% | 214.4 ms | 209.5 ms        | 443.1 ms | 2.5 s    | 6.1 s          | 9.9 s    |
+| Size         | 285.5 MB | 275.7 MB        | 415.1 MB | 572.5 MB | 523.4 MB       | 661.5 MB |
+| Serialize    | 9.1 s    | 8.4 s           | 21.2 s   | 7.9 s    | 10.1 s         | 12.1 s   |
+| Deserialize  | 3.6 s    | 3.4 s           | 9.4 s    | 2.6 s    | 5.2 s          | 10.1 s   |
+| Filter 0.2%  | 103.2 ms | 110.7 ms        | 33.7 ms  | 2.5 s    | 5.2 s          | 10.2 s   |
+| Filter 4.05% | 217.3 ms | 214.8 ms        | 410.2 ms | 2.5 s    | 5.3 s          | 10.1 s   |
 
 - PcoPack is the smallest by a wide margin
 - For filtering, hour window favors Vortex (finer row-group pruning) and day window favors PcoPack
@@ -330,10 +340,10 @@ Geofabrik Austria PBF. Filters are padded boxes on the centroid: cross-border ge
 | Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack |
 |--------------|----------|-----------------|----------|----------|----------------|---------|
 | Size         | 867.1 MB | 359.7 MB        | 415.6 MB | 1.2 GB   | 1.1 GB         | 1.4 GB  |
-| Serialize    | 10.9 s   | 10.2 s          | 43.1 s   | 8.6 s    | 9.2 s          | 8.6 s   |
-| Deserialize  | 3.2 s    | 3.2 s           | 5.1 s    | 2.3 s    | 5.0 s          | 6.2 s   |
-| Filter 0.17% | 740.7 ms | 801.6 ms        | 550.0 ms | 2.2 s    | 10.0 s         | 6.9 s   |
-| Filter 4.65% | 1.2 s    | 1.3 s           | 2.2 s    | 2.2 s    | 4.1 s          | 6.0 s   |
+| Serialize    | 6.8 s    | 6.4 s           | 43.1 s   | 7.9 s    | 7.9 s          | 7.9 s   |
+| Deserialize  | 2.9 s    | 2.9 s           | 4.1 s    | 2.3 s    | 3.6 s          | 6.0 s   |
+| Filter 0.17% | 747.8 ms | 776.9 ms        | 545.1 ms | 2.3 s    | 3.5 s          | 5.9 s   |
+| Filter 4.65% | 1.2 s    | 1.2 s           | 2.1 s    | 2.2 s    | 3.6 s          | 6.0 s   |
 
 - Vortex automatically converts limited-precision floats into integers, which is why it outperforms PcoPack by default
 - PcoPack (lossy) uses `float_round = 7`, cutting node size ~59% and only drops sub-centimeter coordinate precision
@@ -342,17 +352,17 @@ Geofabrik Austria PBF. Filters are padded boxes on the centroid: cross-border ge
 
 | Metric      | PcoPack  | Vortex   | columnar | serde_columnar | msgpack  |
 |-------------|----------|----------|----------|----------------|----------|
-| Size        | 199.7 MB | 212.1 MB | 395.1 MB | 459.9 MB       | 490.9 MB |
-| Serialize   | 10.7 s   | 13.8 s   | 6.5 s    | 5.7 s          | 4.5 s    |
-| Deserialize | 4.8 s    | 4.7 s    | 1.8 s    | 3.7 s          | 4.0 s    |
+| Size        | 199.7 MB | 212.1 MB | 395.1 MB | 459.9 MB       | 491.0 MB |
+| Serialize   | 7.4 s    | 13.6 s   | 6.1 s    | 5.1 s          | 4.3 s    |
+| Deserialize | 4.0 s    | 4.2 s    | 1.6 s    | 3.4 s          | 3.7 s    |
 
 #### Relation (180809 rows)
 
 | Metric      | PcoPack  | Vortex   | columnar | serde_columnar | msgpack  |
 |-------------|----------|----------|----------|----------------|----------|
 | Size        | 18.4 MB  | 19.3 MB  | 20.2 MB  | 17.3 MB        | 19.8 MB  |
-| Serialize   | 459.6 ms | 687.0 ms | 292.6 ms | 362.6 ms       | 201.4 ms |
-| Deserialize | 234.4 ms | 244.8 ms | 64.6 ms  | 197.2 ms       | 253.0 ms |
+| Serialize   | 354.5 ms | 693.1 ms | 289.1 ms | 342.1 ms       | 212.0 ms |
+| Deserialize | 199.1 ms | 253.5 ms | 69.1 ms  | 196.8 ms       | 257.9 ms |
 
 ### openalex (558403 works)
 
@@ -360,11 +370,11 @@ OpenAlex `works` snapshot: deeply nested JSON flattened to typed structs.
 
 | Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
 |--------------|----------|-----------------|----------|----------|----------------|----------|
-| Size         | 411.5 MB | 404.2 MB        | 422.1 MB | 556.3 MB | 513.4 MB       | 566.7 MB |
-| Serialize    | 12.5 s   | 12.1 s          | 11.8 s   | 8.3 s    | 9.2 s          | 5.1 s    |
-| Deserialize  | 6.4 s    | 6.3 s           | 5.0 s    | 1.7 s    | 5.8 s          | 4.5 s    |
-| Filter 0.02% | 2.1 s    | 2.1 s           | 471.5 ms | 1.7 s    | 5.6 s          | 4.8 s    |
-| Filter 2.94% | 2.6 s    | 2.5 s           | 1.1 s    | 1.9 s    | 5.3 s          | 4.3 s    |
+| Size         | 411.5 MB | 404.2 MB        | 422.4 MB | 556.3 MB | 513.4 MB       | 566.7 MB |
+| Serialize    | 11.1 s   | 10.6 s          | 13.1 s   | 8.7 s    | 9.4 s          | 4.9 s    |
+| Deserialize  | 6.1 s    | 6.1 s           | 5.1 s    | 1.8 s    | 5.4 s          | 4.5 s    |
+| Filter 0.02% | 2.1 s    | 2.2 s           | 549.5 ms | 1.7 s    | 5.7 s          | 4.5 s    |
+| Filter 2.94% | 2.4 s    | 2.5 s           | 1.0 s    | 1.7 s    | 5.4 s          | 4.4 s    |
 
 - PcoPack (lossy) `float_round = 4` saves 3% because `fwci` and scores carry ~15-digit model noise
 - Vortex filters fastest (row-group pruning + predicate pushdown)
@@ -378,28 +388,28 @@ Real Postgres monitoring datasets sourced from pganalyze.
 | Metric        | PcoPack  | PcoPack time_round | PcoPack Timeline | Vortex   | columnar | serde_columnar | msgpack |
 |---------------|----------|--------------------|------------------|----------|----------|----------------|---------|
 | Size          | 47.1 MB  | 39.2 MB            | 18.0 MB          | 83.8 MB  | 68.8 MB  | 69.3 MB        | 80.2 MB |
-| Serialize     | 3.4 s    | 3.3 s              | 2.0 s            | 3.7 s    | 1.1 s    | 2.7 s          | 4.5 s   |
-| Deserialize   | 1.3 s    | 1.3 s              | 473.4 ms         | 1.7 s    | 575.1 ms | 1.8 s          | 4.8 s   |
-| Filter 0.49%  | 66.1 ms  | 67.3 ms            | 169.4 ms         | 14.0 ms  | 532.1 ms | 1.9 s          | 4.7 s   |
-| Filter 29.25% | 741.7 ms | 750.1 ms           | 427.2 ms         | 770.3 ms | 524.5 ms | 1.8 s          | 4.8 s   |
-| Filter 77.25% | 1.1 s    | 1.1 s              | 364.4 ms         | 1.4 s    | 522.2 ms | 1.8 s          | 4.8 s   |
+| Serialize     | 3.1 s    | 3.3 s              | 2.1 s            | 3.7 s    | 1.1 s    | 2.8 s          | 4.6 s   |
+| Deserialize   | 1.3 s    | 1.3 s              | 484.9 ms         | 1.5 s    | 561.7 ms | 1.9 s          | 4.8 s   |
+| Filter 0.49%  | 65.9 ms  | 67.4 ms            | 171.6 ms         | 12.5 ms  | 538.6 ms | 2.1 s          | 4.7 s   |
+| Filter 29.25% | 736.9 ms | 752.4 ms           | 438.2 ms         | 754.8 ms | 537.6 ms | 1.8 s          | 4.6 s   |
+| Filter 77.25% | 1.1 s    | 1.1 s              | 372.1 ms         | 1.3 s    | 549.1 ms | 2.0 s          | 4.8 s   |
 
 - Full-fidelity PcoPack beats Vortex by ~44%, columnar ~31%, msgpack ~41%. `time_round = 1s` cuts ~17% more
-- Most backends are idle, allowing PcoPack `Timeline` to cut row count by ~71%, serialized size ~62%, and serialize time ~40%
+- Most backends are idle, allowing PcoPack `Timeline` to cut row count by ~71%, serialized size ~62%, and serialize time ~32%
 
 ### query_explains (237651 rows)
 
 | Metric        | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
 |---------------|----------|-----------------|----------|----------|----------------|----------|
 | Size          | 82.0 MB  | 76.0 MB         | 122.5 MB | 127.1 MB | 123.3 MB       | 110.3 MB |
-| Serialize     | 5.8 s    | 6.2 s           | 5.2 s    | 1.9 s    | 5.2 s          | 2.3 s    |
-| Deserialize   | 7.5 s    | 7.5 s           | 761.2 ms | 632.4 ms | 925.3 ms       | 5.5 s    |
-| Filter 0.55%  | 1.8 s    | 1.7 s           | 20.5 ms  | 635.7 ms | 852.8 ms       | 5.0 s    |
-| Filter 12.48% | 4.6 s    | 4.6 s           | 543.9 ms | 626.4 ms | 865.0 ms       | 4.5 s    |
-| Filter 12.97% | 155.5 ms | 153.2 ms        | 570.2 ms | 651.6 ms | 856.2 ms       | 4.5 s    |
+| Serialize     | 4.8 s    | 4.1 s           | 5.1 s    | 1.8 s    | 4.8 s          | 2.3 s    |
+| Deserialize   | 7.5 s    | 7.3 s           | 744.9 ms | 623.5 ms | 880.5 ms       | 5.3 s    |
+| Filter 0.55%  | 1.7 s    | 1.7 s           | 18.6 ms  | 619.0 ms | 851.6 ms       | 5.1 s    |
+| Filter 12.48% | 4.5 s    | 4.5 s           | 542.1 ms | 618.9 ms | 848.3 ms       | 4.7 s    |
+| Filter 12.97% | 151.8 ms | 152.6 ms        | 559.7 ms | 620.7 ms | 872.4 ms       | 4.5 s    |
 
 - PcoPack and msgpack store `serde_json::Value` while the other store a string because they don't support JSON storage directly. This difference explains PcoPack's smaller compressed size and larger serialization time.
-- PcoPack is ~33% smaller than Vortex and serializes within ~11% of Vortex's time.
+- PcoPack is ~33% smaller than Vortex and serializes in about the same time.
 - PcoPack (lossy) uses `float_round = 2, time_round = 1s` to cut another ~7%. Float rounding removes sub-millisecond precision
 
 ### query_stats_1min (29970299 rows)
@@ -407,22 +417,22 @@ Real Postgres monitoring datasets sourced from pganalyze.
 | Metric        | PcoPack  | PcoPack time_round | Vortex   | columnar | serde_columnar | msgpack  |
 |---------------|----------|--------------------|----------|----------|----------------|----------|
 | Size          | 116.5 MB | 116.4 MB           | 129.9 MB | 191.7 MB | 179.4 MB       | 236.2 MB |
-| Serialize     | 4.5 s    | 4.4 s              | 6.3 s    | 4.1 s    | 3.9 s          | 5.9 s    |
-| Deserialize   | 1.8 s    | 1.8 s              | 2.5 s    | 1.5 s    | 2.8 s          | 4.7 s    |
-| Filter 0.31%  | 144.0 ms | 141.4 ms           | 73.8 ms  | 1.5 s    | 2.8 s          | 4.8 s    |
-| Filter 18.19% | 789.9 ms | 773.8 ms           | 1.1 s    | 1.4 s    | 2.8 s          | 4.8 s    |
-| Filter 0.05%  | 33.6 ms  | 33.6 ms            | 17.2 ms  | 1.5 s    | 3.0 s          | 4.8 s    |
+| Serialize     | 4.4 s    | 4.4 s              | 6.5 s    | 4.6 s    | 3.6 s          | 6.0 s    |
+| Deserialize   | 1.8 s    | 1.8 s              | 2.4 s    | 1.5 s    | 3.1 s          | 4.8 s    |
+| Filter 0.31%  | 142.7 ms | 150.8 ms           | 75.9 ms  | 1.4 s    | 2.8 s          | 4.8 s    |
+| Filter 18.19% | 793.9 ms | 808.4 ms           | 1.1 s    | 1.4 s    | 2.8 s          | 4.8 s    |
+| Filter 0.05%  | 33.4 ms  | 33.3 ms            | 17.7 ms  | 1.4 s    | 3.0 s          | 4.7 s    |
 
 ### query_stats_1hour (1041799 rows)
 
 | Metric        | PcoPack  | PcoPack time_round | Vortex   | columnar | serde_columnar | msgpack  |
 |---------------|----------|--------------------|----------|----------|----------------|----------|
 | Size          | 5.9 MB   | 5.9 MB             | 7.1 MB   | 10.0 MB  | 9.1 MB         | 11.6 MB  |
-| Serialize     | 183.5 ms | 177.4 ms           | 251.9 ms | 168.0 ms | 139.9 ms       | 217.8 ms |
-| Deserialize   | 73.3 ms  | 67.9 ms            | 94.8 ms  | 55.7 ms  | 122.7 ms       | 179.9 ms |
-| Filter 0.63%  | 25.8 ms  | 24.5 ms            | 3.1 ms   | 55.5 ms  | 224.4 ms       | 178.8 ms |
-| Filter 58.45% | 50.0 ms  | 49.3 ms            | 73.7 ms  | 56.2 ms  | 108.1 ms       | 184.1 ms |
-| Filter 0.03%  | 1.5 ms   | 1.5 ms             | 14.4 ms  | 55.9 ms  | 106.3 ms       | 177.3 ms |
+| Serialize     | 171.1 ms | 170.6 ms           | 253.3 ms | 168.7 ms | 210.2 ms       | 218.1 ms |
+| Deserialize   | 71.3 ms  | 68.0 ms            | 96.1 ms  | 55.5 ms  | 146.0 ms       | 182.0 ms |
+| Filter 0.63%  | 25.3 ms  | 24.4 ms            | 3.1 ms   | 55.6 ms  | 128.6 ms       | 178.5 ms |
+| Filter 58.45% | 49.9 ms  | 50.6 ms            | 77.4 ms  | 55.3 ms  | 112.9 ms       | 178.7 ms |
+| Filter 0.03%  | 1.7 ms   | 1.5 ms             | 14.5 ms  | 55.7 ms  | 105.3 ms       | 183.9 ms |
 
 - PcoPack is the smallest at both granularities
 - `time_round` is less effective because data is captured once a minute versus backend_snapshots which are captured once every 10 seconds

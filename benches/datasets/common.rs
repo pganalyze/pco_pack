@@ -29,16 +29,13 @@ pub struct CodecMetrics {
     pub filter_ms: Vec<Option<f64>>,
 }
 
-/// PcoPack runner. Serialize: clone + `write` + `to_bytes`. Deserialize:
-/// `from_bytes` + full read. `verify` may assume stored order; filter counts
-/// assert.
-pub fn bench_pco_pack<T, V>(data: &[T], filters: &[(&serde_json::Value, usize)], verify: V) -> CodecMetrics
+pub fn bench_pco_pack<T, V>(data: Vec<T>, filters: &[(&serde_json::Value, usize)], verify: V) -> CodecMetrics
 where
-    T: pco_pack::PcoPack + Clone + std::fmt::Debug,
+    T: pco_pack::PcoPack + std::fmt::Debug,
     V: FnOnce(&[T]),
 {
     let (serial_ms, bytes) = one_pass(|| {
-        let chunks = pco_pack::PcoPack::write(data.to_vec()).unwrap();
+        let chunks = pco_pack::PcoPack::write(data).unwrap();
         T::to_bytes(&chunks).unwrap()
     });
     let (deserial_ms, rows) = one_pass(|| {

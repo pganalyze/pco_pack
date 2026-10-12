@@ -137,14 +137,13 @@ pub fn bench() {
         let pcof_filters: Vec<(&serde_json::Value, usize)> =
             queries.iter().zip(exp_f.iter()).map(|(q, e)| (q, *e)).collect();
 
-        let pco = common::bench_pco_pack(&nodes, &pco_filters, |back| {
-            // No `timestamp` field -> PcoPack keeps file order -> positional
-            // roundtrip check.
+        let pco = common::bench_pco_pack(nodes.to_vec(), &pco_filters, |back| {
+            // No `timestamp` field -> PcoPack keeps file order -> positional roundtrip check.
             assert_eq!(back, &nodes[..], "osm node roundtrip mismatch");
         });
 
         let nodesf: Vec<NodeF> = nodes.iter().map(NodeF::from).collect();
-        let pcof = common::bench_pco_pack(&nodesf, &pcof_filters, |back| {
+        let pcof = common::bench_pco_pack(nodesf, &pcof_filters, |back| {
             for (b, r) in back.iter().zip(nodes.iter()) {
                 assert_eq!(b.id, r.id);
                 assert_eq!(b.tags, r.tags);
@@ -152,7 +151,6 @@ pub fn bench() {
                 assert_eq!(b.lon, common::round_f64(r.lon, 7), "node lon (float_round = 7)");
             }
         });
-        drop(nodesf);
 
         let box_filters: Vec<((f64, f64, f64, f64), usize)> =
             boxes.iter().zip(exp.iter()).map(|(b, e)| (*b, *e)).collect();
@@ -213,7 +211,7 @@ pub fn bench() {
     {
         println!("#### Way ({n_ways} rows)\n");
 
-        let pco = common::bench_pco_pack(&ways, &[], |back| {
+        let pco = common::bench_pco_pack(ways.to_vec(), &[], |back| {
             assert_eq!(back, &ways[..], "osm way roundtrip mismatch");
         });
         let col = common::bench_columnar(
@@ -248,7 +246,7 @@ pub fn bench() {
     {
         println!("#### Relation ({n_rels} rows)\n");
 
-        let pco = common::bench_pco_pack(&rels, &[], |back| {
+        let pco = common::bench_pco_pack(rels.to_vec(), &[], |back| {
             assert_eq!(back, &rels[..], "osm relation roundtrip mismatch");
         });
         let col = common::bench_columnar(

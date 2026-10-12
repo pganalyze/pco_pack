@@ -157,9 +157,6 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
     let pco_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf.iter()).map(|(q, (_, e))| (q, *e)).collect();
 
-    let pco =
-        common::bench_pco_pack(&rows, &pco_filters, |back| assert_eq!(back.len(), rows.len(), "{name} row count"));
-
     // Counts fold collected_at through the same whole-second rounding the
     // write stores.
     let time_round_rows: Vec<QueryStatTimeRound> = rows.iter().map(QueryStatTimeRound::from).collect();
@@ -167,10 +164,9 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
         keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches_time_round(r)).count())).collect();
     let time_round_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_time_round.iter()).map(|(q, (_, e))| (q, *e)).collect();
-    let pco_time_round = common::bench_pco_pack(&time_round_rows, &time_round_filters, |back| {
-        assert_eq!(back.len(), rows.len(), "{name} (TimeRound) row count")
+    let pco_time_round = common::bench_pco_pack(time_round_rows, &time_round_filters, |back| {
+        assert_eq!(back.len(), n, "{name} (TimeRound) row count")
     });
-    drop(time_round_rows);
 
     let col_rows: Vec<QueryStatCol> = rows.iter().map(QueryStatCol::from).collect();
     let col = common::bench_columnar(
@@ -223,6 +219,8 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
     );
 
     let mp = common::bench_msgpack(&rows, &kf, |r: &QueryStat, k: &Sk| k.matches(r));
+
+    let pco = common::bench_pco_pack(rows, &pco_filters, move |back| assert_eq!(back.len(), n, "{name} row count"));
 
     let metrics = ["Size", "Serialize", "Deserialize"];
     let mut out: Vec<CodecRow> = metrics
