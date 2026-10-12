@@ -34,10 +34,24 @@ where
     T: pco_pack::PcoPack + std::fmt::Debug,
     V: FnOnce(&[T]),
 {
-    let (serial_ms, bytes) = one_pass(|| {
-        let chunks = pco_pack::PcoPack::write(data).unwrap();
-        T::to_bytes(&chunks).unwrap()
-    });
+    bench_pco_pack_serial(
+        move || {
+            let chunks = pco_pack::PcoPack::write(data).unwrap();
+            T::to_bytes(&chunks).unwrap()
+        },
+        filters,
+        verify,
+    )
+}
+
+/// Serialize/deserialize/filter tail shared by the pco_pack runners.
+fn bench_pco_pack_serial<T, S, V>(serialize: S, filters: &[(&serde_json::Value, usize)], verify: V) -> CodecMetrics
+where
+    T: pco_pack::PcoPack + std::fmt::Debug,
+    S: FnOnce() -> Vec<u8>,
+    V: FnOnce(&[T]),
+{
+    let (serial_ms, bytes) = one_pass(serialize);
     let (deserial_ms, rows) = one_pass(|| {
         let chunks = T::from_bytes(&bytes).unwrap();
         T::filter(&chunks, serde_json::json!({}), &[]).unwrap()
