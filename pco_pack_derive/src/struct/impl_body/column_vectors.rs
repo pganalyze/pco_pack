@@ -1,7 +1,7 @@
 // Column vector helpers used in the generated write() loop.
 
 use super::super::parse::{FieldRole, StructGen};
-use super::super::type_helpers::{extract_timeline_const_generic, is_timeline_type};
+use super::super::type_helpers::{extract_timeline_const_generic, is_json_move_type, is_timeline_type};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -24,15 +24,25 @@ impl StructGen {
             .collect()
     }
 
-    /// Generate `col_<field>.push(rec.<field>.clone());` calls.
-    /// Works with `rec` bound as either `Self` or `&Self`.
-    pub fn col_vectors_push(&self) -> Vec<TokenStream2> {
+    /// True when any payload column holds JSON that `write()` can move out
+    /// of the row instead of cloning (see `col_vectors_push`).
+    pub fn has_json_move_field(&self) -> bool {
+        self.all_payload().iter().any(|fi| is_json_move_type(&fi.ty))
+    }
+
+    /// Generate `col_<field>.push(rec.<field>.clone());` calls, or
+    /// `std::mem::take` for JSON columns when `take_json` is set.
+    pub fn col_vectors_push(&self, take_json: bool) -> Vec<TokenStream2> {
         self.all_payload()
             .iter()
             .map(|fi| {
                 let ident = &fi.ident;
                 let ci = syn::Ident::new(&format!("col_{}", ident), ident.span());
-                quote! { #ci.push(rec .#ident.clone()); }
+                if take_json && is_json_move_type(&fi.ty) {
+                    quote! { #ci.push(std::mem::take(&mut rec .#ident)); }
+                } else {
+                    quote! { #ci.push(rec .#ident.clone()); }
+                }
             })
             .collect()
     }

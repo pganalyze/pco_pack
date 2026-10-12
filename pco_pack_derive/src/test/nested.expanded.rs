@@ -176,12 +176,12 @@ const _: () = {
             };
             Ok(Reader {
                 name: pco_pack::LazyReader::new(
-                    rec.name.to_vec(),
+                    rec.name.into_vec(),
                     0u32,
                     Default::default(),
                 ),
                 inner: pco_pack::LazyReader::new(
-                    rec.inner.to_vec(),
+                    rec.inner.into_vec(),
                     0u32,
                     Default::default(),
                 ),
@@ -489,10 +489,10 @@ const _: () = {
             let mut reader = Reader {
                 name: <pco_pack::LazyReader<
                     String,
-                >>::new(self.name.to_vec(), 0u32, Default::default()),
+                >>::new(self.name.into_vec(), 0u32, Default::default()),
                 inner: <pco_pack::LazyReader<
                     Inner,
-                >>::new(self.inner.to_vec(), 0u32, Default::default()),
+                >>::new(self.inner.into_vec(), 0u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["name", "inner"];
             let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;
@@ -759,9 +759,9 @@ const _: () = {
                 }
             };
             Ok(Reader {
-                x: pco_pack::LazyReader::new(rec.x.to_vec(), 0u32, Default::default()),
+                x: pco_pack::LazyReader::new(rec.x.into_vec(), 0u32, Default::default()),
                 label: pco_pack::LazyReader::new(
-                    rec.label.to_vec(),
+                    rec.label.into_vec(),
                     0u32,
                     Default::default(),
                 ),
@@ -1069,10 +1069,10 @@ const _: () = {
             let mut reader = Reader {
                 x: <pco_pack::LazyReader<
                     i32,
-                >>::new(self.x.to_vec(), 0u32, Default::default()),
+                >>::new(self.x.into_vec(), 0u32, Default::default()),
                 label: <pco_pack::LazyReader<
                     String,
-                >>::new(self.label.to_vec(), 0u32, Default::default()),
+                >>::new(self.label.into_vec(), 0u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["x", "label"];
             let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;

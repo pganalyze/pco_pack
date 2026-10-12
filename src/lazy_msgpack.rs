@@ -137,7 +137,7 @@ macro_rules! impl_lazy_msgpack {
                 let mut raw_buffer = Vec::with_capacity(len * 64);
                 raw_buffer.push(FORMAT_VERSION_CHUNKED);
                 for chunk in data.chunks(CHUNK_SIZE) {
-                    rmp_serde::encode::write(&mut raw_buffer, &chunk.to_vec())?;
+                    rmp_serde::encode::write(&mut raw_buffer, chunk)?;
                 }
                 let compressed = zstd::encode_all(raw_buffer.as_slice(), 3)?;
                 let mut out = Vec::with_capacity(16 + compressed.len());
@@ -244,10 +244,11 @@ macro_rules! impl_lazy_msgpack {
                             if index < chunk_end_excl {
                                 match helpers::deserialize_chunk::<Self>(data_start, &mut local_pos) {
                                     Some(chunk) => {
-                                        reader.cached_chunk = Some(chunk.clone());
+                                        let value = chunk.get(index - current_row_offset).cloned();
+                                        reader.cached_chunk = Some(chunk);
                                         reader.cached_row_start = current_row_offset;
                                         reader.data_pos = local_pos;
-                                        return Ok(chunk.get(index - current_row_offset).cloned());
+                                        return Ok(value);
                                     }
                                     None => break, // Deserialization failed.
                                 }

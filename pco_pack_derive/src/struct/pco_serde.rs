@@ -7,7 +7,6 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
     let group_key_type = &sg.group_key_type;
     let group_key_tuple_ref = sg.group_key_tuple_ref();
     let col_vectors_init = sg.col_vectors_init();
-    let col_vectors_push = sg.col_vectors_push();
     let timestamp_sort_indices = sg.timestamp_sort_indices();
     let timeline_merge_from_indices = sg.timeline_merge_from_indices();
     let timestamp_start_end_from_indices_var = sg.timestamp_start_end_from_indices_var("indices");
@@ -24,6 +23,20 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
 
     let has_ts = sg.has_timestamp;
     let has_index = !sg.index_fields().is_empty();
+
+    // JSON columns move out of the row instead of deep-cloning the tree as a performance optimization.
+    let take_json = !has_timeline_ts && sg.has_json_move_field();
+    let rec_bind = if take_json {
+        quote! { &mut data[idx] }
+    } else {
+        quote! { &data[idx] }
+    };
+    let data_arg = if take_json {
+        quote! { mut data }
+    } else {
+        quote! { data }
+    };
+    let col_vectors_push = sg.col_vectors_push(take_json);
 
     let group_enum_loop = if has_index {
         quote! {
@@ -72,7 +85,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
                 #timestamp_sort_indices
                 #(#col_vectors_init)*
                 for &idx in indices.iter() {
-                    let rec = &data[idx];
+                    let rec = #rec_bind;
                     #(#col_vectors_push)*
                 }
                 #(#compress_payload)*
@@ -91,7 +104,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
             for (#key_pat, indices) in groups {
                 #(#col_vectors_init)*
                 for &idx in indices.iter() {
-                    let rec = &data[idx];
+                    let rec = #rec_bind;
                     #(#col_vectors_push)*
                 }
                 #(#compress_payload)*
@@ -104,7 +117,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
         impl pco_pack::PcoSerde for #name {
             type Writer = Writer;
             type Reader = Reader;
-            fn write(data: Vec<Self>, _float_round: u32, _time_round: pco_pack::chrono::Duration) -> pco_pack::anyhow::Result<Vec<u8>> {
+            fn write(#data_arg : Vec<Self>, _float_round: u32, _time_round: pco_pack::chrono::Duration) -> pco_pack::anyhow::Result<Vec<u8>> {
                 let mut groups: pco_pack::ahash::HashMap<#group_key_type, Vec<usize>> = Default::default();
                 #group_enum_loop
                 #pco_serde_write_body

@@ -19,7 +19,7 @@ impl StructGen {
         }
         for fi in &self.all_payload() {
             let ident = &fi.ident;
-            fields.push(quote! { #ident: pco_pack::LazyReader::new(rec.#ident.to_vec(), #decimals, #time_round), });
+            fields.push(quote! { #ident: pco_pack::LazyReader::new(rec.#ident.into_vec(), #decimals, #time_round), });
         }
         fields
     }

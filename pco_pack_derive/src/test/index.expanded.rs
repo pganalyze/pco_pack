@@ -198,12 +198,12 @@ const _: () = {
             Ok(Reader {
                 device_id: rec.device_id.clone(),
                 temperature: pco_pack::LazyReader::new(
-                    rec.temperature.to_vec(),
+                    rec.temperature.into_vec(),
                     0u32,
                     Default::default(),
                 ),
                 humidity: pco_pack::LazyReader::new(
-                    rec.humidity.to_vec(),
+                    rec.humidity.into_vec(),
                     0u32,
                     Default::default(),
                 ),
@@ -581,10 +581,10 @@ const _: () = {
                 device_id: self.device_id.clone(),
                 temperature: <pco_pack::LazyReader<
                     i64,
-                >>::new(self.temperature.to_vec(), 0u32, Default::default()),
+                >>::new(self.temperature.into_vec(), 0u32, Default::default()),
                 humidity: <pco_pack::LazyReader<
                     i64,
-                >>::new(self.humidity.to_vec(), 0u32, Default::default()),
+                >>::new(self.humidity.into_vec(), 0u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["temperature", "humidity"];
             let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;

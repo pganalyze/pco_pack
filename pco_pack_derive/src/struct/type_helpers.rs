@@ -42,6 +42,32 @@ pub fn is_datetime_type(ty: &syn::Type) -> bool {
     type_last_segment_matches(ty, "DateTime").unwrap_or(false)
 }
 
+/// Check if the type is a `serde_json::Value` column.
+pub fn is_json_type(ty: &syn::Type) -> bool {
+    type_last_segment_matches(ty, "Value").unwrap_or(false)
+}
+
+/// Check if the type is a JSON column whose payload `write()` may take
+/// instead of deep-clone: bare `Value`, `Option<Value>`, or `Vec<Value>`.
+/// Other shapes (maps, nested wrappers) fall back to cloning.
+pub fn is_json_move_type(ty: &syn::Type) -> bool {
+    if is_json_type(ty) {
+        return true;
+    }
+    if let syn::Type::Path(tp) = ty {
+        if let Some(seg) = tp.path.segments.last() {
+            if matches!(seg.ident.to_string().as_str(), "Option" | "Vec") {
+                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                    if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                        return is_json_type(inner);
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Extract the const generic parameter (RESOLUTION) from a Timeline<N> type.
 /// Returns the literal value as a TokenStream, or `0` if not found.
 pub fn extract_timeline_const_generic(ty: &syn::Type) -> proc_macro2::TokenStream {

@@ -6,30 +6,33 @@ pub(crate) const CHUNK_SIZE: usize = 128;
 /// Format version indicating chunked msgpack arrays.
 pub(crate) const FORMAT_VERSION_CHUNKED: u8 = 1;
 
-fn round_json_value(value: &serde_json::Value, decimals: u32) -> serde_json::Value {
+/// Rounds every float in the tree in place.
+fn round_json_value(value: &mut serde_json::Value, decimals: u32) {
     if decimals == 0 {
-        return value.clone();
+        return;
     }
     let scale = 10i64.pow(decimals) as f64;
     match value {
         serde_json::Value::Number(n) => {
-            if n.as_i64().is_some() && n.as_f64().unwrap_or(0.0).fract().abs() <= f64::EPSILON {
-                return value.clone();
-            }
-            if let Some(f) = n.as_f64() {
-                let rounded = ((f * scale).round()) / scale;
-                serde_json::Value::Number(serde_json::Number::from_f64(rounded).unwrap_or(serde_json::Number::from(0)))
-            } else {
-                value.clone()
+            let integral = n.as_i64().is_some() && n.as_f64().unwrap_or(0.0).fract().abs() <= f64::EPSILON;
+            if !integral {
+                if let Some(f) = n.as_f64() {
+                    let rounded = ((f * scale).round()) / scale;
+                    *n = serde_json::Number::from_f64(rounded).unwrap_or_else(|| serde_json::Number::from(0));
+                }
             }
         }
         serde_json::Value::Object(map) => {
-            serde_json::Value::Object(map.iter().map(|(k, v)| (k.clone(), round_json_value(v, decimals))).collect())
+            for v in map.values_mut() {
+                round_json_value(v, decimals);
+            }
         }
         serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(|v| round_json_value(v, decimals)).collect())
+            for v in arr.iter_mut() {
+                round_json_value(v, decimals);
+            }
         }
-        other => other.clone(),
+        _ => (),
     }
 }
 
@@ -97,13 +100,17 @@ impl super::PcoSerde for serde_json::Value {
     type Reader = JsonValueReader;
 
     fn write(data: Vec<Self>, float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
-        let rounded: Vec<serde_json::Value> =
-            if float_round > 0 { data.into_iter().map(|v| round_json_value(&v, float_round)).collect() } else { data };
+        let mut rounded = data;
+        if float_round > 0 {
+            for v in &mut rounded {
+                round_json_value(v, float_round);
+            }
+        }
         let len = rounded.len();
         let mut raw_buffer = Vec::with_capacity(len * 64);
         raw_buffer.push(FORMAT_VERSION_CHUNKED);
         for chunk in rounded.chunks(CHUNK_SIZE) {
-            rmp_serde::encode::write(&mut raw_buffer, &chunk.to_vec())?;
+            rmp_serde::encode::write(&mut raw_buffer, chunk)?;
         }
         let compressed = zstd::encode_all(raw_buffer.as_slice(), 3)?;
         let mut out = Vec::with_capacity(16 + compressed.len());
@@ -189,10 +196,11 @@ impl super::PcoSerde for serde_json::Value {
                     if index < chunk_end_excl {
                         match Self::Reader::deserialize_chunk(data_start, &mut local_pos) {
                             Some(chunk) => {
-                                reader.cached_chunk = Some(chunk.clone());
+                                let value = chunk.get(index - current_row_offset).cloned();
+                                reader.cached_chunk = Some(chunk);
                                 reader.cached_row_start = current_row_offset;
                                 reader.data_pos = local_pos;
-                                return Ok(chunk.get(index - current_row_offset).cloned());
+                                return Ok(value);
                             }
                             None => break, // Deserialization failed.
                         }

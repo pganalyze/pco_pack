@@ -289,12 +289,12 @@ const _: () = {
                 start_at: rec.start_at,
                 end_at: rec.end_at,
                 collected_at: pco_pack::LazyReader::new(
-                    rec.collected_at.to_vec(),
+                    rec.collected_at.into_vec(),
                     0u32,
                     Default::default(),
                 ),
                 fingerprint: pco_pack::LazyReader::new(
-                    rec.fingerprint.to_vec(),
+                    rec.fingerprint.into_vec(),
                     0u32,
                     Default::default(),
                 ),
@@ -782,10 +782,10 @@ const _: () = {
                 end_at: self.end_at,
                 collected_at: <pco_pack::LazyReader<
                     chrono::DateTime<chrono::Utc>,
-                >>::new(self.collected_at.to_vec(), 0u32, Default::default()),
+                >>::new(self.collected_at.into_vec(), 0u32, Default::default()),
                 fingerprint: <pco_pack::LazyReader<
                     i64,
-                >>::new(self.fingerprint.to_vec(), 0u32, Default::default()),
+                >>::new(self.fingerprint.into_vec(), 0u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["collected_at", "fingerprint"];
             let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;

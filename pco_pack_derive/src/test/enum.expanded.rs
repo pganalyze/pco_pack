@@ -211,19 +211,23 @@ const _: () = {
                 }
             };
             Ok(Reader {
-                id: pco_pack::LazyReader::new(rec.id.to_vec(), 0u32, Default::default()),
+                id: pco_pack::LazyReader::new(
+                    rec.id.into_vec(),
+                    0u32,
+                    Default::default(),
+                ),
                 value: pco_pack::LazyReader::new(
-                    rec.value.to_vec(),
+                    rec.value.into_vec(),
                     0u32,
                     Default::default(),
                 ),
                 label: pco_pack::LazyReader::new(
-                    rec.label.to_vec(),
+                    rec.label.into_vec(),
                     0u32,
                     Default::default(),
                 ),
                 state: pco_pack::LazyReader::new(
-                    rec.state.to_vec(),
+                    rec.state.into_vec(),
                     0u32,
                     Default::default(),
                 ),
@@ -617,16 +621,16 @@ const _: () = {
             let mut reader = Reader {
                 id: <pco_pack::LazyReader<
                     i64,
-                >>::new(self.id.to_vec(), 0u32, Default::default()),
+                >>::new(self.id.into_vec(), 0u32, Default::default()),
                 value: <pco_pack::LazyReader<
                     f64,
-                >>::new(self.value.to_vec(), 0u32, Default::default()),
+                >>::new(self.value.into_vec(), 0u32, Default::default()),
                 label: <pco_pack::LazyReader<
                     String,
-                >>::new(self.label.to_vec(), 0u32, Default::default()),
+                >>::new(self.label.into_vec(), 0u32, Default::default()),
                 state: <pco_pack::LazyReader<
                     State,
-                >>::new(self.state.to_vec(), 0u32, Default::default()),
+                >>::new(self.state.into_vec(), 0u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["id", "value", "label", "state"];
             let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;

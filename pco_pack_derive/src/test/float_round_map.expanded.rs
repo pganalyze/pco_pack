@@ -178,9 +178,13 @@ const _: () = {
                 }
             };
             Ok(Reader {
-                id: pco_pack::LazyReader::new(rec.id.to_vec(), 2u32, Default::default()),
+                id: pco_pack::LazyReader::new(
+                    rec.id.into_vec(),
+                    2u32,
+                    Default::default(),
+                ),
                 metrics: pco_pack::LazyReader::new(
-                    rec.metrics.to_vec(),
+                    rec.metrics.into_vec(),
                     2u32,
                     Default::default(),
                 ),
@@ -491,10 +495,10 @@ const _: () = {
             let mut reader = Reader {
                 id: <pco_pack::LazyReader<
                     i64,
-                >>::new(self.id.to_vec(), 2u32, Default::default()),
+                >>::new(self.id.into_vec(), 2u32, Default::default()),
                 metrics: <pco_pack::LazyReader<
                     HashMap<String, f64>,
-                >>::new(self.metrics.to_vec(), 2u32, Default::default()),
+                >>::new(self.metrics.into_vec(), 2u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["id", "metrics"];
             let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;
@@ -764,9 +768,13 @@ const _: () = {
                 }
             };
             Ok(Reader {
-                id: pco_pack::LazyReader::new(rec.id.to_vec(), 2u32, Default::default()),
+                id: pco_pack::LazyReader::new(
+                    rec.id.into_vec(),
+                    2u32,
+                    Default::default(),
+                ),
                 metrics: pco_pack::LazyReader::new(
-                    rec.metrics.to_vec(),
+                    rec.metrics.into_vec(),
                     2u32,
                     Default::default(),
                 ),
@@ -1080,10 +1088,10 @@ const _: () = {
             let mut reader = Reader {
                 id: <pco_pack::LazyReader<
                     i64,
-                >>::new(self.id.to_vec(), 2u32, Default::default()),
+                >>::new(self.id.into_vec(), 2u32, Default::default()),
                 metrics: <pco_pack::LazyReader<
                     HashMap<String, (f64, i32)>,
-                >>::new(self.metrics.to_vec(), 2u32, Default::default()),
+                >>::new(self.metrics.into_vec(), 2u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["id", "metrics"];
             let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;
@@ -1352,9 +1360,13 @@ const _: () = {
                 }
             };
             Ok(Reader {
-                id: pco_pack::LazyReader::new(rec.id.to_vec(), 2u32, Default::default()),
+                id: pco_pack::LazyReader::new(
+                    rec.id.into_vec(),
+                    2u32,
+                    Default::default(),
+                ),
                 metrics: pco_pack::LazyReader::new(
-                    rec.metrics.to_vec(),
+                    rec.metrics.into_vec(),
                     2u32,
                     Default::default(),
                 ),
@@ -1666,10 +1678,10 @@ const _: () = {
             let mut reader = Reader {
                 id: <pco_pack::LazyReader<
                     i64,
-                >>::new(self.id.to_vec(), 2u32, Default::default()),
+                >>::new(self.id.into_vec(), 2u32, Default::default()),
                 metrics: <pco_pack::LazyReader<
                     Option<HashMap<String, (f32, i32)>>,
-                >>::new(self.metrics.to_vec(), 2u32, Default::default()),
+                >>::new(self.metrics.into_vec(), 2u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["id", "metrics"];
             let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;
@@ -1938,9 +1950,13 @@ const _: () = {
                 }
             };
             Ok(Reader {
-                id: pco_pack::LazyReader::new(rec.id.to_vec(), 2u32, Default::default()),
+                id: pco_pack::LazyReader::new(
+                    rec.id.into_vec(),
+                    2u32,
+                    Default::default(),
+                ),
                 batches: pco_pack::LazyReader::new(
-                    rec.batches.to_vec(),
+                    rec.batches.into_vec(),
                     2u32,
                     Default::default(),
                 ),
@@ -2252,10 +2268,10 @@ const _: () = {
             let mut reader = Reader {
                 id: <pco_pack::LazyReader<
                     i64,
-                >>::new(self.id.to_vec(), 2u32, Default::default()),
+                >>::new(self.id.into_vec(), 2u32, Default::default()),
                 batches: <pco_pack::LazyReader<
                     Vec<HashMap<String, (half::f16, i32)>>,
-                >>::new(self.batches.to_vec(), 2u32, Default::default()),
+                >>::new(self.batches.into_vec(), 2u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["id", "batches"];
             let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;
