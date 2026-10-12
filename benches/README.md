@@ -399,18 +399,32 @@ Real Postgres monitoring datasets sourced from pganalyze.
 
 ### query_explains (237651 rows)
 
-| Metric        | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
-|---------------|----------|-----------------|----------|----------|----------------|----------|
-| Size          | 82.0 MB  | 76.0 MB         | 122.5 MB | 127.1 MB | 123.3 MB       | 110.3 MB |
-| Serialize     | 4.8 s    | 4.1 s           | 5.1 s    | 1.8 s    | 4.8 s          | 2.3 s    |
-| Deserialize   | 7.5 s    | 7.3 s           | 744.9 ms | 623.5 ms | 880.5 ms       | 5.3 s    |
-| Filter 0.55%  | 1.7 s    | 1.7 s           | 18.6 ms  | 619.0 ms | 851.6 ms       | 5.1 s    |
-| Filter 12.48% | 4.5 s    | 4.5 s           | 542.1 ms | 618.9 ms | 848.3 ms       | 4.7 s    |
-| Filter 12.97% | 151.8 ms | 152.6 ms        | 559.7 ms | 620.7 ms | 872.4 ms       | 4.5 s    |
+#### PcoPack scenarios
 
-- PcoPack and msgpack store `serde_json::Value` while the other store a string because they don't support JSON storage directly. This difference explains PcoPack's smaller compressed size and larger serialization time.
-- PcoPack is ~33% smaller than Vortex and serializes in about the same time.
-- PcoPack (lossy) uses `float_round = 2, time_round = 1s` to cut another ~7%. Float rounding removes sub-millisecond precision
+| Metric        | PcoPack (JSON) | PcoPack (JSON lossy) | PcoPack (arena) | PcoPack (arena lossy) |
+|---------------|----------------|----------------------|-----------------|-----------------------|
+| Size          | 82.0 MB        | 76.0 MB              | 61.2 MB         | 59.0 MB               |
+| Serialize     | 4.8 s          | 4.3 s                | 5.9 s           | 5.5 s                 |
+| Deserialize   | 7.6 s          | 7.5 s                | 2.7 s           | 2.7 s                 |
+| Filter 0.55%  | 1.8 s          | 1.8 s                | 763.0 ms        | 747.8 ms              |
+| Filter 12.48% | 4.7 s          | 4.6 s                | 1.2 s           | 1.2 s                 |
+| Filter 12.97% | 159.5 ms       | 157.2 ms             | 56.4 ms         | 56.9 ms               |
+
+#### Other crates
+
+| Metric        | Vortex   | columnar | serde_columnar | msgpack  |
+|---------------|----------|----------|----------------|----------|
+| Size          | 122.5 MB | 127.1 MB | 123.3 MB       | 110.3 MB |
+| Serialize     | 5.4 s    | 1.9 s    | 4.7 s          | 2.2 s    |
+| Deserialize   | 682.9 ms | 636.8 ms | 942.6 ms       | 5.2 s    |
+| Filter 0.55%  | 19.1 ms  | 625.0 ms | 869.3 ms       | 5.3 s    |
+| Filter 12.48% | 548.1 ms | 629.6 ms | 846.6 ms       | 4.8 s    |
+| Filter 12.97% | 603.1 ms | 628.6 ms | 858.2 ms       | 4.7 s    |
+
+- The arena columns replace the `serde_json::Value` tree with a flattened typed arena: `PcoPack (arena)` is exact (`benches/postgres/arena.rs`), `PcoPack (arena lossy)` quantizes floats to two decimals (`benches/postgres/arena_lossy.rs`, `float_round = 2` declared on every struct owning floats). Arena is ~25% smaller than the JSON column with full fidelity; lossy arena shaves ~3% more. Deserialize ~3x faster than the JSON columns, filters 2-3x faster. Serialize stays mirror-bound.
+- Exactness is verified on every row of the capture: the arena rebuilds fingerprint-identical `output_json`; the lossy arena compares modulo float rounding, so the structure, key presence, and number kinds stay guarded.
+- PcoPack (lossy) uses `float_round = 2, time_round = 1s` to cut ~7% off the JSON path. Float rounding removes sub-millisecond precision.
+- columnar and serde_columnar stringify the JSON payload because they don't support `serde_json::Value` directly; msgpack carries the Value tree as msgpack+zstd. This explains their larger sizes and, for msgpack, the faster serialize.
 
 ### query_stats_1min (29970299 rows)
 
