@@ -288,7 +288,7 @@ PcoPack skips deserializing non-matching rows: a 1%-selective filter pays ~15% o
 
 ## Datasets
 
-Schemas map to the most expressive Rust form (closed vocabularies -> enums, sparse flags -> `Option<bool>`, small strings -> `SmolStr`). Codecs round-trip the same values through mirrors where needed (columnar: enum u8, `DateTime` i64, maps `Vec<(K, V)>`; Vortex: utf8 enums, native `vortex.map`).
+Real datasets from public sources.
 
 ### air_quality (823743 rows)
 
@@ -387,27 +387,41 @@ Real Postgres monitoring datasets sourced from pganalyze.
 - Full-fidelity PcoPack beats Vortex ~44%, columnar ~31%, msgpack ~41%. `time_round = 1s` cuts ~17% more
 - Most backends are idle, allowing PcoPack `Timeline` to cut serialization size and time in half
 
+### query_explains (237651 rows)
+
+| Metric        | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
+|---------------|----------|-----------------|----------|----------|----------------|----------|
+| Size          | 82.0 MB  | 76.0 MB         | 122.5 MB | 127.1 MB | 123.3 MB       | 110.3 MB |
+| Serialize     | 11.3 s   | 13.5 s          | 5.2 s    | 1.9 s    | 4.8 s          | 2.7 s    |
+| Deserialize   | 9.8 s    | 9.6 s           | 753.7 ms | 629.7 ms | 1.0 s          | 5.1 s    |
+| Filter 0.55%  | 1.9 s    | 1.8 s           | 19.0 ms  | 624.3 ms | 856.0 ms       | 5.0 s    |
+| Filter 12.48% | 6.4 s    | 6.1 s           | 553.1 ms | 629.7 ms | 884.4 ms       | 4.9 s    |
+| Filter 12.97% | 228.3 ms | 201.2 ms        | 1.1 s    | 635.3 ms | 861.6 ms       | 4.6 s    |
+
+- PcoPack is ~33% smaller than Vortex but is >2x slower at serialization
+- PcoPack (lossy) uses `float_round = 2, time_round = 1s` to cut another ~7%. Float rounding removes sub-millisecond precision
+
 ### query_stats_1min (29970299 rows)
 
 | Metric        | PcoPack  | PcoPack time_round | Vortex   | columnar | serde_columnar | msgpack  |
 |---------------|----------|--------------------|----------|----------|----------------|----------|
-| Size          | 116.5 MB | 116.4 MB           | 130.0 MB | 191.7 MB | 179.4 MB       | 236.2 MB |
-| Serialize     | 4.5 s    | 4.4 s              | 6.6 s    | 4.3 s    | 4.5 s          | 6.2 s    |
-| Deserialize   | 1.8 s    | 1.8 s              | 2.7 s    | 1.6 s    | 3.4 s          | 4.8 s    |
-| Filter 0.31%  | 142.7 ms | 139.7 ms           | 87.9 ms  | 1.4 s    | 3.2 s          | 4.7 s    |
-| Filter 18.19% | 792.8 ms | 772.6 ms           | 1.1 s    | 1.4 s    | 3.3 s          | 4.8 s    |
-| Filter 0.05%  | 32.6 ms  | 32.7 ms            | 19.3 ms  | 1.5 s    | 3.8 s          | 4.7 s    |
+| Size          | 116.5 MB | 116.4 MB           | 129.9 MB | 191.7 MB | 179.4 MB       | 236.2 MB |
+| Serialize     | 4.6 s    | 4.5 s              | 6.3 s    | 4.4 s    | 4.0 s          | 6.2 s    |
+| Deserialize   | 1.8 s    | 1.8 s              | 2.4 s    | 1.5 s    | 3.4 s          | 4.8 s    |
+| Filter 0.31%  | 146.7 ms | 142.9 ms           | 74.3 ms  | 1.5 s    | 3.3 s          | 4.9 s    |
+| Filter 18.19% | 808.8 ms | 789.3 ms           | 1.1 s    | 1.5 s    | 3.1 s          | 4.8 s    |
+| Filter 0.05%  | 33.7 ms  | 33.4 ms            | 17.4 ms  | 1.5 s    | 3.4 s          | 4.8 s    |
 
 ### query_stats_1hour (1041799 rows)
 
 | Metric        | PcoPack  | PcoPack time_round | Vortex   | columnar | serde_columnar | msgpack  |
 |---------------|----------|--------------------|----------|----------|----------------|----------|
 | Size          | 5.9 MB   | 5.9 MB             | 7.1 MB   | 10.0 MB  | 9.1 MB         | 11.6 MB  |
-| Serialize     | 189.0 ms | 175.8 ms           | 272.0 ms | 168.6 ms | 137.4 ms       | 231.3 ms |
-| Deserialize   | 74.3 ms  | 68.3 ms            | 96.4 ms  | 55.4 ms  | 178.1 ms       | 184.9 ms |
-| Filter 0.63%  | 26.0 ms  | 24.4 ms            | 2.7 ms   | 55.9 ms  | 179.1 ms       | 178.6 ms |
-| Filter 58.45% | 51.3 ms  | 49.7 ms            | 74.5 ms  | 59.4 ms  | 111.4 ms       | 179.3 ms |
-| Filter 0.03%  | 1.5 ms   | 1.6 ms             | 15.4 ms  | 59.8 ms  | 109.2 ms       | 178.9 ms |
+| Serialize     | 191.0 ms | 178.3 ms           | 253.5 ms | 169.6 ms | 138.8 ms       | 220.9 ms |
+| Deserialize   | 69.0 ms  | 68.9 ms            | 93.5 ms  | 56.4 ms  | 224.6 ms       | 179.3 ms |
+| Filter 0.63%  | 25.6 ms  | 24.1 ms            | 3.3 ms   | 56.7 ms  | 110.8 ms       | 178.7 ms |
+| Filter 58.45% | 50.7 ms  | 50.9 ms            | 73.5 ms  | 56.8 ms  | 106.5 ms       | 177.4 ms |
+| Filter 0.03%  | 1.5 ms   | 1.5 ms             | 14.4 ms  | 56.2 ms  | 104.6 ms       | 178.0 ms |
 
 - PcoPack is the smallest at both granularities
 - `time_round` is less effective because data is captured once a minute versus backend_snapshots which are captured once every 10 seconds
