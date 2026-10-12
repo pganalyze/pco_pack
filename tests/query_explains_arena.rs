@@ -1,8 +1,9 @@
-//! Schema-table guard for the postgres bench's plan arena (the same exact
-//! roundtrip contract the full capture verifies inside the bench): every
-//! corpus document rebuilds to the `serde_json::Value` it was flattened
-//! from, byte-for-byte `PartialEq` across key presence, numeric kind,
-//! dictionary spellings, and the overflow verbatim blobs.
+//! Schema-table guard for the postgres bench's plan arena (the same
+//! value-exactness contract the full capture verifies inside the bench):
+//! every corpus document rebuilds numerically equal to the tree it was
+//! flattened from, across key presence, dictionary spellings, and the
+//! overflow verbatim blobs. Integer text in a float column rebuilds as a
+//! float ("0" becomes "0.0"); integer columns keep identical integer text.
 //!
 //! The arena lives in the bench binary (harness `false` there), so its
 //! unit tests ride this harness via `#[path]`.
@@ -14,7 +15,7 @@ mod arena;
 #[path = "../benches/postgres/arena_lossy.rs"]
 mod arena_lossy;
 
-use arena::{JsonNum, NodeType, PlanArena};
+use arena::{NodeType, PlanArena};
 use pco_pack::PcoPack;
 use serde_json::{Value, json};
 
@@ -26,8 +27,7 @@ fn roundtrip(doc: &Value) -> Value {
 }
 
 /// Envelope: Plan / Triggers / Query Identifier, plus the PG 16 parallel
-/// shape: `Workers` carries per-worker stats objects verbatim through the
-/// overflow blob (first-cut rule, plan section 8).
+/// shape: `Workers` flatten into typed arena rows and rebuild structurally.
 #[test]
 fn pg16_parallel_hashjoin() {
     let doc = json!([
@@ -170,7 +170,7 @@ fn pg16_parallel_hashjoin() {
         }
     ]);
     let back = roundtrip(&doc);
-    // Workers ride the overflow blob untouched.
+    // Workers came back through their own arena rows, slots in order.
     assert_eq!(back[0]["Workers"], doc[0]["Workers"]);
 }
 
@@ -237,9 +237,9 @@ fn pg17_memoize_cache() {
         }
     ]);
     roundtrip(&doc);
-    // Non-integral floats must keep the Float kind exactly.
+    // Non-integral floats live in the f64 column unchanged.
     let arena = PlanArena::flatten(&doc);
-    assert_eq!(arena.nodes[0].total_cost, JsonNum::Float(12.345));
+    assert_eq!(arena.nodes[0].total_cost, Some(12.345f64));
 }
 
 /// ModifyTable upsert vocabulary plus object-array overflow (`Target Tables`).
@@ -272,21 +272,24 @@ fn modify_table_upsert() {
 }
 
 /// Vocabulary drift never loses a value: unknown dictionary strings and
-/// unknown keys overflow verbatim; kind-mismatched typed keys overflow too;
-/// `false` survives the absent-vs-false distinction.
+/// unknown keys overflow verbatim; out-of-width or negative integers in
+/// unsigned columns overflow too; `false` survives the absent-vs-false
+/// distinction. Overflow entries are merged after the columns, so the
+/// verbatim value wins on rebuild.
 #[test]
 fn vocabulary_drift_overflows_verbatim() {
     let doc = json!([
         {
             "Plan": {
                 "Node Type": "QuantumScan",
-                "Startup Cost": 0,
+                "Startup Cost": 0.0,
                 "Total Cost": 0.0,
                 "Plan Rows": 0,
-                "Plan Width": 0,
+                "Plan Width": 70000,
                 "Parallel Aware": false,
                 "Wiggle Space": 42,
                 "Future Groups": { "whatever": [1, 2, 3] },
+                "Rows Removed by Filter": -3,
                 "Sort Key": [1, 2],
                 "Plans": []
             },
@@ -298,20 +301,117 @@ fn vocabulary_drift_overflows_verbatim() {
     let node = &arena.nodes[0];
     // Unknown node type cannot live in the dictionary.
     assert_eq!(node.node_type, NodeType::Absent);
-    // serde_json tags any JSON float (even an integral one) as a float
-    // number, and JsonNum keeps that kind exactly.
-    assert_eq!(node.startup_cost, JsonNum::Int(0));
-    assert_eq!(node.total_cost, JsonNum::Float(0.0));
+    // Float columns hold floats; width-exceeded integers do not.
+    assert_eq!(node.startup_cost, Some(0.0f64));
+    assert_eq!(node.total_cost, Some(0.0f64));
+    assert_eq!(node.plan_width, None, "u16 overflow leaves the column absent");
     // Bool false is Some(false), not absent.
     assert_eq!(node.parallel_aware, Some(false));
-    // Kind-mismatched and unknown keys all sit in overflow.
+    // Kind-mismatched, out-of-width, and unknown keys all sit in overflow.
     let overflow = node.overflow.as_ref().expect("drift lands in overflow");
     assert_eq!(overflow["Node Type"], json!("QuantumScan"));
     assert_eq!(overflow["Wiggle Space"], json!(42));
+    assert_eq!(overflow["Plan Width"], json!(70000));
+    assert_eq!(overflow["Rows Removed by Filter"], json!(-3));
     assert_eq!(overflow["Future Groups"], json!({"whatever": [1, 2, 3]}));
     assert_eq!(overflow["Sort Key"], json!([1, 2]));
     assert_eq!(overflow["Plans"], json!([]));
     assert_eq!(arena.envelope_overflow.as_ref().unwrap()["Future Envelope"], json!("keep me"));
+}
+
+/// The numeric-kind contract: integer text in a float column rebuilds as a
+/// float, integer columns keep identical integer text.
+#[test]
+fn integer_text_in_float_columns_rebuilds_as_float() {
+    let doc = json!([{
+        "Plan": {
+            "Node Type": "Seq Scan",
+            "Startup Cost": 0,
+            "Total Cost": 5,
+            "Plan Rows": 10,
+            "Plan Width": 4
+        }
+    }]);
+    let back = PlanArena::flatten(&doc).rebuild();
+    assert_eq!(back[0]["Plan"]["Startup Cost"], json!(0.0));
+    assert_eq!(back[0]["Plan"]["Total Cost"], json!(5.0));
+    assert_eq!(back[0]["Plan"]["Plan Rows"], json!(10), "integer columns keep integers");
+    assert_eq!(back[0]["Plan"]["Plan Width"], json!(4));
+}
+
+/// Workers flatten into typed arena rows keyed to their owner node, rebuild
+/// structurally in slot order, and never touch the node overflow blob.
+/// Unknown worker keys overflow on the worker row itself.
+#[test]
+fn workers_flatten_into_typed_rows_and_rebuild_structurally() {
+    let doc = json!([{
+        "Plan": {
+            "Node Type": "Gather",
+            "Startup Cost": 0.0,
+            "Total Cost": 10.0,
+            "Plan Rows": 5,
+            "Plan Width": 8,
+            "Workers Planned": 2,
+            "Workers Launched": 2,
+            "Workers": [
+                { "Worker Number": 0, "Actual Total Time": 1.5, "Actual Rows": 3, "Actual Loops": 1, "I/O Read Time": 0 },
+                { "Worker Number": 1, "Actual Total Time": 2.5, "Shared Hit Blocks": 8, "Sort Method": "quicksort", "Sort Space Used": 1024, "Future Worker Key": true }
+            ],
+            "Plans": [
+                { "Node Type": "Seq Scan", "Relation Name": "t", "Startup Cost": 0.0, "Total Cost": 1.0, "Plan Rows": 1, "Plan Width": 4 }
+            ]
+        }
+    }]);
+    let arena = PlanArena::flatten(&doc);
+    assert!(arena.nodes[0].overflow.is_none(), "flattened Workers never reach the node blob");
+    assert_eq!(arena.workers.len(), 2);
+    assert_eq!(arena.workers[0].parent_idx, 0);
+    assert_eq!(arena.workers[0].slot, 0);
+    assert_eq!(arena.workers[1].slot, 1);
+    assert_eq!(arena.workers[1].shared_hit_blocks, Some(8));
+    let back = arena.rebuild();
+    assert_eq!(back[0]["Plan"]["Workers"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        back[0]["Plan"]["Workers"][0]["I/O Read Time"],
+        json!(0.0),
+        "integer text in a worker float column rebuilds as float"
+    );
+    assert_eq!(back[0]["Plan"]["Workers"][1]["Worker Number"], json!(1));
+    assert_eq!(back[0]["Plan"]["Workers"][1]["Sort Method"], json!("quicksort"));
+    assert_eq!(
+        back[0]["Plan"]["Workers"][1]["Future Worker Key"],
+        json!(true),
+        "unknown worker keys overflow on the worker row"
+    );
+    assert_eq!(back[0]["Plan"]["Plans"].as_array().unwrap().len(), 1);
+}
+
+/// Worker schema guards: an empty array keeps the `"Workers": []` key via
+/// the node overflow, and an entry whose `Worker Number` exceeds the frozen
+/// width overflows the whole array verbatim.
+#[test]
+fn worker_schema_guards_overflow_the_whole_array() {
+    let empty = json!([{
+        "Plan": { "Node Type": "Gather", "Startup Cost": 0.0, "Total Cost": 1.0, "Plan Rows": 1, "Plan Width": 4, "Workers": [] }
+    }]);
+    let arena = PlanArena::flatten(&empty);
+    assert!(arena.workers.is_empty());
+    assert_eq!(arena.nodes[0].overflow.as_ref().unwrap()["Workers"], json!([]));
+    assert_eq!(arena.rebuild(), empty);
+
+    let wide = json!([{
+        "Plan": {
+            "Node Type": "Gather",
+            "Startup Cost": 0.0,
+            "Total Cost": 1.0,
+            "Plan Rows": 1,
+            "Plan Width": 4,
+            "Workers": [{ "Worker Number": 999, "Actual Rows": 5 }]
+        }
+    }]);
+    let arena = PlanArena::flatten(&wide);
+    assert!(arena.workers.is_empty(), "a worker number outside the frozen width overflows the array");
+    assert_eq!(arena.rebuild(), wide);
 }
 
 /// Malformed documents fall back to the raw blob unchanged.
@@ -418,10 +518,10 @@ fn codec_roundtrip_preserves_every_document() {
 
 /// The lossy mirror quantizes floats to two decimals at write time
 /// (float_round lives on every struct owning float columns, so it reaches
-/// the `JsonNum` columns, the node overflow blob, and the envelope `Value`
-/// columns through the codec), while leaving integers, dictionaries,
+/// the node columns, the worker columns, the `Value` columns, and the
+/// overflow blobs through the codec), while leaving integers, dictionaries,
 /// presence, and the overflow structure intact. Before the codec the
-/// rebuild stays exact; the exact mirror keeps the same document byte-exact
+/// rebuild stays exact; the exact mirror keeps the same document value-exact
 /// at every stage.
 #[test]
 fn arena_lossy_rounds_floats_and_keeps_everything_else() {
@@ -457,7 +557,7 @@ fn arena_lossy_rounds_floats_and_keeps_everything_else() {
     assert_eq!(plan["Total Cost"], json!(12.35));
     assert_eq!(plan["I/O Read Time"], json!(0.0));
     assert_eq!(plan["Startup Cost"], json!(0.0), "integral floats keep the float kind");
-    assert_eq!(plan["Workers"][0]["Actual Total Time"], json!(1.24), "floats round inside overflow too");
+    assert_eq!(plan["Workers"][0]["Actual Total Time"], json!(1.24), "floats round in the worker column too");
     assert_eq!(plan["Workers"][0]["Worker Number"], json!(0), "integers stay integers");
     assert_eq!(plan["Plan Rows"], json!(7));
     assert_eq!(plan["Sort Method"], json!("top-N heapsort"));
@@ -493,7 +593,11 @@ fn arena_lossy_codec_roundtrip_keeps_rounded_values() {
     assert_eq!(a[0]["Plan"]["Plan Rows"], json!(3));
     assert_eq!(a[0]["Plan"]["Filter"], json!("(x = 1)"));
     let b = back[1].rebuild();
-    assert_eq!(b[0]["Plan"]["Workers"][0]["I/O Read Time"], json!(44.78), "rounds inside overflow through the codec");
+    assert_eq!(
+        b[0]["Plan"]["Workers"][0]["I/O Read Time"],
+        json!(44.78),
+        "rounds in the worker column through the codec"
+    );
     assert_eq!(b[0]["Plan"]["Workers Planned"], json!(2));
     assert_eq!(b[0]["Plan"]["Plans"][0]["Relation Name"], json!("t"));
 }

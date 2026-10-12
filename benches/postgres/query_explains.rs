@@ -12,10 +12,12 @@
 //! Four PcoPack scenarios run against the same rows, printed as their own
 //! table, then the non-PcoPack crates in a second table: JSON keeps the
 //! `serde_json::Value` tree; arena replaces `output_json` with the flattened
-//! typed arena of `arena.rs` (one row-local `Vec<PlanNode>` per plan, exact
-//! floats); arena lossy rides the lossy mirror of `arena_lossy.rs`. The
-//! full-capture exactness guard for the arena lives in its verify closure;
-//! the schema's own corpus guards sit in `tests/query_explains_arena.rs`.
+//! typed arena of `arena.rs` (one row-local `Vec<PlanNode>` per plan plus
+//! typed `Workers` rows, numerically exact); arena lossy rides the lossy
+//! mirror of `arena_lossy.rs`. Every scenario owns the rows it writes, so
+//! no serialize pass pays a deep input clone. The full-capture exactness
+//! guard for the arena lives in its verify closure; the schema's own corpus
+//! guards sit in `tests/query_explains_arena.rs`.
 
 use chrono::{DateTime, Utc};
 use pco_pack::PcoPack;
@@ -390,8 +392,9 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     let pco_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf.iter()).map(|(q, (_, e))| (q, *e)).collect();
 
-    // Window and slow-plan filter counts fold through the stored rounded
-    // values.
+    let expected: Vec<u64> = rows.iter().map(|r| fingerprint(&r.output_json)).collect();
+    let expected_structure: Vec<u64> = rows.iter().map(|r| fingerprint_structure(&r.output_json)).collect();
+
     let lossy_rows: Vec<QueryExplainLossy> = rows.iter().map(QueryExplainLossy::from).collect();
     let lossy_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_lossy.iter()).map(|(q, (_, e))| (q, *e)).collect();
@@ -400,7 +403,6 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     });
 
     let arena_rows: Vec<QueryExplainArena> = rows.iter().map(QueryExplainArena::from).collect();
-    let expected: Vec<u64> = rows.iter().map(|r| fingerprint(&r.output_json)).collect();
     let pco_arena = common::bench_pco_pack(arena_rows, &pco_filters, move |back| {
         assert_eq!(back.len(), n, "query_explains (arena) row count");
         let mut got: Vec<u64> = back.iter().map(|r| fingerprint(&r.arena.as_ref().map(|a| a.rebuild()))).collect();
@@ -411,7 +413,6 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     });
 
     let arena_lossy_rows: Vec<QueryExplainArenaLossy> = rows.iter().map(QueryExplainArenaLossy::from).collect();
-    let expected_structure: Vec<u64> = rows.iter().map(|r| fingerprint_structure(&r.output_json)).collect();
     let pco_arena_lossy = common::bench_pco_pack(arena_lossy_rows, &lossy_filters, move |back| {
         assert_eq!(back.len(), n, "query_explains (arena lossy) row count");
         let mut got: Vec<u64> =

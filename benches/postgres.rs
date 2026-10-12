@@ -46,7 +46,7 @@ mod postgres {
 /// (no args runs all three).
 fn main() -> anyhow::Result<()> {
     println!("## Postgres\n");
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with('-')).collect();
     let want = |name: &str| args.is_empty() || args.iter().any(|a| a == name);
     if want("backends") {
         postgres::backends::bench()?;
