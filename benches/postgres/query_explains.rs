@@ -5,15 +5,26 @@
 //! src/bin's extractor.
 //!
 //! Every row carries the full EXPLAIN (FORMAT JSON) document, averaging ~9
-//! KB of nested JSON, so the payload is a zstd contest over `output_json`.
-//! Float columns carry millisecond values as decimals.
+//! KB of nested JSON: the payload is one zstd contest over `output_json`.
+//! The float columns carry millisecond values as decimals; the lossy variant
+//! rounds seen_at to whole seconds and the EXPLAIN floats to 2 decimals.
+//!
+//! Four PcoPack scenarios run against the same rows, printed as their own
+//! table, then the non-PcoPack crates in a second table: JSON keeps the
+//! `serde_json::Value` tree; arena replaces `output_json` with the flattened
+//! typed arena of `arena.rs` (one row-local `Vec<PlanNode>` per plan, exact
+//! floats); arena lossy rides the lossy mirror of `arena_lossy.rs`. The
+//! full-capture exactness guard for the arena lives in its verify closure;
+//! the schema's own corpus guards sit in `tests/query_explains_arena.rs`.
 
 use chrono::{DateTime, Utc};
 use pco_pack::PcoPack;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
-use super::common::{self, CodecRowLossy, cell};
+use super::arena;
+use super::arena_lossy;
+use super::common::{self, CodecRowOther, CodecRowPcoPack, cell};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, PcoPack)]
 #[pco_pack(index = [server_id], timestamp = seen_at)]
@@ -103,6 +114,210 @@ impl From<&QueryExplain> for QueryExplainLossy {
     }
 }
 
+/// The arena model: the same table with `output_json` replaced by the
+/// flattened `PlanArena`. Non-JSON columns ride unchanged, so the same
+/// filter queries apply. Building the mirror is the codec input transform
+/// and, like the lossy mirror, happens outside the timed passes.
+#[derive(Clone, Debug, PartialEq, PcoPack)]
+#[pco_pack(index = [server_id], timestamp = seen_at)]
+pub struct QueryExplainArena {
+    pub server_id: i64,
+    pub database_id: i64,
+    pub postgres_role_id: i64,
+    pub query_fingerprint: i64,
+    pub format: i32,
+    pub source: i32,
+    pub error: String,
+    pub seen_at: DateTime<Utc>,
+    pub runtime_ms: f32,
+    pub total_cost: Option<f32>,
+    pub total_shared_blks_hit: Option<i64>,
+    pub total_shared_blks_read: Option<i64>,
+    pub total_shared_blks_written: Option<i64>,
+    pub total_shared_blks_dirtied: Option<i64>,
+    pub total_blk_read_time: Option<f32>,
+    pub total_blk_write_time: Option<f32>,
+    pub plan_node_types: Vec<SmolStr>,
+    pub plan_fingerprint: Option<i64>,
+    pub output_text: Option<String>,
+    pub arena: Option<arena::PlanArena>,
+    pub node_insights: Option<serde_json::Value>,
+}
+
+impl From<&QueryExplain> for QueryExplainArena {
+    fn from(r: &QueryExplain) -> Self {
+        QueryExplainArena {
+            server_id: r.server_id,
+            database_id: r.database_id,
+            postgres_role_id: r.postgres_role_id,
+            query_fingerprint: r.query_fingerprint,
+            format: r.format,
+            source: r.source,
+            error: r.error.clone(),
+            seen_at: r.seen_at,
+            runtime_ms: r.runtime_ms,
+            total_cost: r.total_cost,
+            total_shared_blks_hit: r.total_shared_blks_hit,
+            total_shared_blks_read: r.total_shared_blks_read,
+            total_shared_blks_written: r.total_shared_blks_written,
+            total_shared_blks_dirtied: r.total_shared_blks_dirtied,
+            total_blk_read_time: r.total_blk_read_time,
+            total_blk_write_time: r.total_blk_write_time,
+            plan_node_types: r.plan_node_types.clone(),
+            plan_fingerprint: r.plan_fingerprint,
+            output_text: r.output_text.clone(),
+            arena: r.output_json.as_ref().map(arena::PlanArena::flatten),
+            node_insights: r.node_insights.clone(),
+        }
+    }
+}
+
+/// The arena lossy mirror: the same flattened arena on a row struct with
+/// `time_round = 1 s` and `float_round = 2`, backed by `arena_lossy` where
+/// every struct owning floats declares `float_round = 2` itself. Costs and
+/// times quantize to two decimals; key presence, number kinds, and the
+/// overflow structure stay intact. The verify closure is counts-only (the
+/// rebuilt JSON legitimately differs from the stored floats); the lossy
+/// filter counts fold through the same rounding as the JSON lossy column.
+#[derive(Clone, Debug, PartialEq, PcoPack)]
+#[pco_pack(
+    index = [server_id],
+    timestamp = seen_at,
+    time_round = chrono::Duration::seconds(1),
+    float_round = 2
+)]
+pub struct QueryExplainArenaLossy {
+    pub server_id: i64,
+    pub database_id: i64,
+    pub postgres_role_id: i64,
+    pub query_fingerprint: i64,
+    pub format: i32,
+    pub source: i32,
+    pub error: String,
+    pub seen_at: DateTime<Utc>,
+    pub runtime_ms: f32,
+    pub total_cost: Option<f32>,
+    pub total_shared_blks_hit: Option<i64>,
+    pub total_shared_blks_read: Option<i64>,
+    pub total_shared_blks_written: Option<i64>,
+    pub total_shared_blks_dirtied: Option<i64>,
+    pub total_blk_read_time: Option<f32>,
+    pub total_blk_write_time: Option<f32>,
+    pub plan_node_types: Vec<SmolStr>,
+    pub plan_fingerprint: Option<i64>,
+    pub output_text: Option<String>,
+    pub arena: Option<arena_lossy::PlanArena>,
+    pub node_insights: Option<serde_json::Value>,
+}
+
+impl From<&QueryExplain> for QueryExplainArenaLossy {
+    fn from(r: &QueryExplain) -> Self {
+        QueryExplainArenaLossy {
+            server_id: r.server_id,
+            database_id: r.database_id,
+            postgres_role_id: r.postgres_role_id,
+            query_fingerprint: r.query_fingerprint,
+            format: r.format,
+            source: r.source,
+            error: r.error.clone(),
+            seen_at: r.seen_at,
+            runtime_ms: r.runtime_ms,
+            total_cost: r.total_cost,
+            total_shared_blks_hit: r.total_shared_blks_hit,
+            total_shared_blks_read: r.total_shared_blks_read,
+            total_shared_blks_written: r.total_shared_blks_written,
+            total_shared_blks_dirtied: r.total_shared_blks_dirtied,
+            total_blk_read_time: r.total_blk_read_time,
+            total_blk_write_time: r.total_blk_write_time,
+            plan_node_types: r.plan_node_types.clone(),
+            plan_fingerprint: r.plan_fingerprint,
+            output_text: r.output_text.clone(),
+            arena: r.output_json.as_ref().map(arena_lossy::PlanArena::flatten),
+            node_insights: r.node_insights.clone(),
+        }
+    }
+}
+
+/// FNV-1a over a `Value` rendered with `PartialEq` semantics: numbers fold
+/// to their f64 bits (so `Int(127)` and `Float(127.0)` fingerprint alike,
+/// as the codec roundtrip allows), map keys iterate sorted. The verify
+/// closure fingerprints every row's rebuild and every stored `output_json`,
+/// then compares the sorted vectors: full-capture exactness, permutation-
+/// invariant because indexed writes return rows index-grouped.
+fn fingerprint(o: &Option<serde_json::Value>) -> u64 {
+    fn step(h: u64, bytes: &[u8]) -> u64 {
+        let mut h = h;
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x1000_0000_01b3);
+        }
+        h
+    }
+    fn walk(v: &serde_json::Value, h: u64) -> u64 {
+        match v {
+            serde_json::Value::Null => step(h, b"n"),
+            serde_json::Value::Bool(b) => step(h, if *b { b"t" } else { b"f" }),
+            serde_json::Value::Number(n) => step(h, &n.as_f64().unwrap_or(0.0).to_ne_bytes()),
+            serde_json::Value::String(s) => step(step(h, b"s"), s.as_bytes()),
+            serde_json::Value::Array(a) => {
+                let mut h = step(h, b"[");
+                for e in a {
+                    h = walk(e, h);
+                }
+                step(h, b"]")
+            }
+            serde_json::Value::Object(o) => {
+                let mut h = step(h, b"{");
+                for (k, e) in o {
+                    h = step(step(h, k.as_bytes()), b":");
+                    h = walk(e, h);
+                }
+                step(h, b"}")
+            }
+        }
+    }
+    walk(o.as_ref().unwrap_or(&serde_json::Value::Null), 0xcbf2_9ce4_8422_2325)
+}
+
+/// Like `fingerprint` but with every number folded to one opaque token:
+/// the lossy arena rebuilds the stored JSON modulo float rounding, so the
+/// full-capture guard compares structure (keys, presence, strings, tree
+/// shape, integer-vs-float identity untouched) instead of exact numbers.
+fn fingerprint_structure(o: &Option<serde_json::Value>) -> u64 {
+    fn step(h: u64, bytes: &[u8]) -> u64 {
+        let mut h = h;
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x1000_0000_01b3);
+        }
+        h
+    }
+    fn walk(v: &serde_json::Value, h: u64) -> u64 {
+        match v {
+            serde_json::Value::Null => step(h, b"n"),
+            serde_json::Value::Bool(b) => step(h, if *b { b"t" } else { b"f" }),
+            serde_json::Value::Number(_) => step(h, b"N"),
+            serde_json::Value::String(s) => step(step(h, b"s"), s.as_bytes()),
+            serde_json::Value::Array(a) => {
+                let mut h = step(h, b"[");
+                for e in a {
+                    h = walk(e, h);
+                }
+                step(h, b"]")
+            }
+            serde_json::Value::Object(o) => {
+                let mut h = step(h, b"{");
+                for (k, e) in o {
+                    h = step(step(h, k.as_bytes()), b":");
+                    h = walk(e, h);
+                }
+                step(h, b"}")
+            }
+        }
+    }
+    walk(o.as_ref().unwrap_or(&serde_json::Value::Null), 0xcbf2_9ce4_8422_2325)
+}
+
 /// Filter keys: last-1h window on seen_at; plans that ran at least 10 s
 /// (the capture's slow tail); the first server seen in the capture.
 #[derive(Clone, Copy)]
@@ -184,6 +399,32 @@ fn bench_explains(rows: Vec<QueryExplain>) {
         assert_eq!(back.len(), n, "query_explains (lossy) row count")
     });
 
+    let arena_rows: Vec<QueryExplainArena> = rows.iter().map(QueryExplainArena::from).collect();
+    let expected: Vec<u64> = rows.iter().map(|r| fingerprint(&r.output_json)).collect();
+    let pco_arena = common::bench_pco_pack(arena_rows, &pco_filters, move |back| {
+        assert_eq!(back.len(), n, "query_explains (arena) row count");
+        let mut got: Vec<u64> = back.iter().map(|r| fingerprint(&r.arena.as_ref().map(|a| a.rebuild()))).collect();
+        let mut exp = expected.clone();
+        got.sort_unstable();
+        exp.sort_unstable();
+        assert_eq!(got, exp, "query_explains (arena): rebuilt output_json must match the stored JSON (as a multiset)");
+    });
+
+    let arena_lossy_rows: Vec<QueryExplainArenaLossy> = rows.iter().map(QueryExplainArenaLossy::from).collect();
+    let expected_structure: Vec<u64> = rows.iter().map(|r| fingerprint_structure(&r.output_json)).collect();
+    let pco_arena_lossy = common::bench_pco_pack(arena_lossy_rows, &lossy_filters, move |back| {
+        assert_eq!(back.len(), n, "query_explains (arena lossy) row count");
+        let mut got: Vec<u64> =
+            back.iter().map(|r| fingerprint_structure(&r.arena.as_ref().map(|a| a.rebuild()))).collect();
+        let mut exp = expected_structure.clone();
+        got.sort_unstable();
+        exp.sort_unstable();
+        assert_eq!(
+            got, exp,
+            "query_explains (arena lossy): rebuilt output_json must match the stored JSON structure (as a multiset)"
+        );
+    });
+
     let col_rows: Vec<QueryExplainCol> = rows.iter().map(QueryExplainCol::from).collect();
     let col = common::bench_columnar(
         n,
@@ -239,12 +480,20 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     let pco = common::bench_pco_pack(rows, &pco_filters, |back| assert_eq!(back.len(), n, "query_explains row count"));
 
     let metrics = ["Size", "Serialize", "Deserialize"];
-    let mut out: Vec<CodecRowLossy> = metrics
+    let mut pco_out: Vec<CodecRowPcoPack> = metrics
         .iter()
-        .map(|m| CodecRowLossy {
+        .map(|m| CodecRowPcoPack {
             metric: m.to_string(),
-            pco_pack: cell(&pco, m, None),
-            pco_pack_lossy: cell(&pco_lossy, m, None),
+            json: cell(&pco, m, None),
+            json_lossy: cell(&pco_lossy, m, None),
+            arena: cell(&pco_arena, m, None),
+            arena_lossy: cell(&pco_arena_lossy, m, None),
+        })
+        .collect();
+    let mut other_out: Vec<CodecRowOther> = metrics
+        .iter()
+        .map(|m| CodecRowOther {
+            metric: m.to_string(),
             vortex: cell(&vx, m, None),
             columnar: cell(&col, m, None),
             serde_columnar: cell(&sc, m, None),
@@ -252,17 +501,26 @@ fn bench_explains(rows: Vec<QueryExplain>) {
         })
         .collect();
     for (i, label) in label_refs.iter().enumerate() {
-        out.push(CodecRowLossy {
+        pco_out.push(CodecRowPcoPack {
             metric: label.to_string(),
-            pco_pack: cell(&pco, "Filter", Some(i)),
-            pco_pack_lossy: cell(&pco_lossy, "Filter", Some(i)),
+            json: cell(&pco, "Filter", Some(i)),
+            json_lossy: cell(&pco_lossy, "Filter", Some(i)),
+            arena: cell(&pco_arena, "Filter", Some(i)),
+            arena_lossy: cell(&pco_arena_lossy, "Filter", Some(i)),
+        });
+        other_out.push(CodecRowOther {
+            metric: label.to_string(),
             vortex: cell(&vx, "Filter", Some(i)),
             columnar: cell(&col, "Filter", Some(i)),
             serde_columnar: cell(&sc, "Filter", Some(i)),
             msgpack: cell(&mp, "Filter", Some(i)),
         });
     }
-    println!("{}", markdown_tables::as_table(&out));
+    println!("#### PcoPack scenarios\n");
+    println!("{}", markdown_tables::as_table(&pco_out));
+    println!();
+    println!("#### Other crates\n");
+    println!("{}", markdown_tables::as_table(&other_out));
     println!();
 }
 
