@@ -201,11 +201,10 @@ pub fn bench() {
         keys.iter().map(|(disc, _)| serde_json::json!({ "work_type": disc })).collect();
     let pco_filters: Vec<(&serde_json::Value, usize)> = queries.iter().zip(exps.iter()).map(|(q, e)| (q, *e)).collect();
 
-    let pco = common::bench_pco_pack(&data, &pco_filters, |back| verify(&data, back));
+    let pco = common::bench_pco_pack(data.to_vec(), &pco_filters, |back| verify(&data, back));
 
     let dataf: Vec<WorkF> = data.iter().map(WorkF::from).collect();
-    let pcof = common::bench_pco_pack(&dataf, &pco_filters, |back| verify_lossy(&data, back));
-    drop(dataf);
+    let pcof = common::bench_pco_pack(dataf, &pco_filters, |back| verify_lossy(&data, back));
 
     let key_filters: Vec<((u8, &str), usize)> = keys.iter().zip(exps.iter()).map(|(k, e)| (*k, *e)).collect();
 

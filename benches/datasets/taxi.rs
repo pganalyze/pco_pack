@@ -83,11 +83,10 @@ pub fn bench() {
         us_ranges.iter().map(|(a, b)| serde_json::json!({ "pickup_datetime": { "start": a, "end": b } })).collect();
     let pco_filters: Vec<(&serde_json::Value, usize)> = queries.iter().zip(exp.iter()).map(|(q, e)| (q, *e)).collect();
 
-    let pco = common::bench_pco_pack(&data, &pco_filters, |back| verify_identity(&data, back));
+    let pco = common::bench_pco_pack(data.to_vec(), &pco_filters, |back| verify_identity(&data, back));
 
     let dataf: Vec<TripF> = data.iter().map(TripF::from).collect();
-    let pcof = common::bench_pco_pack(&dataf, &pco_filters, |back| verify_lossy(&data, back));
-    drop(dataf);
+    let pcof = common::bench_pco_pack(dataf, &pco_filters, |back| verify_lossy(&data, back));
 
     let us_filters: Vec<((i64, i64), usize)> = us_ranges.iter().zip(exp.iter()).map(|(r, e)| (*r, *e)).collect();
 

@@ -99,19 +99,18 @@ pub fn bench() {
     let pcof_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(exp_pcof.iter()).map(|(q, e)| (q, *e)).collect();
 
-    let pco = common::bench_pco_pack(&data, &pco_filters, |back| {
+    let pco = common::bench_pco_pack(data.to_vec(), &pco_filters, |back| {
         verify(data.iter().map(|r| r.floored()).collect(), back);
     });
 
     let dataf: Vec<AqF> = data.iter().map(AqF::from).collect();
-    let pcof = common::bench_pco_pack(&dataf, &pcof_filters, |back| {
+    let pcof = common::bench_pco_pack(dataf, &pcof_filters, |back| {
         let mut a: Vec<AqF> = data.iter().map(AqF::rounded).collect();
         let mut b = back.to_vec();
         a.sort_by_key(|r| r.kafka_offset);
         b.sort_by_key(|r| r.kafka_offset);
         assert_eq!(a, b, "air_quality lossy roundtrip mismatch");
     });
-    drop(dataf);
 
     // Mirrors store ns, msgpack stores exact instants: one (i64, i64) ns
     // range serves all four codecs.
