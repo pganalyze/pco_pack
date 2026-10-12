@@ -306,12 +306,12 @@ const _: () = {
                 start_at: rec.start_at,
                 end_at: rec.end_at,
                 collected_at: pco_pack::LazyReader::new(
-                    rec.collected_at.to_vec(),
+                    rec.collected_at.into_vec(),
                     0u32,
                     Default::default(),
                 ),
                 value: pco_pack::LazyReader::new(
-                    rec.value.to_vec(),
+                    rec.value.into_vec(),
                     0u32,
                     Default::default(),
                 ),
@@ -768,10 +768,10 @@ const _: () = {
                 end_at: self.end_at,
                 collected_at: <pco_pack::LazyReader<
                     Timeline<11_000_000>,
-                >>::new(self.collected_at.to_vec(), 0u32, Default::default()),
+                >>::new(self.collected_at.into_vec(), 0u32, Default::default()),
                 value: <pco_pack::LazyReader<
                     f64,
-                >>::new(self.value.to_vec(), 0u32, Default::default()),
+                >>::new(self.value.into_vec(), 0u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["collected_at", "value"];
             let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;

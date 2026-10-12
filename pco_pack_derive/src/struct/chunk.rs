@@ -24,7 +24,7 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
         .map(|fi| {
             let ident = &fi.ident;
             let ty = &fi.ty;
-            quote! { #ident: <pco_pack::LazyReader<#ty>>::new(self.#ident.to_vec(), #decimals, #time_round), }
+            quote! { #ident: <pco_pack::LazyReader<#ty>>::new(self.#ident.into_vec(), #decimals, #time_round), }
         })
         .collect();
     let bounds_copies = if has_timestamp {
