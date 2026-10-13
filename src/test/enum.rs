@@ -323,6 +323,29 @@ fn enum_non_contiguous_filter_multiple_tuple_variants() {
     assert_eq!(result, vec![Priority::Medium(10_i32), Priority::Medium(20_i32), Priority::Medium(30_i32)]);
 }
 
+#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+struct VecEvent {
+    field: Vec<Event>,
+}
+
+/// A zero-element tag column writes a zero-chunk pco block; the reader must
+/// consume it so the variant columns after it decode.
+#[test]
+fn vec_event_all_empty_roundtrip() {
+    let data: Vec<VecEvent> = vec![VecEvent { field: vec![] }, VecEvent { field: vec![] }];
+    let bytes = VecEvent::serialize(data.clone()).unwrap();
+    let result = VecEvent::deserialize(&bytes).unwrap();
+    assert_eq!(data, result);
+}
+
+#[test]
+fn vec_event_empty_tail_roundtrip() {
+    let data: Vec<VecEvent> = vec![VecEvent { field: vec![Event::Resize] }, VecEvent { field: vec![] }];
+    let bytes = VecEvent::serialize(data.clone()).unwrap();
+    let result = VecEvent::deserialize(&bytes).unwrap();
+    assert_eq!(data, result);
+}
+
 #[test]
 fn enum_filter_inclusion_non_contiguous() {
     let data: Vec<Priority> = vec![

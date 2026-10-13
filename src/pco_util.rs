@@ -65,7 +65,8 @@ pub(crate) fn decompress_as<T: CoercibleNumber + Number>(src: &mut Cursor<&[u8]>
     // Detect the actual stored number type
     let actual_type = match file_decompressor.peek_number_type_or_termination(next_remainder)? {
         Some(t) => t,
-        None => return Ok(Vec::new()),
+        // An empty file still occupies bytes; advance the cursor to keep it up to date.
+        None => return decompress::<T>(src),
     };
     // Fast path: if stored type matches target type, decompress directly without per-value coercion.
     if actual_type == NumberType::new::<T>() {

@@ -52,6 +52,30 @@ fn tuple_4_roundtrip() {
     assert_eq!(data, result);
 }
 
+#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+struct VecTupleNumStr {
+    field: Vec<(u32, String)>,
+}
+
+/// A zero-element tuple head is a zero-chunk pco block that still occupies
+/// bytes; the reader must consume it so the string column after it decodes.
+#[test]
+fn vec_tuple_num_str_all_empty_roundtrip() {
+    let data: Vec<VecTupleNumStr> = vec![VecTupleNumStr { field: vec![] }, VecTupleNumStr { field: vec![] }];
+    let bytes = VecTupleNumStr::serialize(data.clone()).unwrap();
+    let result = VecTupleNumStr::deserialize(&bytes).unwrap();
+    assert_eq!(data, result);
+}
+
+#[test]
+fn vec_tuple_num_str_empty_tail_roundtrip() {
+    let data: Vec<VecTupleNumStr> =
+        vec![VecTupleNumStr { field: vec![(1, "a".into())] }, VecTupleNumStr { field: vec![] }];
+    let bytes = VecTupleNumStr::serialize(data.clone()).unwrap();
+    let result = VecTupleNumStr::deserialize(&bytes).unwrap();
+    assert_eq!(data, result);
+}
+
 #[test]
 fn tuple_add_field_at_end() {
     #[derive(Debug, Clone, PartialEq, Default, PcoPack)]

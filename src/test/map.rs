@@ -149,6 +149,23 @@ fn empty_hashmap_column() {
     assert!(result.is_empty());
 }
 
+#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+struct VecBTreeMapStringU64 {
+    field: Vec<BTreeMap<String, u64>>,
+}
+
+/// A flattened column of zero maps writes a zero-chunk counts block. The
+/// reader must consume it so the keys and values blocks after it stay
+/// framed.
+#[test]
+fn vec_btreemap_string_keys_all_empty_roundtrip() {
+    let data: Vec<VecBTreeMapStringU64> =
+        vec![VecBTreeMapStringU64 { field: vec![] }, VecBTreeMapStringU64 { field: vec![] }];
+    let bytes = VecBTreeMapStringU64::serialize(data.clone()).unwrap();
+    let result = VecBTreeMapStringU64::deserialize(&bytes).unwrap();
+    assert_eq!(data, result);
+}
+
 #[test]
 fn btreemap_to_hashmap_roundtrip() {
     let original: Vec<BTreeMapI32U64> = vec![
