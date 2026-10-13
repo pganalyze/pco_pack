@@ -61,7 +61,11 @@ where
         src: &mut Cursor<&[u8]>, float_round: u32, time_round: chrono::Duration,
     ) -> anyhow::Result<Self::VecReader> {
         let lengths: Vec<u32> = pco_util::decompress(src)?;
-        let inner_reader = T::read(src, float_round, time_round)?;
+        let inner_reader = if (src.position() as usize) < src.get_ref().len() {
+            T::read(src, float_round, time_round)?
+        } else {
+            T::Reader::default()
+        };
         Ok(VecNumberReader { lengths: lengths.into(), length_idx: 0, cached_offset: 0, inner_reader })
     }
 

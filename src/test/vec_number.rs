@@ -11,6 +11,17 @@ struct VecF64 {
     values: Vec<f64>,
 }
 
+#[derive(PcoPack, Debug, PartialEq, Clone)]
+struct NestedRow {
+    id: u32,
+    label: String,
+}
+
+#[derive(PcoPack, Debug, PartialEq, Clone)]
+struct VecNestedRow {
+    items: Vec<NestedRow>,
+}
+
 #[test]
 fn vec_i32_roundtrip() {
     let data: Vec<Vec<i32>> = vec![vec![1, 2, 3], vec![], vec![42], vec![-1, 0, 1, 2]];
@@ -133,4 +144,25 @@ fn filter_vec_i32_empty_rows_handled() {
 
     let result = VecI32::filter_bytes(&bytes, serde_json::json!({"values": 100}), &[]).unwrap();
     assert!(result.is_empty());
+}
+
+/// A derived struct column writes nothing past its lengths block when every
+/// row holds an empty vec. Decoding such a chunk must yield empty rows.
+#[test]
+fn vec_of_nested_rows_all_empty_decodes_as_empty() {
+    let data: Vec<VecNestedRow> = vec![VecNestedRow { items: vec![] }, VecNestedRow { items: vec![] }];
+    let bytes = VecNestedRow::serialize(data.clone()).unwrap();
+    let result = VecNestedRow::deserialize(&bytes).unwrap();
+    assert_eq!(data, result);
+}
+
+/// The inner stream exists whenever any row is nonempty; the reader must
+/// still consume it when trailing rows are empty.
+#[test]
+fn vec_of_nested_rows_empty_tail_still_decodes() {
+    let data: Vec<VecNestedRow> =
+        vec![VecNestedRow { items: vec![NestedRow { id: 1, label: "a".into() }] }, VecNestedRow { items: vec![] }];
+    let bytes = VecNestedRow::serialize(data.clone()).unwrap();
+    let result = VecNestedRow::deserialize(&bytes).unwrap();
+    assert_eq!(data, result);
 }
