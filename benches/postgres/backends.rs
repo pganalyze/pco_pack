@@ -2,14 +2,14 @@
 //! the capture with the production backfill's keep rule. Mirrors the source
 //! table exactly (field order/names/types) so the chunk layout matches the
 //! backfill schema: index [server_id, granularity], timestamp collected_at.
-//! No rounding knob (full-fidelity baseline); the time_round variant persists
-//! with `time_round = 1 s`, since tick jitter carries no signal.
+//! Full-fidelity baseline; the time_round variant persists with
+//! `time_round = 1 s`, since tick jitter carries no signal.
 //!
-//! This is the source that adds the `PcoPack Timeline` column, the shape
-//! from `benches/timeline.rs`: snapshots whose non-timestamp payload is
-//! unchanged between ticks collapse into one row whose `Timeline<0>` holds
-//! every tick they were observed at, a lossless fold at exact us. Most
-//! backends are idle, so the fold halves both size and encode time.
+//! Adds the `PcoPack Timeline` column, the shape from `benches/timeline.rs`:
+//! snapshots whose non-timestamp payload is unchanged between ticks collapse
+//! into one row whose `Timeline<0>` holds every tick observed at, a lossless
+//! fold at exact us. Most backends are idle, so the fold halves both size
+//! and encode time.
 
 use chrono::{DateTime, Utc};
 use pco_pack::{PcoPack, Timeline};
@@ -40,9 +40,9 @@ pub struct BackendSnapshot {
     pub client_addr: SmolStr,
 }
 
-/// The TimeRound model (see `query_stats::QueryStatTimeRound`): backend
-/// snapshots persist with `time_round = 1 s`. Rounding the us timestamps
-/// shrinks the timestamp columns. This is the `PcoPack time_round` column.
+/// The TimeRound model (see `query_stats::QueryStatTimeRound`): this is the
+/// `PcoPack time_round` column. Rounding the us timestamps shrinks the
+/// timestamp columns.
 #[derive(Clone, Debug, Default, PartialEq, PcoPack)]
 #[pco_pack(
     index = [server_id, granularity],
@@ -134,10 +134,9 @@ impl From<&BackendSnapshot> for BackendSnapshotKey {
     }
 }
 
-/// The deduped shape (see `benches/timeline.rs`'s `TimelineRecord`): one
-/// row per distinct backend state, every tick it was observed at folded into
-/// an exact-us `Timeline` (lossless; bucketing would lie about the
-/// collection time). Same index layout as the source schema.
+/// The deduped shape (see `benches/timeline.rs`'s `TimelineRecord`): ticks
+/// folded into an exact-us `Timeline`; bucketing would lie about the
+/// collection time. Same index layout as the source schema.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, PcoPack)]
 #[pco_pack(index = [server_id, granularity], timestamp = collected_at)]
 pub struct BackendSnapshotTimeline {
@@ -159,8 +158,6 @@ pub struct BackendSnapshotTimeline {
     pub client_addr: SmolStr,
 }
 
-/// The deduped snapshot row's payload columns (everything the per-tick row
-/// carries besides the timestamps it was observed at).
 impl From<(&BackendSnapshotKey, &Timeline<0>)> for BackendSnapshotTimeline {
     fn from((k, seen_at): (&BackendSnapshotKey, &Timeline<0>)) -> Self {
         BackendSnapshotTimeline {
@@ -203,8 +200,8 @@ impl Bk {
         }
     }
 
-    /// Same filter over the `time_round = 1 s` value the TimeRound write
-    /// stores (only the window filter touches timestamps).
+    /// Same filter over the stored `time_round` values; only the window
+    /// filter touches timestamps.
     fn matches_time_round(&self, r: &BackendSnapshot) -> bool {
         match self {
             Bk::Time(a, b) => {
@@ -216,7 +213,7 @@ impl Bk {
     }
 
     /// Same filter over a timeline-deduped row: the window matches iff any
-    /// of the row's ticks falls in it (range overlap, inclusive).
+    /// tick falls in it (inclusive).
     fn matches_timeline(&self, r: &BackendSnapshotTimeline) -> bool {
         match self {
             Bk::Time(a, b) => r.collected_at.overlaps(*a, *b),
@@ -258,8 +255,7 @@ fn bench_backends(rows: &[BackendSnapshot]) {
         assert_eq!(back.len(), rows.len(), "backend_snapshots row count")
     });
 
-    // The time_round = 1 s write stores rounded collected_at values, so the
-    // window filter's expected count is computed over those stored values.
+    // Counts fold over the rounded collected_at values the write stores.
     let time_round_rows: Vec<BackendSnapshotTimeRound> = rows.iter().map(BackendSnapshotTimeRound::from).collect();
     let kf_time_round: Vec<(Bk, usize)> =
         keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches_time_round(r)).count())).collect();
@@ -322,11 +318,9 @@ fn bench_backends(rows: &[BackendSnapshot]) {
 
     let mp = common::bench_msgpack(rows, &kf, |r: &BackendSnapshot, k: &Bk| k.matches(r));
 
-    // PcoPack Timeline: fold every distinct payload into one row carrying the
-    // union Timeline of the ticks it was observed at. Timeline filters switch
-    // to range-overlap semantics and verify counts over the deduped rows
-    // themselves (the same queries cover different fractions of the two row
-    // sets).
+    // Timeline filters use range-overlap semantics and verify counts over
+    // the deduped rows themselves: the same queries cover different
+    // fractions of the two row sets.
     let mut groups: HashMap<BackendSnapshotKey, Timeline<0>> = HashMap::new();
     for r in rows {
         let ts = r.collected_at.timestamp_micros();
@@ -376,9 +370,9 @@ fn bench_backends(rows: &[BackendSnapshot]) {
     println!("({nd} of {n} ticks survive the Timeline fold)\n");
 }
 
-/// columnar/vortex mirror: timestamps to i64 us (exact here; pg timestamps
-/// are us), strings to String (columnar has no chrono/SmolStr impls). The
-/// same mirrors feed Vortex (serde_arrow): numeric range filters, no unsound
+/// columnar/vortex mirror: timestamps to i64 us (exact; pg timestamps are
+/// us), strings to String (columnar has no chrono/SmolStr impls). Same
+/// mirror feeds Vortex via serde_arrow: numeric range filters, no unsound
 /// RFC3339 columns.
 #[derive(Clone, Debug, PartialEq, columnar::Columnar, Serialize, Deserialize)]
 pub struct BackendSnapshotCol {

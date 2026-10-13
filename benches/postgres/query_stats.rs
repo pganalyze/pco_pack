@@ -1,10 +1,8 @@
 //! query_stats: the collector's query statistics, 31.0M rows across two
-//! granularities (the capture's last 14 days; 1min + 1hour). Mirrors the
-//! source table exactly (field order/names/types) so the chunk layout matches
-//! how the table is stored: index [database_id, granularity], timestamp
-//! collected_at. No rounding knob (full-fidelity baseline); the time_round
-//! variant is pco_store's persisted shape, rounded to whole seconds with
-//! `float_round = 2` on the aggregate f64s.
+//! granularities (1min + 1hour). Mirrors the source table exactly (field
+//! order/names/types) so the chunk layout matches how the table is stored:
+//! index [database_id, granularity], timestamp collected_at. Full-fidelity
+//! baseline; `QueryStatTimeRound` is the rounded persisted shape.
 
 use chrono::{DateTime, Utc};
 use pco_pack::PcoPack;
@@ -32,10 +30,9 @@ pub struct QueryStat {
     pub temp_blks_written: i64,
 }
 
-/// The TimeRound model: pco_store persists this table rounded
-/// (`float_round = 2` on the aggregate f64s, `time_round = 1 s` on the
-/// timestamps), so stored rows differ from the capture by rounding only.
-/// This is the `PcoPack time_round` column.
+/// The TimeRound model: pco_store persists this table rounded,
+/// `time_round = 1 s` on the timestamps and `float_round = 2` on the
+/// aggregate f64s. This is the `PcoPack time_round` column.
 #[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(
     timestamp = collected_at,
@@ -83,9 +80,9 @@ impl From<&QueryStat> for QueryStatTimeRound {
     }
 }
 
-/// Filter keys: the real-world queries, shared by every codec runner.
-/// Last-1h window on collected_at; toplevel with calls >= 10; the first
-/// database seen in the capture.
+/// Filter keys, shared by every codec runner: last-1h window on
+/// collected_at; toplevel with calls >= 10; the first database in the
+/// capture.
 #[derive(Clone, Copy)]
 enum Sk {
     Time(i64, i64),
@@ -103,9 +100,8 @@ impl Sk {
         }
     }
 
-    /// Same filter over the `time_round = 1 s` value the TimeRound write
-    /// stores (only the window filter touches timestamps; `float_round`
-    /// rounds no filter column).
+    /// Same filter over the stored `time_round` values; only the window
+    /// filter touches timestamps (`float_round` rounds no filter column).
     fn matches_time_round(&self, r: &QueryStat) -> bool {
         match self {
             Sk::Time(a, b) => {
@@ -164,9 +160,8 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
     let pco =
         common::bench_pco_pack(&rows, &pco_filters, |back| assert_eq!(back.len(), rows.len(), "{name} row count"));
 
-    // The TimeRound write rounds collected_at to whole seconds, so the window
-    // filter's expected count folds collected_at through the same rounding;
-    // float_round rounds no filter column.
+    // Counts fold collected_at through the same whole-second rounding the
+    // write stores.
     let time_round_rows: Vec<QueryStatTimeRound> = rows.iter().map(QueryStatTimeRound::from).collect();
     let kf_time_round: Vec<(Sk, usize)> =
         keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches_time_round(r)).count())).collect();
@@ -257,9 +252,9 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
     println!();
 }
 
-/// columnar/vortex mirror: timestamps to i64 us (exact here; pg timestamps
-/// are us), strings to String (columnar has no chrono/SmolStr impls). The
-/// same mirrors feed Vortex (serde_arrow): numeric range filters, no unsound
+/// columnar/vortex mirror: timestamps to i64 us (exact; pg timestamps are
+/// us), strings to String (columnar has no chrono/SmolStr impls). Same
+/// mirror feeds Vortex via serde_arrow: numeric range filters, no unsound
 /// RFC3339 columns.
 #[derive(Clone, Debug, PartialEq, columnar::Columnar, Serialize, Deserialize)]
 pub struct QueryStatCol {

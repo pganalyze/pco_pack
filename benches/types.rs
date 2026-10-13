@@ -55,8 +55,7 @@ enum Event {
     Resize,
 }
 
-// Row shapes: Vortex fills every row it can express; pco appears only where
-// it compresses the data.
+// Row shapes: Vortex fills every row it can express.
 
 macro_rules! row3 {
     ($rows:expr, $label:expr, $n:expr, $gen:expr, $pco:expr) => {{
@@ -101,10 +100,9 @@ macro_rules! row3_nopco {
     }};
 }
 
-/// Slim row over one dataset. The default Vortex cell struct-promotes maps
-/// (serde_arrow default tracing); the `native` form stores them as
-/// `vortex.map`. Rows declare their layout, it is never inferred from
-/// whether promotion happens to succeed.
+/// The default Vortex cell struct-promotes maps (serde_arrow default
+/// tracing); the `native` form stores them as `vortex.map`. Rows declare
+/// their layout; it is never inferred from whether promotion succeeds.
 macro_rules! row2 {
     ($rows:expr, $label:expr, $n:expr, $gen:expr) => {
         row2_vx!($rows, $label, $n, $gen, vortex_cell)
@@ -133,8 +131,8 @@ macro_rules! row2_vx {
     }};
 }
 
-/// The SmolStr-map rows measure msgpack on the String-converted data.
-/// Vortex runs on the original SmolStr data, not the conversion.
+/// msgpack runs on the String-converted data; Vortex on the original
+/// SmolStr data.
 macro_rules! row2_smolstr {
     ($rows:expr, $label:expr, $n:expr, $gen:expr, $map:ident) => {
         row2_smolstr_vx!($rows, $label, $n, $gen, $map, vortex_cell)
@@ -352,16 +350,13 @@ fn strings_bytes_table() {
     println!();
 }
 
-// Maps: PcoPack vs msgpack+zstd, dynamic-size keys and values. Each row
-// declares its Vortex layout at its call site (`native` or the default
-// struct promotion); nothing infers the layout at runtime from whether
-// promotion happens to succeed. The four open-vocabulary tuple-key rows use
-// native `vortex.map`: struct promotion cannot express them (tuple keys fail
-// tracing; string keys would drop everything outside the 100-row sample
-// schema, measured 25909 of 39872 entries). The stable-vocabulary rows
-// declare struct promotion: measured ~1.5-1.7x smaller there than native
-// (keys move into the schema; native keeps them in the entries column,
-// varbin->zstd).
+// Maps: PcoPack vs msgpack+zstd, dynamic-size keys and values. The four
+// open-vocabulary tuple-key rows use native `vortex.map`: struct promotion
+// cannot express them (tuple keys fail tracing; string keys would drop
+// everything outside the 100-row sample schema, measured 25909 of 39872
+// entries). The stable-vocabulary rows declare struct promotion: measured
+// ~1.5-1.7x smaller than native (keys move into the schema; native keeps
+// them in the entries column, varbin->zstd).
 
 fn maps_table() {
     println!("### Maps\n");
@@ -373,17 +368,17 @@ fn maps_table() {
     row2_smolstr!(&mut rows, "HashMap<SmolStr, i32>", 10_000, generate_hashmap_smolstr_data, HashMap, native);
 
     // Stable tag vocabulary (osm-tags shape): every row carries every key, so
-    // the declared struct-promoted layout traces to one columnar payload per
-    // key. PcoPack flattens to counts+keys+values regardless; the struct
-    // layout skips the keys entirely, which is the win this measures.
+    // struct promotion traces to one columnar payload per key. PcoPack
+    // flattens to counts+keys+values regardless; skipping the keys is the win
+    // this measures.
     let n = 10_000;
     row2!(&mut rows, "HashMap<SmolStr, i32> (8 stable keys)", n, generate_tagmap_dense_data);
     row2!(&mut rows, "HashMap<SmolStr, Option<i32>> (8 stable keys, ~60% null)", n, generate_tagmap_sparse_data);
 
     // Chunk-sized walk rows, same declared struct layout: each key's value
-    // autocorrelates along row order (the time-sorted indexed-capture shape),
-    // the regime where per-key columns separate signal that one interleaved
-    // values stream dilutes.
+    // autocorrelates along row order (the time-sorted indexed-capture
+    // shape). Per-key columns separate signal that one interleaved values
+    // stream dilutes.
     row2!(&mut rows, "HashMap<SmolStr, i32> (8 stable keys, walk)", CHUNK_ROWS, generate_walkmap_data);
     row2!(
         &mut rows,
@@ -537,14 +532,12 @@ fn bool_iid_50(n: usize) -> Vec<bool> {
     (0..n).map(|i| unit64(i) < 0.5).collect()
 }
 
-/// i.i.d. 90/10: a skewed bool (an "is_active" column: most rows true, a
-/// scattered minority false).
+/// i.i.d. 90/10: a skewed bool (an "is_active" column shape).
 fn bool_iid_90(n: usize) -> Vec<bool> {
     (0..n).map(|i| unit64(i) < 0.9).collect()
 }
 
-/// Alternating true/false (period 2): a 2-byte repeating pattern, pure
-/// sequential redundancy.
+/// Alternating true/false (period 2): pure sequential redundancy.
 fn bool_alternating(n: usize) -> Vec<bool> {
     (0..n).map(|i| i % 2 == 0).collect()
 }
@@ -623,7 +616,7 @@ fn counter_u8(n: usize) -> Vec<u8> {
         .collect()
 }
 
-/// Symmetric +/-noise (may subtract): the counter perturbation.
+/// Symmetric +/-noise: the counter perturbation.
 fn noise15(i: usize) -> i64 {
     (splitmix64(i) % 31) as i64 - 15
 }
@@ -667,9 +660,9 @@ fn states_u8(n: usize) -> Vec<u8> {
 }
 
 /// Dwell sweep: alphabet {0,1,2}, i.i.d. value per run, run lengths uniform
-/// in dwell/2 .. 3*dwell/2, no adjacent repeats. Isolates the run-length
-/// axis the fixed-cycle generators could not show: dwell is what lets LZ
-/// exploit run length, not just the small alphabet.
+/// in dwell/2 .. 3*dwell/2, no adjacent repeats. Isolates run length, the
+/// axis fixed-cycle generators could not show: LZ exploits run length, not
+/// just the small alphabet.
 fn dwell_u8(n: usize, dwell: usize) -> Vec<u8> {
     const VALUES: [u8; 3] = [0, 1, 2];
     let mut out = Vec::with_capacity(n);
@@ -705,8 +698,8 @@ fn pool_iid_i64(n: usize, d: usize) -> Vec<i64> {
 
 /// Placement pair: one multiset of 574 distinct ids with Zipf(0.7) skewed
 /// counts, emitted grouped into runs or deterministically shuffled (seeded
-/// Fisher-Yates). Same values, same counts, so any winner change between the
-/// two rows is placement, not marginal.
+/// Fisher-Yates). Any winner change between the two rows is placement, not
+/// marginal.
 fn placement_pair_d574(n: usize, grouped: bool) -> Vec<i64> {
     const D: usize = 574;
     let pool: Vec<i64> = (0..D).map(|j| splitmix64(j ^ 0xF16E5) as i64).collect();
@@ -779,8 +772,8 @@ fn skew_sparse_i64(n: usize) -> Vec<i64> {
 
 // --- Sparsity: scattered vs clustered windows -----------------------------
 
-/// Same marginal, adversarial placement: 93% zeros scattered i.i.d., with
-/// the heavy tail where the non-zeros fall. The placement-decides control.
+/// Same marginal: 93% zeros scattered i.i.d., heavy tail where the non-zeros
+/// fall; the placement-decides control.
 fn zero_spike_i64(n: usize) -> Vec<i64> {
     (0..n)
         .map(|i| {
@@ -931,9 +924,9 @@ fn generate_vec_string_data(n: usize) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// Stable-shape JSON objects: the same five keys in every row, homogeneous
-/// types, `note` null on every fourth row. `from_samples` traces this into a
-/// struct, so Vortex columnarizes it exactly like the stable-key map rows.
+/// The same five keys in every row, homogeneous types, `note` null on every
+/// fourth row. `from_samples` traces this into a struct, so Vortex
+/// columnarizes it exactly like the stable-key map rows.
 fn generate_json_stable_data(n: usize) -> Vec<serde_json::Value> {
     use serde_json::{Map, Value, json};
     let notes = ["", "ok", "warn", "error"];
@@ -1056,8 +1049,8 @@ fn generate_tagmap_dense_data(n: usize) -> Vec<HashMap<smol_str::SmolStr, i32>> 
         .collect()
 }
 
-/// Stable-vocabulary sparse map: all 8 keys stay present on every row (a
-/// struct mirror cannot express absence, only null), ~60% of values are None.
+/// Sparse map: all 8 keys stay present (a struct mirror cannot express
+/// absence, only null), ~60% of values are None.
 fn generate_tagmap_sparse_data(n: usize) -> Vec<HashMap<smol_str::SmolStr, Option<i32>>> {
     let keys = tag_keys();
     (0..n)
@@ -1077,9 +1070,8 @@ fn generate_tagmap_sparse_data(n: usize) -> Vec<HashMap<smol_str::SmolStr, Optio
         .collect()
 }
 
-/// Stable keys, autocorrelated values ("walk"): every row carries every key
-/// and each key's value drifts on ~5% of rows (sticky state between changes),
-/// the shape of a time-sorted indexed capture.
+/// Stable keys, autocorrelated values ("walk"): each key's value drifts on
+/// ~5% of rows, sticky state between changes.
 fn generate_walkmap_data(n: usize) -> Vec<HashMap<smol_str::SmolStr, i32>> {
     let keys = tag_keys();
     let mut cur = [0i32; 8];

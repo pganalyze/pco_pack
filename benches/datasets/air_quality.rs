@@ -1,7 +1,7 @@
 //! air_quality: NYC AirData single-sensor stream (16 cols, 823,743 rows,
-//! ~2.3 s cadence, 2022). `DateTime` is ns-precision; PcoPack stores us, so
-//! the default write truncates for real. With `time_round = 1 s` this is the
-//! only dataset with a real default-vs-lossy pair; default chunk size.
+//! ~2.3 s cadence, 2022). `DateTime` is ns-precision; PcoPack stores us,
+//! so default writes truncate. `time_round = 1 s` gives the only real
+//! default-vs-lossy pair; default chunk size.
 
 use chrono::{DateTime, Duration, Utc};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -13,7 +13,7 @@ pub const DS: Ds = Ds {
     name: "devinrsmith-air-quality.20220714.zstd.parquet",
     url: "https://pcodec-public.s3.amazonaws.com/devinrsmith-air-quality.20220714.zstd.parquet",
     size: 15_661_377,
-    md5: None, // S3 ETag is multipart; the pinned size is the check
+    md5: None, // S3 ETag is multipart; size is the pin
 };
 
 #[derive(Clone, Debug, PartialEq, PcoPack, serde::Serialize, serde::Deserialize)]
@@ -22,7 +22,7 @@ pub struct AirQuality {
     pub kafka_partition: i32,
     pub kafka_offset: i64, // monotonic counter -> pco delta
     pub kafka_timestamp: DateTime<Utc>,
-    pub timestamp: DateTime<Utc>, // device clock, ns precision; the `timestamp` field
+    pub timestamp: DateTime<Utc>, // device clock, ns precision
     pub pm_1: i16,
     pub pm_2_5: i16,
     pub pm_10: i16,
@@ -39,7 +39,7 @@ pub struct AirQuality {
 
 impl AirQuality {
     /// The row a default (lossless) PcoPack write stores: both `DateTime`
-    /// fields floored to us (PcoPack's storage precision).
+    /// fields floored to us.
     fn floored(&self) -> AirQuality {
         AirQuality {
             kafka_timestamp: common::us_floor(&self.kafka_timestamp),
@@ -113,8 +113,8 @@ pub fn bench() {
     });
     drop(dataf);
 
-    // The mirrors store ns and msgpack stores the exact instants: one
-    // (i64, i64) ns range serves all four codecs.
+    // Mirrors store ns, msgpack stores exact instants: one (i64, i64) ns
+    // range serves all four codecs.
     let ns_filters: Vec<((i64, i64), usize)> = ns_ranges.iter().zip(exp_ns.iter()).map(|(r, e)| (*r, *e)).collect();
 
     let col = common::bench_columnar(
@@ -480,8 +480,8 @@ fn load() -> Vec<AirQuality> {
     rows
 }
 
-/// PcoPack rows come back in stored order (sorted by the `timestamp` field),
-/// so compare as multisets keyed by the monotonic `kafka_offset`.
+/// PcoPack returns rows in stored order (sorted by `timestamp`); compare
+/// as multisets keyed by the monotonic `kafka_offset`.
 fn verify(a: Vec<AirQuality>, b: &[AirQuality]) {
     let mut a = a;
     let mut b = b.to_vec();

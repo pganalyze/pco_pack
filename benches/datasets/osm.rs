@@ -64,8 +64,8 @@ pub struct Relation {
     pub tags: HashMap<SmolStr, String>,
 }
 
-/// Lossy variant: `float_round = 7` drops sub-centimeter noise. OSM coords
-/// are meaningful at ~1 cm (~1e-7 deg); PBF nanodegrees are finer.
+/// Lossy variant: `float_round = 7` drops sub-centimeter noise (OSM coords
+/// are meaningful at ~1 cm, ~1e-7 deg; PBF nanodegrees are finer).
 #[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 7)]
 pub struct NodeF {
@@ -472,10 +472,10 @@ impl common::ScStore for osm_sc::RelationScStore {
 
 // ---------------------------------------------------------------------------
 // Vortex mirrors: tags stay native HashMap, stored as `vortex.map` via
-// `map_as_struct(false)` (promoting this open tag vocabulary to a
+// `map_as_struct(false)` (an open tag vocabulary promoted to a
 // sample-derived schema would silently drop unseen keys),
-// SmolStr -> String,
-// MemberType -> utf8 (rare `relation` variant -> Union, which Vortex can't encode)
+// SmolStr -> String, MemberType -> utf8 (rare `relation` variant ->
+// Union, which Vortex can't encode)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

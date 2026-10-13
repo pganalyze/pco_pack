@@ -4,8 +4,8 @@ use std::time::Instant;
 
 pub const ITERATIONS: usize = 50;
 
-/// pco_pack's rows per chunk. The fair-comparison unit: every codec (pco,
-/// PcoPack, msgpack+zstd) is measured at this data size.
+/// pco_pack's rows per chunk; every codec (pco, PcoPack, msgpack+zstd) is
+/// measured at this size for a fair comparison.
 pub const CHUNK_ROWS: usize = 262_144;
 
 /// Benchmark a closure and return average time in milliseconds (rounded to 1 decimal).
@@ -44,8 +44,8 @@ pub fn format_bytes(bytes: usize) -> String {
     }
 }
 
-/// Format a duration: milliseconds below a second, fractional seconds at or
-/// above it (mirrors `format_bytes`' unit switch; big ms values are noisy).
+/// Format a duration; switches to seconds at or above 1000 ms, mirroring
+/// `format_bytes` (big ms values are noisy).
 pub fn format_ms(ms: f64) -> String {
     if ms >= 1000.0 {
         format!("{:.1} s", (ms / 1000.0 * 10.0).round() / 10.0)
@@ -54,10 +54,9 @@ pub fn format_ms(ms: f64) -> String {
     }
 }
 
-// Shared deterministic distribution primitives (splitmix64-seeded): each
-// distribution is one transformation of the row index, shared across types.
+// Shared distribution primitives: each maps the row index through splitmix64.
 
-/// Deterministic high-quality 64-bit hash (splitmix64), the seed for all generators.
+/// splitmix64 hash: the seed for all generators.
 pub fn splitmix64(i: usize) -> u64 {
     let mut z = (i as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -70,8 +69,8 @@ pub fn unit64(i: usize) -> f64 {
     (splitmix64(i) >> 11) as f64 / (1u64 << 53) as f64
 }
 
-/// Index a uniform draw falls into under a cumulative distribution
-/// (`cdf[i]` = cumulative probability through `i`).
+/// Bucket a uniform draw falls into under a CDF (`cdf[i]` = cumulative
+/// probability through `i`).
 pub fn cdf_index(cdf: &[f64], r: f64) -> usize {
     match cdf.binary_search_by(|c| c.total_cmp(&r)) {
         Ok(i) => i,
@@ -79,8 +78,7 @@ pub fn cdf_index(cdf: &[f64], r: f64) -> usize {
     }
 }
 
-/// Right-skewed small counter: ~64% in 1..22 with a j^-2 skew (p50 = 2), the
-/// rest a Pareto tail.
+/// Right-skewed counter: ~64% in 1..22 (j^-2, p50 = 2), rest a Pareto tail.
 pub fn skew_small(i: usize) -> i64 {
     const SPIKE_CDF: [f64; 22] = [
         0.6248, 0.7810, 0.8504, 0.8895, 0.9145, 0.9318, 0.9446, 0.9543, 0.9620, 0.9683, 0.9735, 0.9778, 0.9815, 0.9847,
@@ -94,8 +92,8 @@ pub fn skew_small(i: usize) -> i64 {
     }
 }
 
-/// Log-normal positive values (a CLT normal, exponentiated), a realistic
-/// score/latency shape (p50 ~10, heavy right tail).
+/// Positive log-normal values (exponentiated CLT normal): realistic
+/// score/latency shape, p50 ~10, heavy right tail.
 pub fn lognorm_small(i: usize) -> f64 {
     let mut s = 0.0f64;
     for k in 0..12 {
@@ -105,8 +103,8 @@ pub fn lognorm_small(i: usize) -> f64 {
     s.exp() * 10.0
 }
 
-/// Repeating-pattern column: a stable 12-slot snapshot pattern with variable
-/// length and occasional drift; the repetitions feed zstd back-references.
+/// Repeating-pattern column: stable 12-slot snapshots of variable length
+/// with occasional drift; repetitions feed zstd back-references.
 pub fn gen_repeating<T: Copy>(n: usize, pattern: &[T], values: &[T], counts: &[f64]) -> Vec<T> {
     let total: f64 = counts.iter().sum();
     let mut cdf = Vec::with_capacity(counts.len());
@@ -128,8 +126,8 @@ pub fn gen_repeating<T: Copy>(n: usize, pattern: &[T], values: &[T], counts: &[f
                 slots[s] = values[cdf_index(&cdf, unit64(snap.wrapping_mul(104_729).wrapping_add(s)))];
             }
         }
-        // Random phase: consecutive snapshots don't start at the same slot, so
-        // rows share no aligned repetition (matching the real columns).
+        // Random phase so consecutive snapshots don't start at the same slot;
+        // rows share no aligned repetition, matching the real columns.
         let phase = (splitmix64(snap.wrapping_mul(31)) % 12) as usize;
         for k in 0..len {
             if out.len() == n {
@@ -171,8 +169,8 @@ pub fn bench_write<T: pco_pack::PcoSerde + Clone + PartialEq + std::fmt::Debug, 
     (label.to_string(), ms, buf.len())
 }
 
-/// [`bench_write`] for lossy knobs (`float_round`/`time_round`): the roundtrip
-/// check compares against `expect(&original)`, the rounded value actually stored.
+/// [`bench_write`] for lossy knobs (`float_round`/`time_round`); the roundtrip
+/// compares against `expect(&original)`, the rounded value stored.
 pub fn bench_write_round<
     T: pco_pack::PcoSerde + Clone + PartialEq + std::fmt::Debug,
     F: Fn(usize) -> Vec<T>,
@@ -190,8 +188,8 @@ pub fn bench_write_round<
     (label.to_string(), ms, buf.len())
 }
 
-/// msgpack+zstd write (serialization) time in ms; verifies a single-frame
-/// decode roundtrip once.
+/// msgpack+zstd write time in ms; verifies a single-frame decode roundtrip
+/// once.
 pub fn bench_msgpack<T: serde::Serialize + for<'de> serde::Deserialize<'de>>(data: &[T]) -> f64 {
     let mut buf = Vec::new();
     let mut ser = rmp_serde::Serializer::new(&mut buf);
@@ -203,31 +201,31 @@ pub fn bench_msgpack<T: serde::Serialize + for<'de> serde::Deserialize<'de>>(dat
     avg_ms(|| to_msgpack_zstd(data))
 }
 
-/// Standalone pco (`ChunkConfig::default()`, pco's own chunking) for a flat
-/// numeric column. Returns (write ms, size bytes).
+/// Standalone pco (`ChunkConfig::default()`, pco's own chunking) on a flat
+/// numeric column; returns (write ms, size bytes).
 pub fn bench_pco_col<T: pco::data_types::Number>(data: &[T]) -> (f64, usize) {
     let (ms, buf) = avg_ms_pair(|| pco::standalone::simple_compress(data, &pco::ChunkConfig::default()).unwrap());
     (ms, buf.len())
 }
 
-/// Standalone pco with 8-bit types enabled, the only config that accepts a
-/// `u8`/`i8` column; PcoPack enables them by default.
+/// Standalone pco with 8-bit types enabled, the only config accepting
+/// `u8`/`i8`; PcoPack enables them by default.
 pub fn bench_pco_col_8bit<T: pco::data_types::Number>(data: &[T]) -> (f64, usize) {
     let cfg = pco::ChunkConfig::default().with_enable_8_bit(true);
     let (ms, buf) = avg_ms_pair(|| pco::standalone::simple_compress(data, &cfg).unwrap());
     (ms, buf.len())
 }
 
-/// Baseline for dynamic types (strings, byte arrays, JSON, maps): pco has no
-/// serde API for them, so the fallback stores them as msgpack+zstd.
+/// Baseline for dynamic types (strings, byte arrays, JSON, maps): pco has
+/// no serde API for them, so they are stored as msgpack+zstd.
 #[allow(dead_code)]
 pub fn bench_pco_fallback<T: serde::Serialize>(data: &[T]) -> (f64, usize) {
     let (ms, buf) = avg_ms_pair(|| to_msgpack_zstd(data));
     (ms, buf.len())
 }
 
-// Vortex (the vortex crate, via serde_arrow): the general columnar-format
-// competitor. One compact file per column, values wrapped in `Item`.
+// Vortex, the columnar competitor, via serde_arrow: one compact file per
+// column, values wrapped in `Item`.
 
 #[allow(dead_code)] // only some benches measure Vortex
 fn vortex_rt() -> &'static tokio::runtime::Runtime {
@@ -235,8 +233,8 @@ fn vortex_rt() -> &'static tokio::runtime::Runtime {
     RT.get_or_init(|| tokio::runtime::Builder::new_current_thread().build().unwrap())
 }
 
-/// The session must be created inside `block_on` so vortex picks up the
-/// ambient tokio runtime (the struct bench's convention).
+/// Build the session inside `block_on` so vortex picks up the ambient tokio
+/// runtime.
 #[allow(dead_code)]
 fn vortex_session() -> &'static vortex::session::VortexSession {
     static SESSION: std::sync::OnceLock<vortex::session::VortexSession> = std::sync::OnceLock::new();
@@ -246,13 +244,12 @@ fn vortex_session() -> &'static vortex::session::VortexSession {
     })
 }
 
-/// Write one compact vortex file per column of `T` and verify a full
-/// value-level roundtrip; `Err` for types the pipeline can't express.
-/// Maps follow serde_arrow's default struct-promoting tracing. Rows whose
-/// key vocabulary is open declare the native layout via
-/// [`bench_vortex_native_map`]; the choice lives in the table, never in an
-/// error-recovery path, so an upstream tracing change shows up as a "-"
-/// cell or a deliberate edit rather than silent number drift.
+/// Write one compact vortex file per column of `T`, verify a full
+/// value-level roundtrip; `Err` for types the pipeline can't express. Maps
+/// follow serde_arrow's default struct-promoting tracing; open-vocabulary
+/// rows declare the native layout via [`bench_vortex_native_map`]. Declaring
+/// it in the table, not error recovery, makes an upstream tracing change a
+/// "-" cell or a deliberate edit, not silent drift.
 #[allow(dead_code)]
 pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug>(
     data: &[T],
@@ -261,9 +258,8 @@ pub fn bench_vortex<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clo
 }
 
 /// [`bench_vortex`] storing maps as native `vortex.map`
-/// (`map_as_struct(false)`). Struct promotion silently drops entries whose
-/// key misses the sample-derived schema, so open-vocabulary rows declare
-/// this layout.
+/// (`map_as_struct(false)`); struct promotion silently drops entries whose
+/// key misses the sample-derived schema.
 #[allow(dead_code)]
 pub fn bench_vortex_native_map<
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
@@ -274,9 +270,9 @@ pub fn bench_vortex_native_map<
 }
 
 /// [`bench_vortex`] / [`bench_vortex_native_map`] with the serde_arrow map
-/// tracing mode explicit: `map_as_struct=true` promotes stable-key maps to
-/// structs, putting key names in the schema instead of the data; `false`
-/// keeps the native arrow `Map`, which vortex stores as `vortex.map`.
+/// mode explicit: `map_as_struct=true` promotes stable-key maps to structs,
+/// moving key names into the schema; `false` keeps the native arrow `Map`,
+/// stored by vortex as `vortex.map`.
 #[allow(dead_code)]
 pub fn bench_vortex_map_mode<
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
@@ -294,13 +290,13 @@ pub fn bench_vortex_map_mode<
 
     let rt = vortex_rt();
     let session = vortex_session();
-    // Unsupported types panic inside the pipeline; catch it and silence the
-    // default hook so a caught panic doesn't print a scary message.
+    // Unsupported types panic inside the pipeline; silence the hook so a
+    // caught panic prints nothing.
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // Schema: `from_type` for self-describing types, `from_samples` for
-        // the rest; unit enums via `enums_without_data_as_strings`.
+        // Schema: `from_type` for self-describing types, else `from_samples`;
+        // unit enums via `enums_without_data_as_strings`.
         let options = TracingOptions::default()
             .enums_without_data_as_strings(true)
             .allow_null_fields(true)
@@ -331,7 +327,6 @@ pub fn bench_vortex_map_mode<
             })
         });
 
-        // Full value-level roundtrip check (the harness convention).
         let back: Vec<Item<T>> = rt.block_on(async {
             let file = session.open_options().open_buffer(ByteBuffer::from(bytes.clone())).unwrap();
             let scan = file.scan().unwrap();
@@ -355,9 +350,8 @@ pub fn bench_vortex_map_mode<
     }
 }
 
-/// [`bench_vortex`] as formatted table cells, size first: "-" where the vortex
-/// pipeline cannot express the type (complex enums, heterogeneous-shape
-/// `serde_json::Value`).
+/// [`bench_vortex`] as table cells, size first: "-" for types the pipeline
+/// can't express (complex enums, heterogeneous-shape `serde_json::Value`).
 #[allow(dead_code)]
 pub fn vortex_cell<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug>(
     data: &[T],
@@ -368,7 +362,7 @@ pub fn vortex_cell<T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clon
     }
 }
 
-/// [`bench_vortex_native_map`] as formatted table cells, size first.
+/// [`bench_vortex_native_map`] as table cells, size first.
 #[allow(dead_code)]
 pub fn vortex_cell_native_map<
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
@@ -381,8 +375,8 @@ pub fn vortex_cell_native_map<
     }
 }
 
-/// Row for the four-codec comparison table: pco, PcoPack, msgpack+zstd, and
-/// Vortex (size first, then write time).
+/// Row of the four-codec table (pco, PcoPack, msgpack+zstd, Vortex): size
+/// first, then write time.
 pub struct ComparisonRow {
     pub type_name: String,
     pub pco_size: String,
@@ -421,9 +415,8 @@ pub fn print_comparison_table(rows: &[ComparisonRow]) {
     }
 }
 
-/// Row for the three-codec table: types where pco has no applicable
-/// representation compare PcoPack, msgpack+zstd, and Vortex (size first, then
-/// time).
+/// Row of the three-codec table for types pco can't represent: PcoPack,
+/// msgpack+zstd, Vortex (size first, then time).
 pub struct SlimRow {
     pub type_name: String,
     pub pco_pack_size: String,

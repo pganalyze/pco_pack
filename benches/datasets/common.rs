@@ -1,8 +1,8 @@
 //! Shared machinery for the datasets bench: pinned-file downloads, one-pass
 //! codec runners, value-roundtrip mirrors, and the table printer.
 //!
-//! Each op (serialize, deserialize, filter) runs exactly once per dataset.
-//! The 50-iteration convention of smaller benches is infeasible at this scale.
+//! Each op (serialize, deserialize, filter) runs once per dataset; the
+//! 50-iteration convention of smaller benches is infeasible at this scale.
 
 use super::*;
 use columnar::{Borrow, FromBytes, Index, Len};
@@ -25,8 +25,7 @@ pub struct CodecMetrics {
     pub serial_ms: Option<f64>,
     pub deserial_ms: Option<f64>,
     pub size: Option<usize>,
-    /// One entry per measured filter, in order. `None` means that codec cannot
-    /// express it.
+    /// One entry per measured filter, in order; `None` if not expressible.
     pub filter_ms: Vec<Option<f64>>,
 }
 
@@ -54,8 +53,8 @@ where
             T::filter(&chunks, (*query).clone(), &[]).unwrap()
         });
         if rows.len() != *expected {
-            // Debug dump: rows come back in stored order, so a boundary bug
-            // shows up at the head/tail; unique ids identify the rows.
+            // Rows return in stored order, so a boundary bug shows at the
+            // head/tail; unique ids identify the rows.
             let n = rows.len();
             eprintln!("[debug] pco_pack filter count: got {n}, expected {expected}; query {query}");
             for i in 0..n {
@@ -92,8 +91,8 @@ where
         columnar::bytes::indexed::encode(&mut words, &container.borrow());
         zstd::encode_all(bytemuck::cast_slice(&words), 3).unwrap()
     });
-    // The decompressed buffer must outlive the borrowed view over it, so
-    // each measurement decompresses inline and returns only a count.
+    // The decompressed buffer must outlive the borrowed view, so each
+    // measurement decompresses inline and returns only a count.
     let (deserial_ms, count) = one_pass(|| {
         let decompressed = zstd::decode_all(&*buf).unwrap();
         let words: &[u64] = bytemuck::cast_slice(&decompressed);
@@ -159,16 +158,16 @@ where
     CodecMetrics { serial_ms: Some(serial_ms), deserial_ms: Some(deserial_ms), size: Some(buf.len()), filter_ms }
 }
 
-/// msgpack+zstd runner. Serialize uses `to_msgpack_zstd` (262k-row frames,
-/// zstd L3). Deserialize is a full multi-frame decode + full value roundtrip.
+/// msgpack+zstd runner. Serialize uses `to_msgpack_zstd` (zstd L3);
+/// deserialize is a full multi-frame decode + full value roundtrip.
 pub fn bench_msgpack<T, K, F>(data: &[T], filters: &[(K, usize)], matches: F) -> CodecMetrics
 where
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
     F: Fn(&T, &K) -> bool,
 {
     let (serial_ms, buf) = one_pass(|| to_msgpack_zstd(data));
-    // One zstd frame per 262k-row chunk, each a single msgpack array; zstd's
-    // decoder is multi-frame, so one `decode_all` covers the whole buffer.
+    // One zstd frame per 262k-row chunk, each a single msgpack array; the
+    // decoder is multi-frame, so one `decode_all` covers the buffer.
     let decode = || {
         let decompressed = zstd::decode_all(&*buf).unwrap();
         let n_frames = (data.len() + CHUNK_ROWS - 1) / CHUNK_ROWS;
@@ -198,8 +197,8 @@ pub fn ds_vortex_rt() -> &'static tokio::runtime::Runtime {
     RT.get_or_init(|| tokio::runtime::Builder::new_current_thread().build().unwrap())
 }
 
-/// The session must be created inside `block_on` so vortex picks up the
-/// ambient tokio runtime (the struct bench's convention).
+/// Create the session inside `block_on` so vortex picks up the ambient
+/// tokio runtime (struct bench convention).
 fn ds_vortex_session() -> &'static vortex::session::VortexSession {
     static SESSION: std::sync::OnceLock<vortex::session::VortexSession> = std::sync::OnceLock::new();
     SESSION.get_or_init(|| {
@@ -230,18 +229,17 @@ where
         let session = ds_vortex_session();
 
         // Schema: `from_type` with a `from_samples` fallback (chrono/uuid).
-        // Samples are plain rows, not `Items` (which wraps each row).
-        // Maps stay native arrow Map -> vortex.map. Promoting an open
-        // vocabulary to a sample-derived schema silently drops entries whose
-        // keys missed the sample. Rows without maps are unaffected.
+        // Samples are plain rows, not `Items` (which wraps each row). Maps
+        // stay native arrow Map -> vortex.map: promoting an open vocabulary
+        // to a sample-derived schema silently drops entries whose keys
+        // missed the sample; rows without maps are unaffected.
         let options =
             TracingOptions::default().enums_without_data_as_strings(true).allow_null_fields(true).map_as_struct(false);
         let fields: Vec<FieldRef> = match <Vec<FieldRef>>::from_type::<T>(options.clone()) {
             Ok(f) => f,
             Err(_) => {
-                // Spread samples across the dataset: a union variant slot is
-                // only created for values seen; a missing slot fails schema
-                // derivation.
+                // Spread samples across the dataset: a union variant slot
+                // exists only for values seen; a missing slot fails derive.
                 let step = data.len().div_ceil(100).max(1);
                 let samples: Vec<T> = data.iter().step_by(step).take(100).cloned().collect();
                 <Vec<FieldRef>>::from_samples(samples, options).unwrap()
@@ -263,8 +261,8 @@ where
         });
         let buffer = ByteBuffer::from(bytes.clone());
 
-        // The read path: full scan (or filtered scan), materialized back to
-        // rows through Arrow.
+        // Read path: scan (optionally filtered), materialized back to rows
+        // through Arrow.
         let read = |filter: Option<vortex::array::expr::Expression>| {
             rt.block_on(async {
                 let file = session.open_options().open_buffer(buffer.clone()).unwrap();
@@ -275,7 +273,7 @@ where
                 }
                 let array = scan.into_array_stream().unwrap().read_all().await.unwrap();
                 let schema_out = session.arrow().to_arrow_schema(array.dtype()).unwrap();
-                #[allow(deprecated)] // execute_record_batch: deprecated but the stable export path
+                #[allow(deprecated)] // deprecated, but the stable export path
                 {
                     use vortex::array::VortexSessionExecute;
                     use vortex::arrow::ArrowArrayExecutor as _;
@@ -286,7 +284,7 @@ where
             })
         };
 
-        // Write-time roundtrip check (the harness convention; unmeasured).
+        // Write-time roundtrip check (harness convention; unmeasured).
         let back: Vec<T> = read(None);
         assert_eq!(back, data.to_vec(), "vortex roundtrip mismatch");
 
@@ -304,7 +302,7 @@ where
     match result {
         Ok(metrics) => metrics,
         Err(panic) => {
-            // Debug hook: `PCO_PACK_BENCH_DEBUG=1` prints the caught panic.
+            // `PCO_PACK_BENCH_DEBUG=1` prints the caught panic.
             if std::env::var_os("PCO_PACK_BENCH_DEBUG").is_some() {
                 let msg = panic
                     .downcast_ref::<String>()
@@ -318,10 +316,10 @@ where
     }
 }
 
-// ---- Downloads: cached in a gitignored tmp dir, never committed ----
+// ---- Downloads: cached in a gitignored tmp dir ----
 
 /// A pinned source file. Downloaded to the data dir on first run, verified
-/// against the pinned size (+ md5 where pinned). Re-runs skip the network.
+/// against the pinned size (+ md5 where pinned).
 #[derive(Debug, Clone, Copy)]
 pub struct Ds {
     pub name: &'static str,
@@ -397,9 +395,8 @@ fn file_md5(path: &Path) -> String {
 
 // ---- Value-roundtrip mirrors: the exact values a lossy PcoPack write stores ----
 
-/// PcoPack stores `DateTime<Utc>` as i64 microseconds. This is the exact
-/// instant a default write stores for a source value (sub-microsecond
-/// truncated).
+/// PcoPack stores `DateTime<Utc>` as i64 microseconds: the exact instant a
+/// default write stores (sub-microsecond truncated).
 pub fn us_floor(dt: &chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::from_timestamp_micros(dt.timestamp_micros()).unwrap()
 }
@@ -451,8 +448,8 @@ fn cell(m: &CodecMetrics, kind: &str, filter_idx: Option<usize>) -> String {
 /// All six codecs' one-pass results for one (dataset, entity) table.
 pub struct CodecResults {
     pub pco_pack: CodecMetrics,
-    /// The PcoPack variant with the lossy knobs (`float_round`/`time_round`);
-    /// `None` when the dataset has no lossy variant (the column is omitted).
+    /// The lossy PcoPack variant (`float_round`/`time_round`); `None` when
+    /// the dataset has no lossy variant (column omitted).
     pub pco_pack_lossy: Option<CodecMetrics>,
     pub columnar: CodecMetrics,
     pub serde_columnar: CodecMetrics,
@@ -462,8 +459,7 @@ pub struct CodecResults {
 
 impl CodecResults {
     /// The dataset codec table: `Metric | PcoPack | [PcoPack (lossy)] | Vortex
-    /// | columnar | serde_columnar | msgpack`, with Size first; `-` = not
-    /// expressible.
+    /// | columnar | serde_columnar | msgpack`, Size first.
     pub fn print(self, filter_labels: &[&str]) {
         let metrics = ["Size", "Serialize", "Deserialize"];
         if let Some(l) = &self.pco_pack_lossy {

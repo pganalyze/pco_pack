@@ -1,13 +1,12 @@
 //! query_explains: the full query_explains_7d window (237,651 analyzed
 //! queries). Mirrors the source table exactly (field order/names/types) so
 //! the chunk layout matches how the table is stored: index [server_id],
-//! timestamp seen_at. UUID remapping and fingerprint folding happened at
-//! capture time, in src/bin's extractor.
+//! timestamp seen_at. UUID remapping and fingerprint folding are done by
+//! src/bin's extractor.
 //!
 //! Every row carries the full EXPLAIN (FORMAT JSON) document, averaging ~9
-//! KB of nested JSON: the payload is one zstd contest over `output_json`.
-//! The float columns carry millisecond values as decimals; the lossy variant
-//! rounds seen_at to whole seconds and the EXPLAIN floats to 2 decimals.
+//! KB of nested JSON, so the payload is a zstd contest over `output_json`.
+//! Float columns carry millisecond values as decimals.
 
 use chrono::{DateTime, Utc};
 use pco_pack::PcoPack;
@@ -42,10 +41,9 @@ pub struct QueryExplain {
     pub node_insights: Option<serde_json::Value>,
 }
 
-/// The lossy model: `time_round = 1 s` on seen_at plus `float_round = 2`
-/// on the EXPLAIN floats. Those floats carry millisecond values as decimals,
-/// so the rounding happens at the hundredths-of-ms level. This is the
-/// `PcoPack (lossy)` column.
+/// The lossy model (`PcoPack (lossy)` column): `time_round = 1 s` on
+/// seen_at, `float_round = 2` on the EXPLAIN millisecond floats (rounding
+/// at the hundredths-of-ms level).
 #[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(
     index = [server_id],
@@ -124,8 +122,8 @@ impl Ek {
         }
     }
 
-    /// Same filter over the values the lossy write stores: seen_at rounded to
-    /// whole seconds, floats through `float_round = 2`.
+    /// Same filter over the values the lossy write stores: seen_at rounded
+    /// to whole seconds, floats through `float_round = 2`.
     fn matches_lossy(&self, r: &QueryExplain) -> bool {
         match self {
             Ek::Time(a, b) => {
@@ -181,9 +179,8 @@ fn bench_explains(rows: &[QueryExplain]) {
         assert_eq!(back.len(), rows.len(), "query_explains row count")
     });
 
-    // The lossy write stores rounded seen_at and float_round = 2 EXPLAIN
-    // millisecond floats, so both the window and the slow-plan filter counts
-    // fold through them.
+    // Window and slow-plan filter counts fold through the stored rounded
+    // values.
     let lossy_rows: Vec<QueryExplainLossy> = rows.iter().map(QueryExplainLossy::from).collect();
     let lossy_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_lossy.iter()).map(|(q, (_, e))| (q, *e)).collect();
@@ -273,10 +270,9 @@ fn bench_explains(rows: &[QueryExplain]) {
 }
 
 /// columnar/vortex mirror: timestamps to i64 us, JSON carriers stringified.
-/// columnar has no `serde_json::Value` impl at all, and serde_columnar's
-/// postcard fallback dies on Value's `deserialize_any`, so both mirrors carry
-/// the plan payloads as text; the full and roundtripped values are identical
-/// strings on both sides of each codec.
+/// columnar has no `serde_json::Value` impl and serde_columnar's postcard
+/// fallback dies on Value's `deserialize_any`; roundtripped values are
+/// identical strings on both sides of each codec.
 #[derive(Clone, Debug, PartialEq, columnar::Columnar, Serialize, Deserialize)]
 pub struct QueryExplainCol {
     pub server_id: i64,
@@ -336,9 +332,8 @@ mod explains_sc {
     use super::*;
     use serde_columnar::columnar;
 
-    /// The big JSON payloads ride as strings (Value's deserialize_any is
-    /// unencodable in the postcard-backed columns); everything else keeps
-    /// its native columnar type.
+    /// JSON payloads ride as strings (postcard can't encode Value's
+    /// `deserialize_any`); the rest keep native columnar types.
     #[columnar(vec, ser, de)]
     #[derive(Debug, Clone, PartialEq)]
     pub struct ExplainScRow {

@@ -16,8 +16,8 @@ use vortex::compressor::BtrBlocksCompressorBuilder;
 use vortex::file::{OpenOptionsSessionExt, WriteOptionsSessionExt, WriteStrategyBuilder};
 use vortex::session::VortexSession;
 
-/// The row the multi-filter (`color == Red && score == 500.0`) matches exactly
-/// once: its fields are forced and no generated `lognorm_small` value hits 500.0.
+/// The row the multi-filter (`color == Red && score == 500.0`) matches once:
+/// its fields are forced and no generated `lognorm_small` value hits 500.0.
 const SENTINEL: usize = 12_345;
 
 fn main() {
@@ -390,13 +390,13 @@ mod serde_columnar_record {
 }
 
 /// Realistic field distributions (skewed counters, log-normal scores, skewed
-/// enum, random names); `account_id` is the index key the filters exercise.
+/// enum, random names); `account_id` is the filter's index key.
 fn data(n: usize) -> Vec<Record> {
     (0..n)
         .map(|i| {
             let sentinel = i == SENTINEL;
             Record {
-                account_id: (i % 5) as i64, // 5 unique account IDs (the index key)
+                account_id: (i % 5) as i64, // 5 unique account IDs
                 name: format!("name_{}", splitmix64(i.wrapping_add(0xA5A5)) % 1_000_000),
                 score: if sentinel { 500.0 } else { lognorm_small(i) },
                 active: if sentinel { true } else { unit64(i.wrapping_add(0x0707)) < 0.7 },
@@ -442,8 +442,8 @@ fn setup_vortex_file(rt: &tokio::runtime::Runtime, data: &[Record]) -> (VortexSe
     })
 }
 
-/// Serialize records to Arrow via serde_arrow, then write vortex file bytes
-/// with the compact strategy (serde_arrow is also needed to read back Utf8View).
+/// Serialize records to Arrow via serde_arrow, then write vortex bytes with
+/// the compact strategy (serde_arrow is also needed to read back Utf8View).
 async fn write_vortex_file(session: &VortexSession, data: &[Record]) -> Vec<u8> {
     let fields = <Vec<FieldRef>>::from_type::<Record>(TracingOptions::default()).unwrap();
     let batch = serde_arrow::to_record_batch(&fields, &data).unwrap();

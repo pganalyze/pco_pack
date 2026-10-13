@@ -1,6 +1,6 @@
-//! Shared postgres plumbing: capture readers and codec-table printers. No
+//! Shared postgres plumbing: capture readers and codec-table printers; no
 //! `bench()` of its own. The codec runners come from the datasets bench
-//! (`crate::ds_common`) and ride along here so the source modules reach every
+//! (`crate::ds_common`) and ride along here so source modules reach every
 //! shared piece through one `super::common` path.
 
 use crate::{format_bytes, format_ms};
@@ -20,7 +20,7 @@ pub use crate::ds_common::{
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
 
 /// Public captures live in `benches/data/` (Git LFS); override with
-/// `$PCO_PACK_BENCH_DATA` to point at a local re-capture instead.
+/// `$PCO_PACK_BENCH_DATA` to point at a local re-capture.
 pub fn data_dir() -> PathBuf {
     match std::env::var("PCO_PACK_BENCH_DATA") {
         Ok(p) if !p.is_empty() => PathBuf::from(p),
@@ -37,10 +37,10 @@ pub fn private_data_dir() -> PathBuf {
 
 /// Each capture is one msgpack array of rows behind a single zstd frame
 /// (`tmp/pg_capture`'s dump format; `query_stats` trimmed to its last 14
-/// days). Integrity is Git LFS's job. Stream-decoded to avoid the multi-GB
-/// uncompressed intermediate. A capture that is absent or still an un-fetched
-/// Git LFS pointer prints `warning` and yields `None`, so a missing input
-/// skips its section instead of failing the whole run.
+/// days). Stream-decoded to avoid the multi-GB uncompressed intermediate. A
+/// capture that is absent or still an un-fetched Git LFS pointer prints
+/// `warning` and yields `None`, so a missing input skips its section
+/// instead of failing the whole run.
 pub fn read_blob<T: serde::de::DeserializeOwned>(
     name: &str, dir: &Path, warning: &str,
 ) -> anyhow::Result<Option<Vec<T>>> {
@@ -66,10 +66,10 @@ pub fn lfs_warning(name: &str) -> String {
 }
 
 // ---- Table printers ----
-// Same datasets-bench layout, but with postgres-specific columns: the lossy
-// column is spelled `PcoPack time_round` for backends and stats and
-// `PcoPack (lossy)` for explains (the shared printer says `(lossy)` because
-// the public datasets round with `float_round` too: openalex, osm).
+// Datasets-bench layout with postgres-specific columns: the lossy column is
+// spelled `PcoPack time_round` for backends and stats, `PcoPack (lossy)`
+// for explains (the shared printer says `(lossy)` because the public
+// datasets round with `float_round` too: openalex, osm).
 
 #[derive(Debug)]
 pub struct CodecRow {
@@ -99,8 +99,7 @@ impl markdown_tables::MarkdownTableRow for CodecRow {
     }
 }
 
-/// query_explains: the codec table with the single `PcoPack (lossy)` column
-/// (the shared datasets printer spells it the same way).
+/// query_explains: the codec table with a single `PcoPack (lossy)` column.
 #[derive(Debug)]
 pub struct CodecRowLossy {
     pub metric: String,

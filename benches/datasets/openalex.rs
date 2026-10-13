@@ -1,8 +1,8 @@
 //! openalex: OpenAlex `works` snapshot (release 2026-09-23, CC0), 558,403
-//! works from two pinned JSONL parts (1.54 GB gzipped). The nested-structure
+//! works from two pinned JSONL parts (1.54 GB gzipped). Nested-structure
 //! showcase: 3-level nesting (`Work` -> `Authorship` -> `Institution`),
 //! `Vec<struct>` fields, `Option` on most fields, an inverted-abstract map,
-//! five unit enums, f32 scores rounded to 4 decimals in the lossy mirror
+//! 5 unit enums, f32 scores rounded to 4 decimals in the lossy mirror
 //! (deliberate fidelity cut).
 
 use chrono::{DateTime, Utc};
@@ -13,8 +13,8 @@ use std::io::BufRead;
 
 use super::common::{self, CodecResults, Ds};
 
-// The two pinned part files of the 2026-09-23 works release. Immutable S3
-// objects with multipart ETags (not md5), so the size pins them.
+// The two part files of the 2026-09-23 works release. Immutable S3 objects
+// with multipart ETags (not md5), so `size` pins them.
 pub const DS_0: Ds = Ds {
     name: "openalex_part_0000.gz",
     url: "https://openalex.s3.amazonaws.com/data/jsonl/works/updated_date=2026-09-23/part_0000.gz",
@@ -28,7 +28,7 @@ pub const DS_1: Ds = Ds {
     md5: None,
 };
 
-// ---- data model: PcoPack rows, the bench's own serde wire (self-consistent roundtrip) ----
+// ---- data model: PcoPack rows, the bench's own serde wire ----
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -187,8 +187,8 @@ pub fn bench() {
     let data = load();
     let n = data.len();
 
-    // Two `work_type` equality filters: selective (`Retraction` = 21) and
-    // moderate (`Preprint` = 1); PcoPack filters by discriminant.
+    // `work_type` equality filters: selective (`Retraction` = 21), moderate
+    // (`Preprint` = 1); PcoPack filters by discriminant.
     let picks: [(WorkType, &str); 2] = [(WorkType::Retraction, "retraction"), (WorkType::Preprint, "preprint")];
     let keys: Vec<(u8, &str)> = picks.iter().map(|(t, name)| (work_type_u8(t), *name)).collect();
     let exps: Vec<usize> = picks.iter().map(|(t, _)| data.iter().filter(|w| w.work_type == *t).count()).collect();
@@ -249,7 +249,8 @@ pub fn bench() {
     .print(&label_refs);
 }
 
-// ---- lossy mirror: `float_round = 4` on structs owning floats; Authorship/Institution have none and are reused as-is ----
+// ---- lossy mirror: `float_round = 4` on structs owning floats;
+// Authorship/Institution own none, reused as-is ----
 
 #[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 4)]
@@ -343,7 +344,8 @@ impl From<&Kw> for KwF {
     }
 }
 
-// ---- columnar mirror: DateTime -> i64 us, enums -> u8 discriminants, SmolStr -> String, map -> Vec<(K, V)> (no chrono/enum/map impl in the crate) ----
+// ---- columnar mirror: DateTime -> i64 us, enums -> u8 discriminants,
+// SmolStr -> String, map -> Vec<(K, V)> (no chrono/enum/map impl) ----
 
 #[derive(Clone, Debug, PartialEq, columnar::Columnar, serde::Serialize, serde::Deserialize)]
 pub struct WorkCol {
@@ -556,7 +558,9 @@ impl From<&Kw> for KwCol {
     }
 }
 
-// ---- serde_columnar mirror: ints -> DeltaRle, String/f32 -> Rle, bool -> BoolRle, enums -> u8, `class = "vec"` for Vec<struct>; Option/map -> per-row blobs ----
+// ---- serde_columnar mirror: ints -> DeltaRle, String/f32 -> Rle,
+// bool -> BoolRle, enums -> u8, `class = "vec"` for Vec<struct>;
+// Option/map -> per-row blobs ----
 
 mod openalex_sc {
     use super::*;
@@ -738,7 +742,8 @@ impl common::ScStore for openalex_sc::WorkScStore {
     }
 }
 
-// ---- vortex mirror: SmolStr -> String, map -> Vec<(K, V)>, enums -> utf8 serde names ----
+// ---- vortex mirror: SmolStr -> String, map -> Vec<(K, V)>,
+// enums -> utf8 serde names ----
 // rare variants miss the 100-row sample: Union, not encodable
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -948,7 +953,8 @@ impl From<&Kw> for KwVx {
     }
 }
 
-// ---- raw JSON input (OpenAlex API shape, verbatim) -> bench structs: flattens open_access.* / primary_location.source.*, ids/urls reduced to payloads ----
+// ---- raw JSON input (OpenAlex API shape, verbatim) -> bench structs:
+// flattens open_access.* / primary_location.source.*, ids/urls -> payloads ----
 
 #[derive(serde::Deserialize)]
 struct WorkJson {
@@ -1042,8 +1048,9 @@ struct IdJson {
     id: String,
 }
 
-/// ".../W2741809807" -> 2741809807: digit tail after the last `/`; a type-letter
-/// prefix (works/authors/sources) or bare digits (domains/fields/subfields).
+/// ".../W2741809807" -> 2741809807: digit tail after the last `/`, with a
+/// type-letter prefix (works/authors/sources) or bare digits
+/// (domains/fields/subfields).
 fn openalex_id(s: &str) -> i64 {
     let tail = s.rsplit('/').next().unwrap_or(s);
     let digits = tail.trim_start_matches(|c: char| c.is_ascii_alphabetic());
@@ -1066,8 +1073,8 @@ fn rfc3339(s: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(s).unwrap_or_else(|_| panic!("timestamp {s:?} is not RFC 3339")).with_timezone(&Utc)
 }
 
-/// Vocabulary checks live in these matches: an unknown source value panics
-/// with the offending value (the enums have no catchall variant by design).
+/// Unknown vocab values panic with the offending value: the enums have no
+/// catchall variant by design.
 fn work_type(s: &str) -> WorkType {
     match s {
         "article" => WorkType::Article,
@@ -1243,8 +1250,8 @@ fn load() -> Vec<Work> {
             works.push(Work::from(wj));
             n += 1;
         }
-        // Pinned record count: the part files are immutable, so a mismatch is
-        // a corrupt download, not a moving target.
+        // The part files are immutable, so a pinned-count mismatch means
+        // a corrupt download.
         assert_eq!(n, expected, "{} record count", ds.name);
     }
     works

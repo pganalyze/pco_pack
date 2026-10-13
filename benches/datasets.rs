@@ -1,13 +1,10 @@
 //! Datasets bench entry point. Each dataset module exposes `bench()`;
-//! `common` holds shared machinery and has no `bench()` of its own.
+//! `common` holds shared machinery and exposes no `bench()`.
 
 include!("bench_common.rs");
 
 mod datasets {
-    // Glob re-export: dataset modules reach the bench_common helpers through
-    // their own `use super::*`.
     pub use super::*;
-
     pub mod air_quality;
     pub mod common;
     pub mod openalex;

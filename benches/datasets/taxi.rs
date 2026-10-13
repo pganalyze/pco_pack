@@ -418,8 +418,8 @@ fn colf64<'a>(batch: &'a arrow_array::RecordBatch, name: &str) -> &'a arrow_arra
         .unwrap_or_else(|| panic!("column {name} is not Float64"))
 }
 
-/// "Y"/"N"/" " -> the PcoPack shape for a mostly-blank tri-state: blank
-/// ("no answer") is `None`, `N` is `Some(false)`, `Y` is `Some(true)`.
+/// Mostly-blank tri-state flag: blank ("no answer") -> `None`,
+/// "N" -> `Some(false)`, "Y" -> `Some(true)`.
 fn flag_value(s: &str) -> Option<bool> {
     match s {
         "Y" => Some(true),
