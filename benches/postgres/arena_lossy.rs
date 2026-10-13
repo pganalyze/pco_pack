@@ -1,5 +1,5 @@
 //! Lossy mirror of `arena.rs`: the identical flattened arena for the
-//! `PcoPack (arena lossy)` column, but every struct that owns float payload
+//! `arena lossy` column, but every struct that owns float payload
 //! columns declares `float_round = 2` on itself; the parameter does not
 //! propagate across derived-struct boundaries, so each struct states it.
 //! Costs, times, and floats inside `Value` columns quantize to two decimals;

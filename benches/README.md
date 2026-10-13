@@ -399,33 +399,35 @@ Real Postgres monitoring datasets sourced from pganalyze.
 
 ### query_explains (237651 rows)
 
+This data model is dominated by large Postgres EXPLAIN plans represented as JSON.
+
 #### PcoPack scenarios
 
-| Metric        | PcoPack (JSON) | PcoPack (JSON lossy) | PcoPack (arena) | PcoPack (arena lossy) |
-|---------------|----------------|----------------------|-----------------|-----------------------|
-| Size          | 82.0 MB        | 76.0 MB              | 57.7 MB         | 55.6 MB               |
-| Serialize     | 4.8 s          | 4.3 s                | 4.6 s           | 4.1 s                 |
-| Deserialize   | 8.0 s          | 7.5 s                | 2.0 s           | 2.1 s                 |
-| Filter 0.55%  | 1.8 s          | 1.7 s                | 563.1 ms        | 528.9 ms              |
-| Filter 12.48% | 4.7 s          | 4.7 s                | 835.3 ms        | 756.7 ms              |
-| Filter 12.97% | 159.2 ms       | 166.3 ms             | 48.7 ms         | 48.9 ms               |
+| Metric        | text     | JSON     | JSON lossy | arena    | arena lossy |
+|---------------|----------|----------|------------|----------|-------------|
+| Size          | 91.7 MB  | 82.0 MB  | 76.0 MB    | 57.7 MB  | 55.6 MB     |
+| Serialize     | 1.7 s    | 4.6 s    | 4.2 s      | 4.4 s    | 4.1 s       |
+| Deserialize   | 974.4 ms | 7.5 s    | 7.5 s      | 1.9 s    | 1.9 s       |
+| Filter 0.55%  | 672.9 ms | 1.8 s    | 1.7 s      | 567.0 ms | 517.9 ms    |
+| Filter 12.48% | 658.2 ms | 4.5 s    | 4.6 s      | 793.1 ms | 770.5 ms    |
+| Filter 12.97% | 25.7 ms  | 154.3 ms | 151.4 ms   | 49.0 ms  | 45.6 ms     |
+
+- PcoPack even when storing the explain JSON as text outperforms the other crates. When storing JSON, PcoPack reduces compressed size but much more time is spent serializing.
+- JSON lossy uses `float_round = 2, time_round = 1s` to cut ~7% off the JSON path. Float rounding removes sub-millisecond precision.
+- The arena (AKA struct of array) scenarios replace the JSON tree with a flattened typed arena of native columns. Arena is ~30% smaller than JSON, and lossy arena shaves ~3% more. Arena deserialization is ~4x faster than JSON, and filters are ~3x faster.
 
 #### Other crates
 
 | Metric        | Vortex   | columnar | serde_columnar | msgpack  |
 |---------------|----------|----------|----------------|----------|
 | Size          | 122.5 MB | 127.1 MB | 123.3 MB       | 110.3 MB |
-| Serialize     | 5.2 s    | 1.8 s    | 4.7 s          | 2.2 s    |
-| Deserialize   | 671.5 ms | 634.0 ms | 973.1 ms       | 5.1 s    |
-| Filter 0.55%  | 19.0 ms  | 625.0 ms | 848.8 ms       | 5.2 s    |
-| Filter 12.48% | 548.7 ms | 619.7 ms | 838.7 ms       | 4.7 s    |
-| Filter 12.97% | 568.9 ms | 618.5 ms | 853.0 ms       | 4.6 s    |
+| Serialize     | 5.2 s    | 1.8 s    | 4.8 s          | 2.3 s    |
+| Deserialize   | 729.4 ms | 636.2 ms | 935.2 ms       | 5.5 s    |
+| Filter 0.55%  | 19.4 ms  | 626.0 ms | 857.5 ms       | 5.4 s    |
+| Filter 12.48% | 553.3 ms | 623.9 ms | 850.3 ms       | 4.9 s    |
+| Filter 12.97% | 569.0 ms | 628.0 ms | 857.8 ms       | 4.8 s    |
 
-- The arena columns replace the `serde_json::Value` tree with a flattened typed arena of native columns: `PcoPack (arena)` is numerically exact (`benches/postgres/arena.rs`), `PcoPack (arena lossy)` quantizes floats to two decimals (`benches/postgres/arena_lossy.rs`, `float_round = 2` declared on every struct owning floats). Numeric columns are native Rust types (`f64` where a column can hold floats, `u8`..`u64` chosen from each field's semantic domain), `Workers` entries flatten into their own typed rows instead of the overflow blob, and integer text in a float column rebuilds as a float ("0" becomes "0.0") since value-exactness is the contract, not byte-exactness. Arena is ~30% smaller than the JSON column; lossy arena shaves ~3% more. Deserialize ~4x faster than the JSON columns, filters ~3x faster; serialize is comparable (the flatten replaces the tree encode).
-- Exactness is verified on every row of the capture: the arena rebuilds fingerprint-identical `output_json` (numbers folded to their f64 bits, so every value is numerically equal); the lossy arena compares modulo float rounding, so structure, key presence, and strings stay guarded.
-- Every scenario owns the rows it writes: the serialize passes move the input into `PcoPack::write` with no deep clone, the way a real caller with an owned vec does.
-- PcoPack (lossy) uses `float_round = 2, time_round = 1s` to cut ~7% off the JSON path. Float rounding removes sub-millisecond precision.
-- columnar and serde_columnar stringify the JSON payload because they don't support `serde_json::Value` directly; msgpack carries the Value tree as msgpack+zstd. This explains their larger sizes; columnar's flat strings encode fastest.
+- Vortex, columnar, and serde_columnar store the JSON as text; the same as the PcoPack text scenario.
 
 ### query_stats_1min (29970299 rows)
 

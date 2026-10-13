@@ -66,10 +66,6 @@ pub fn lfs_warning(name: &str) -> String {
 }
 
 // ---- Table printers ----
-// Datasets-bench layout with postgres-specific columns: the lossy column is
-// spelled `PcoPack time_round` for backends and stats, `PcoPack (lossy)`
-// for explains (the shared printer says `(lossy)` because the public
-// datasets round with `float_round` too: openalex, osm).
 
 #[derive(Debug)]
 pub struct CodecRow {
@@ -99,13 +95,15 @@ impl markdown_tables::MarkdownTableRow for CodecRow {
     }
 }
 
-/// query_explains: the four PcoPack scenarios in one table. JSON keeps the
+/// query_explains: the five PcoPack scenarios in one table. string keeps the
+/// JSON payload as a plain string (the way Vortex stores it); JSON keeps the
 /// `serde_json::Value` tree; arena replaces `output_json` with the flattened
 /// plan-tree arena of `postgres/arena.rs`; the lossy variants add
 /// `float_round = 2` (plus `time_round = 1 s` on the rows).
 #[derive(Debug)]
 pub struct CodecRowPcoPack {
     pub metric: String,
+    pub text: String,
     pub json: String,
     pub json_lossy: String,
     pub arena: String,
@@ -114,11 +112,12 @@ pub struct CodecRowPcoPack {
 
 impl markdown_tables::MarkdownTableRow for CodecRowPcoPack {
     fn column_names() -> Vec<&'static str> {
-        vec!["Metric", "PcoPack (JSON)", "PcoPack (JSON lossy)", "PcoPack (arena)", "PcoPack (arena lossy)"]
+        vec!["Metric", "text", "JSON", "JSON lossy", "arena", "arena lossy"]
     }
     fn column_values(&self) -> Vec<String> {
         vec![
             self.metric.clone(),
+            self.text.clone(),
             self.json.clone(),
             self.json_lossy.clone(),
             self.arena.clone(),

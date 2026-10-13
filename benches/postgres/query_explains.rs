@@ -9,8 +9,9 @@
 //! The float columns carry millisecond values as decimals; the lossy variant
 //! rounds seen_at to whole seconds and the EXPLAIN floats to 2 decimals.
 //!
-//! Four PcoPack scenarios run against the same rows, printed as their own
-//! table, then the non-PcoPack crates in a second table: JSON keeps the
+//! Five PcoPack scenarios run against the same rows, printed as their own
+//! table, then the non-PcoPack crates in a second table: string keeps the
+//! JSON payload as a plain string (the way Vortex stores it); JSON keeps the
 //! `serde_json::Value` tree; arena replaces `output_json` with the flattened
 //! typed arena of `arena.rs` (one row-local `Vec<PlanNode>` per plan plus
 //! typed `Workers` rows, numerically exact); arena lossy rides the lossy
@@ -54,7 +55,63 @@ pub struct QueryExplain {
     pub node_insights: Option<serde_json::Value>,
 }
 
-/// The lossy model (`PcoPack (lossy)` column): `time_round = 1 s` on
+/// The string mirror (`text` column): `output_json` and `node_insights`
+/// ride as plain strings, the way Vortex's arrow schema carries the payload.
+#[derive(Clone, Debug, PartialEq, PcoPack)]
+#[pco_pack(index = [server_id], timestamp = seen_at)]
+pub struct QueryExplainString {
+    pub server_id: i64,
+    pub database_id: i64,
+    pub postgres_role_id: i64,
+    pub query_fingerprint: i64,
+    pub format: i32,
+    pub source: i32,
+    pub error: String,
+    pub seen_at: DateTime<Utc>,
+    pub runtime_ms: f32,
+    pub total_cost: Option<f32>,
+    pub total_shared_blks_hit: Option<i64>,
+    pub total_shared_blks_read: Option<i64>,
+    pub total_shared_blks_written: Option<i64>,
+    pub total_shared_blks_dirtied: Option<i64>,
+    pub total_blk_read_time: Option<f32>,
+    pub total_blk_write_time: Option<f32>,
+    pub plan_node_types: Vec<SmolStr>,
+    pub plan_fingerprint: Option<i64>,
+    pub output_text: Option<String>,
+    pub output_json: Option<String>,
+    pub node_insights: Option<String>,
+}
+
+impl From<&QueryExplain> for QueryExplainString {
+    fn from(r: &QueryExplain) -> Self {
+        QueryExplainString {
+            server_id: r.server_id,
+            database_id: r.database_id,
+            postgres_role_id: r.postgres_role_id,
+            query_fingerprint: r.query_fingerprint,
+            format: r.format,
+            source: r.source,
+            error: r.error.clone(),
+            seen_at: r.seen_at,
+            runtime_ms: r.runtime_ms,
+            total_cost: r.total_cost,
+            total_shared_blks_hit: r.total_shared_blks_hit,
+            total_shared_blks_read: r.total_shared_blks_read,
+            total_shared_blks_written: r.total_shared_blks_written,
+            total_shared_blks_dirtied: r.total_shared_blks_dirtied,
+            total_blk_read_time: r.total_blk_read_time,
+            total_blk_write_time: r.total_blk_write_time,
+            plan_node_types: r.plan_node_types.clone(),
+            plan_fingerprint: r.plan_fingerprint,
+            output_text: r.output_text.clone(),
+            output_json: r.output_json.as_ref().map(serde_json::Value::to_string),
+            node_insights: r.node_insights.as_ref().map(serde_json::Value::to_string),
+        }
+    }
+}
+
+/// The lossy model (`JSON lossy` column): `time_round = 1 s` on
 /// seen_at, `float_round = 2` on the EXPLAIN millisecond floats (rounding
 /// at the hundredths-of-ms level).
 #[derive(Clone, Debug, PartialEq, PcoPack)]
@@ -395,6 +452,11 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     let expected: Vec<u64> = rows.iter().map(|r| fingerprint(&r.output_json)).collect();
     let expected_structure: Vec<u64> = rows.iter().map(|r| fingerprint_structure(&r.output_json)).collect();
 
+    let string_rows: Vec<QueryExplainString> = rows.iter().map(QueryExplainString::from).collect();
+    let pco_text = common::bench_pco_pack(string_rows, &pco_filters, |back| {
+        assert_eq!(back.len(), n, "query_explains (text) row count")
+    });
+
     let lossy_rows: Vec<QueryExplainLossy> = rows.iter().map(QueryExplainLossy::from).collect();
     let lossy_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_lossy.iter()).map(|(q, (_, e))| (q, *e)).collect();
@@ -485,6 +547,7 @@ fn bench_explains(rows: Vec<QueryExplain>) {
         .iter()
         .map(|m| CodecRowPcoPack {
             metric: m.to_string(),
+            text: cell(&pco_text, m, None),
             json: cell(&pco, m, None),
             json_lossy: cell(&pco_lossy, m, None),
             arena: cell(&pco_arena, m, None),
@@ -504,6 +567,7 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     for (i, label) in label_refs.iter().enumerate() {
         pco_out.push(CodecRowPcoPack {
             metric: label.to_string(),
+            text: cell(&pco_text, "Filter", Some(i)),
             json: cell(&pco, "Filter", Some(i)),
             json_lossy: cell(&pco_lossy, "Filter", Some(i)),
             arena: cell(&pco_arena, "Filter", Some(i)),
