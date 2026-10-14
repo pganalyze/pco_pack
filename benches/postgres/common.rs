@@ -126,11 +126,14 @@ impl markdown_tables::MarkdownTableRow for CodecRowPcoPack {
     }
 }
 
-/// query_explains: the non-PcoPack crates in their own table.
+/// query_explains: the non-PcoPack crates in their own table. `Vortex json`
+/// stores the plan payload shredded by JSON keys (Arrow schema inference ->
+/// vortex struct columns) instead of as text like the plain `Vortex` column.
 #[derive(Debug)]
 pub struct CodecRowOther {
     pub metric: String,
     pub vortex: String,
+    pub vortex_json: String,
     pub columnar: String,
     pub serde_columnar: String,
     pub msgpack: String,
@@ -138,12 +141,13 @@ pub struct CodecRowOther {
 
 impl markdown_tables::MarkdownTableRow for CodecRowOther {
     fn column_names() -> Vec<&'static str> {
-        vec!["Metric", "Vortex", "columnar", "serde_columnar", "msgpack"]
+        vec!["Metric", "Vortex", "Vortex json", "columnar", "serde_columnar", "msgpack"]
     }
     fn column_values(&self) -> Vec<String> {
         vec![
             self.metric.clone(),
             self.vortex.clone(),
+            self.vortex_json.clone(),
             self.columnar.clone(),
             self.serde_columnar.clone(),
             self.msgpack.clone(),

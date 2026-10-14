@@ -16,7 +16,9 @@
 //! holds the capture readers and table printers and has no `bench()` of its
 //! own. Every codec re-encodes the same loaded rows: PcoPack full-fidelity,
 //! one lossy PcoPack variant per source, Vortex, columnar, serde_columnar,
-//! and msgpack+zstd. `backends` adds the `PcoPack Timeline` column from
+//! and msgpack+zstd; query_explains adds `Vortex json`, which shreds the
+//! plan payload into key columns via Arrow's JSON schema inference instead
+//! of storing it as text. `backends` adds the `PcoPack Timeline` column from
 //! `benches/timeline.rs`.
 //!
 //! PcoPack roundtrip verifies are counts-only, the repo convention for
