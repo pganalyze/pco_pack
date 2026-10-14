@@ -30,6 +30,7 @@ zstd = "0.13"
 
 [dev-dependencies]
 arrow-array = "59"
+arrow-json = "59"
 arrow-schema = "59"
 bytemuck = "1.0"
 columnar = { version = "0.13", features = ["serde", "std"] }
@@ -46,6 +47,7 @@ serde_columnar = "0.3"
 tokio = { version = "1", features = ["rt"] }
 uuid = { version = "1.0", features = ["v4"] }
 vortex = { version = "0.88", features = ["tokio"] }
+vortex-json = "0.88"
 
 [[bench]]
 name = "chunk_size"

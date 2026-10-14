@@ -418,16 +418,17 @@ This data model is dominated by large Postgres EXPLAIN plans represented as JSON
 
 #### Other crates
 
-| Metric        | Vortex   | columnar | serde_columnar | msgpack  |
-|---------------|----------|----------|----------------|----------|
-| Size          | 122.5 MB | 127.1 MB | 123.3 MB       | 110.3 MB |
-| Serialize     | 5.2 s    | 1.8 s    | 4.8 s          | 2.3 s    |
-| Deserialize   | 729.4 ms | 636.2 ms | 935.2 ms       | 5.5 s    |
-| Filter 0.55%  | 19.4 ms  | 626.0 ms | 857.5 ms       | 5.4 s    |
-| Filter 12.48% | 553.3 ms | 623.9 ms | 850.3 ms       | 4.9 s    |
-| Filter 12.97% | 569.0 ms | 628.0 ms | 857.8 ms       | 4.8 s    |
+| Metric        | Vortex   | Vortex json | columnar | serde_columnar | msgpack  |
+|---------------|----------|-------------|----------|----------------|----------|
+| Size          | 122.5 MB | 95.2 MB     | 127.1 MB | 123.3 MB       | 110.3 MB |
+| Serialize     | 5.2 s    | 26.6 s      | 1.8 s    | 4.7 s          | 2.2 s    |
+| Deserialize   | 740.8 ms | 681.4 ms    | 630.7 ms | 930.2 ms       | 5.1 s    |
+| Filter 0.55%  | 22.7 ms  | 28.1 ms     | 622.4 ms | 861.0 ms       | 5.1 s    |
+| Filter 12.48% | 556.2 ms | 705.8 ms    | 616.7 ms | 862.2 ms       | 4.8 s    |
+| Filter 12.97% | 560.5 ms | 370.6 ms    | 623.5 ms | 851.6 ms       | 4.6 s    |
 
 - Vortex, columnar, and serde_columnar store the JSON as text; the same as the PcoPack text scenario.
+- Vortex json shreds the plan keys into typed columns through arrow-json schema inference, down to depth 12; deeper subtrees persist as `arrow.json` text blob columns. Key shredding cuts size from 122.5 MB to 95.2 MB and keeps filters pushing down on shredded plan columns. Serialize pays for two JSON parse passes (schema inference and decode), so it is ~5x slower than the text blob.
 
 ### query_stats_1min (29970299 rows)
 

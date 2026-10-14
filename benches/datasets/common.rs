@@ -210,7 +210,7 @@ pub fn ds_vortex_rt() -> &'static tokio::runtime::Runtime {
 
 /// Create the session inside `block_on` so vortex picks up the ambient
 /// tokio runtime (struct bench convention).
-fn ds_vortex_session() -> &'static vortex::session::VortexSession {
+pub fn ds_vortex_session() -> &'static vortex::session::VortexSession {
     static SESSION: std::sync::OnceLock<vortex::session::VortexSession> = std::sync::OnceLock::new();
     SESSION.get_or_init(|| {
         use vortex::VortexSessionDefault as _;

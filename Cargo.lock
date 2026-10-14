@@ -220,6 +220,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrow-json"
+version = "59.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2f57d7a81969f24ccf80809587b76c09897e6f829d2d65a5976bfb3218851f1"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-cast",
+ "arrow-ord",
+ "arrow-schema",
+ "arrow-select",
+ "chrono",
+ "half",
+ "indexmap",
+ "itoa",
+ "lexical-core",
+ "memchr",
+ "num-traits",
+ "ryu",
+ "serde_core",
+ "serde_json",
+ "simdutf8",
+]
+
+[[package]]
 name = "arrow-ord"
 version = "59.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2317,6 +2342,7 @@ dependencies = [
  "ahash",
  "anyhow",
  "arrow-array",
+ "arrow-json",
  "arrow-schema",
  "bitvec",
  "bytemuck",
@@ -2344,6 +2370,7 @@ dependencies = [
  "tokio",
  "uuid",
  "vortex",
+ "vortex-json",
  "zstd",
 ]
 
