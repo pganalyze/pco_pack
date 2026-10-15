@@ -356,7 +356,7 @@ impl Ds {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(self.name);
         if path.exists() && file_ok(&path, self) {
-            return path; // pinned files are immutable; no network on re-runs
+            return path; // no network once the cache holds good bytes
         }
         if path.exists() {
             eprintln!("[{}] cached copy is stale; re-downloading", self.name);
@@ -387,13 +387,7 @@ fn file_ok(path: &Path, ds: &Ds) -> bool {
     let Ok(meta) = std::fs::metadata(path) else {
         return false;
     };
-    if meta.len() != ds.size {
-        return false;
-    }
-    match ds.md5 {
-        None => true,
-        Some(pinned) => file_md5(path) == pinned,
-    }
+    meta.len() == ds.size && ds.md5.map_or(true, |pinned| file_md5(path) == pinned)
 }
 
 fn file_md5(path: &Path) -> String {

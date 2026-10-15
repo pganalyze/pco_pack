@@ -1,6 +1,6 @@
-//! osm: OpenStreetMap Austria (Geofabrik 2026-09-23, ODbL): 87.8M nodes /
-//! 9.4M ways / 181k relations from the 811 MB PBF into three entity tables.
-//! Sparse tag maps (`HashMap<SmolStr, String>`), spatially correlated
+//! osm: OpenStreetMap Austria (Geofabrik 2026-01-01 annual extract, ODbL)
+//! from the 790 MB PBF into three entity tables. Sparse tag maps
+//! (`HashMap<SmolStr, String>`), spatially correlated
 //! `Vec<i64>` refs, unit enum, f64 coords with `float_round = 7` (~1 cm;
 //! the nanodegree tail is noise), bbox filter on the bulk centroid
 //! (cross-border).
@@ -15,11 +15,14 @@ use std::collections::HashMap;
 
 use super::common::{self, CodecResults, Ds};
 
+// Geofabrik purges dated extracts after a few weeks; its New Year's
+// extracts have stayed online since 2014 and ship a companion `.osm.pbf.md5`,
+// so the annual extract is the durable pin.
 pub const DS: Ds = Ds {
-    name: "austria-260923.osm.pbf",
-    url: "https://download.geofabrik.de/europe/austria-260923.osm.pbf",
-    size: 810_746_083,
-    md5: Some("481bb65e61d5d5d22bb8a065b22506e2"),
+    name: "austria-260101.osm.pbf",
+    url: "https://download.geofabrik.de/europe/austria-260101.osm.pbf",
+    size: 790_307_191,
+    md5: Some("d3c3eb51301ee9cf82ec15f88857e0d3"),
 };
 
 // ---------------------------------------------------------------------------

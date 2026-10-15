@@ -307,10 +307,10 @@ NYC AirData single-sensor stream: wide i16 measurements, a monotonic i64 counter
 | Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
 |--------------|----------|-----------------|----------|----------|----------------|----------|
 | Size         | 4.1 MB   | 2.5 MB          | 4.1 MB   | 14.0 MB  | 5.4 MB         | 15.9 MB  |
-| Serialize    | 120.7 ms | 109.1 ms        | 224.0 ms | 110.4 ms | 136.1 ms       | 308.8 ms |
-| Deserialize  | 55.9 ms  | 53.7 ms         | 69.8 ms  | 36.1 ms  | 59.4 ms        | 211.0 ms |
-| Filter 0.18% | 6.8 ms   | 6.7 ms          | 2.2 ms   | 34.2 ms  | 61.9 ms        | 217.9 ms |
-| Filter 4.49% | 8.3 ms   | 8.1 ms          | 3.4 ms   | 34.2 ms  | 59.8 ms        | 220.4 ms |
+| Serialize    | 112.7 ms | 107.7 ms        | 209.7 ms | 107.5 ms | 133.0 ms       | 304.6 ms |
+| Deserialize  | 55.0 ms  | 53.8 ms         | 68.4 ms  | 35.8 ms  | 60.4 ms        | 217.1 ms |
+| Filter 0.18% | 6.9 ms   | 6.7 ms          | 1.1 ms   | 33.9 ms  | 59.7 ms        | 205.9 ms |
+| Filter 4.49% | 8.5 ms   | 8.0 ms          | 3.3 ms   | 34.0 ms  | 58.6 ms        | 206.7 ms |
 
 - Full-fidelity size is tied between PcoPack and Vortex
 - Lossy time rounding reduces size by 40%
@@ -322,10 +322,10 @@ NYC taxi trips (also seen in the upstream pcodec benchmarks). All four timestamp
 | Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
 |--------------|----------|-----------------|----------|----------|----------------|----------|
 | Size         | 285.5 MB | 275.7 MB        | 415.1 MB | 572.5 MB | 523.4 MB       | 661.5 MB |
-| Serialize    | 9.1 s    | 8.4 s           | 21.2 s   | 7.9 s    | 10.1 s         | 12.1 s   |
-| Deserialize  | 3.6 s    | 3.4 s           | 9.4 s    | 2.6 s    | 5.2 s          | 10.1 s   |
-| Filter 0.2%  | 103.2 ms | 110.7 ms        | 33.7 ms  | 2.5 s    | 5.2 s          | 10.2 s   |
-| Filter 4.05% | 217.3 ms | 214.8 ms        | 410.2 ms | 2.5 s    | 5.3 s          | 10.1 s   |
+| Serialize    | 9.2 s    | 8.4 s           | 20.7 s   | 7.7 s    | 10.1 s         | 11.9 s   |
+| Deserialize  | 3.6 s    | 3.4 s           | 9.0 s    | 2.6 s    | 5.2 s          | 9.6 s    |
+| Filter 0.2%  | 109.3 ms | 92.7 ms         | 28.1 ms  | 2.5 s    | 5.1 s          | 9.6 s    |
+| Filter 4.05% | 218.4 ms | 206.9 ms        | 395.4 ms | 2.5 s    | 5.1 s          | 9.7 s    |
 
 - PcoPack is the smallest by a wide margin
 - For filtering, hour window favors Vortex (finer row-group pruning) and day window favors PcoPack
@@ -333,50 +333,50 @@ NYC taxi trips (also seen in the upstream pcodec benchmarks). All four timestamp
 
 ### OpenStreetMap
 
-Geofabrik Austria PBF. Filters are padded boxes on the centroid: cross-border geometry puts 0.013% of nodes outside the nominal bbox. Ways and relations have no natural scalar filter.
+Geofabrik Austria PBF. Filters are padded boxes on the centroid: cross-border geometry puts a measurable fraction of nodes outside the nominal bbox. Ways and relations have no natural scalar filter.
 
-#### Node (87800672 rows)
+#### Node (85929052 rows)
 
 | Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack |
 |--------------|----------|-----------------|----------|----------|----------------|---------|
-| Size         | 867.1 MB | 359.7 MB        | 415.6 MB | 1.2 GB   | 1.1 GB         | 1.4 GB  |
-| Serialize    | 6.8 s    | 6.4 s           | 43.1 s   | 7.9 s    | 7.9 s          | 7.9 s   |
-| Deserialize  | 2.9 s    | 2.9 s           | 4.1 s    | 2.3 s    | 3.6 s          | 6.0 s   |
-| Filter 0.17% | 747.8 ms | 776.9 ms        | 545.1 ms | 2.3 s    | 3.5 s          | 5.9 s   |
-| Filter 4.65% | 1.2 s    | 1.2 s           | 2.1 s    | 2.2 s    | 3.6 s          | 6.0 s   |
+| Size         | 847.6 MB | 351.4 MB        | 405.5 MB | 1.2 GB   | 1.1 GB         | 1.3 GB  |
+| Serialize    | 6.5 s    | 6.4 s           | 40.8 s   | 7.9 s    | 7.5 s          | 7.8 s   |
+| Deserialize  | 2.8 s    | 2.8 s           | 4.0 s    | 2.2 s    | 3.5 s          | 5.9 s   |
+| Filter 0.18% | 707.9 ms | 749.7 ms        | 507.0 ms | 2.1 s    | 3.4 s          | 5.7 s   |
+| Filter 4.66% | 1.1 s    | 1.2 s           | 2.0 s    | 2.1 s    | 3.4 s          | 5.7 s   |
 
 - Vortex automatically converts limited-precision floats into integers, which is why it outperforms PcoPack by default
 - PcoPack (lossy) uses `float_round = 7`, cutting node size ~59% and only drops sub-centimeter coordinate precision
 
-#### Way (9378713 rows)
+#### Way (9172339 rows)
 
 | Metric      | PcoPack  | Vortex   | columnar | serde_columnar | msgpack  |
 |-------------|----------|----------|----------|----------------|----------|
-| Size        | 199.7 MB | 212.1 MB | 395.1 MB | 459.9 MB       | 491.0 MB |
-| Serialize   | 7.4 s    | 13.6 s   | 6.1 s    | 5.1 s          | 4.3 s    |
-| Deserialize | 4.0 s    | 4.2 s    | 1.6 s    | 3.4 s          | 3.7 s    |
+| Size        | 195.2 MB | 208.1 MB | 384.8 MB | 448.2 MB       | 478.4 MB |
+| Serialize   | 6.5 s    | 13.1 s   | 6.1 s    | 5.0 s          | 4.2 s    |
+| Deserialize | 3.8 s    | 4.0 s    | 1.6 s    | 3.2 s          | 3.7 s    |
 
-#### Relation (180809 rows)
+#### Relation (175564 rows)
 
 | Metric      | PcoPack  | Vortex   | columnar | serde_columnar | msgpack  |
 |-------------|----------|----------|----------|----------------|----------|
-| Size        | 18.4 MB  | 19.3 MB  | 20.2 MB  | 17.3 MB        | 19.8 MB  |
-| Serialize   | 354.5 ms | 693.1 ms | 289.1 ms | 342.1 ms       | 212.0 ms |
-| Deserialize | 199.1 ms | 253.5 ms | 69.1 ms  | 196.8 ms       | 257.9 ms |
+| Size        | 17.8 MB  | 18.4 MB  | 19.5 MB  | 16.6 MB        | 19.1 MB  |
+| Serialize   | 328.2 ms | 653.0 ms | 269.7 ms | 293.1 ms       | 195.9 ms |
+| Deserialize | 212.4 ms | 245.4 ms | 62.3 ms  | 189.6 ms       | 236.5 ms |
 
-### openalex (558403 works)
+### openalex (632276 works)
 
 OpenAlex `works` snapshot: deeply nested JSON flattened to typed structs.
 
-| Metric       | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
-|--------------|----------|-----------------|----------|----------|----------------|----------|
-| Size         | 411.5 MB | 404.2 MB        | 422.4 MB | 556.3 MB | 513.4 MB       | 566.7 MB |
-| Serialize    | 11.1 s   | 10.6 s          | 13.1 s   | 8.7 s    | 9.4 s          | 4.9 s    |
-| Deserialize  | 6.1 s    | 6.1 s           | 5.1 s    | 1.8 s    | 5.4 s          | 4.5 s    |
-| Filter 0.02% | 2.1 s    | 2.2 s           | 549.5 ms | 1.7 s    | 5.7 s          | 4.5 s    |
-| Filter 2.94% | 2.4 s    | 2.5 s           | 1.0 s    | 1.7 s    | 5.4 s          | 4.4 s    |
+| Metric        | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
+|---------------|----------|-----------------|----------|----------|----------------|----------|
+| Size          | 322.4 MB | 316.0 MB        | 334.4 MB | 450.0 MB | 394.5 MB       | 434.6 MB |
+| Serialize     | 9.3 s    | 9.4 s           | 11.8 s   | 7.2 s    | 8.7 s          | 4.1 s    |
+| Deserialize   | 5.3 s    | 5.2 s           | 4.8 s    | 1.5 s    | 5.3 s          | 4.2 s    |
+| Filter <0.01% | 1.4 s    | 1.4 s           | 118.4 ms | 1.5 s    | 4.9 s          | 4.2 s    |
+| Filter 2.96%  | 2.3 s    | 2.3 s           | 964.4 ms | 1.5 s    | 5.3 s          | 4.4 s    |
 
-- PcoPack (lossy) `float_round = 4` saves 3% because `fwci` and scores carry ~15-digit model noise
+- PcoPack (lossy) `float_round = 4` saves 2% because `fwci` and scores carry ~15-digit model noise
 - Vortex filters fastest (row-group pruning + predicate pushdown)
 
 ## Postgres

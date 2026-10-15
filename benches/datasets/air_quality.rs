@@ -13,7 +13,7 @@ pub const DS: Ds = Ds {
     name: "devinrsmith-air-quality.20220714.zstd.parquet",
     url: "https://pcodec-public.s3.amazonaws.com/devinrsmith-air-quality.20220714.zstd.parquet",
     size: 15_661_377,
-    md5: None, // S3 ETag is multipart; size is the pin
+    md5: Some("ed6699da78748bcfe9a418a1554597b6"),
 };
 
 #[derive(Clone, Debug, PartialEq, PcoPack, serde::Serialize, serde::Deserialize)]

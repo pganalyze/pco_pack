@@ -1,6 +1,9 @@
-//! openalex: OpenAlex `works` snapshot (release 2026-09-23, CC0), 558,403
-//! works from two pinned JSONL parts (1.54 GB gzipped). Nested-structure
-//! showcase: 3-level nesting (`Work` -> `Authorship` -> `Institution`),
+//! openalex: OpenAlex `works` snapshot (CC0) via the Mearman/OpenAlex
+//! HuggingFace mirror, revision-pinned at `updated_date=2026-03-30`,
+//! two JSONL parts (~1.5 GB gzipped). OpenAlex rewrites its live S3
+//! partitions in place during maintenance, so the mirror's frozen git
+//! revision is the durable byte source. Row counts are fixed by the pin.
+//! Nested-structure showcase: 3-level nesting (`Work` -> `Authorship` -> `Institution`),
 //! `Vec<struct>` fields, `Option` on most fields, an inverted-abstract map,
 //! 5 unit enums, f32 scores rounded to 4 decimals in the lossy mirror
 //! (deliberate fidelity cut).
@@ -13,18 +16,21 @@ use std::io::BufRead;
 
 use super::common::{self, CodecResults, Ds};
 
-// The two part files of the 2026-09-23 works release. Immutable S3 objects
-// with multipart ETags (not md5), so `size` pins them.
+// OpenAlex's live S3 tree rewrites partition bytes in place (2026-10-14
+// swept the whole updated_date tree), so its URLs are durable but not
+// immutable. This HuggingFace mirror froze the tree and the resolve URL is
+// pinned to a git revision, which is immutable; the mirror's sync ends at
+// 2026-03-30. HF ETags are xet hashes (not md5), so `size` pins them.
 pub const DS_0: Ds = Ds {
     name: "openalex_part_0000.gz",
-    url: "https://openalex.s3.amazonaws.com/data/jsonl/works/updated_date=2026-09-23/part_0000.gz",
-    size: 772_597_338,
+    url: "https://huggingface.co/datasets/Mearman/OpenAlex/resolve/ef02effac13bfbd0991612f444cebcef8a882453/data/works/updated_date=2026-03-30/part_0000.jsonl.gz",
+    size: 845_002_113,
     md5: None,
 };
 pub const DS_1: Ds = Ds {
     name: "openalex_part_0001.gz",
-    url: "https://openalex.s3.amazonaws.com/data/jsonl/works/updated_date=2026-09-23/part_0001.gz",
-    size: 771_641_892,
+    url: "https://huggingface.co/datasets/Mearman/OpenAlex/resolve/ef02effac13bfbd0991612f444cebcef8a882453/data/works/updated_date=2026-03-30/part_0001.jsonl.gz",
+    size: 713_214_350,
     md5: None,
 };
 
@@ -68,6 +74,7 @@ pub enum WorkType {
     #[serde(rename = "software-paper")]
     SoftwarePaper,
     Libguides,
+    Database,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
@@ -94,6 +101,7 @@ pub enum SourceType {
     #[serde(rename = "ebook platform")]
     EbookPlatform,
     Metadata,
+    Other,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
@@ -128,7 +136,7 @@ pub struct Work {
     pub publication_year: Option<i32>,
     pub publication_date: Option<DateTime<Utc>>, // "2018-02-13" -> midnight
     pub language: Option<SmolStr>,               // ISO-639-3, ~100 values
-    pub work_type: WorkType,                     // 25 values; the api always sends it
+    pub work_type: WorkType,                     // 26 values; the api always sends it
     pub cited_by_count: i32,                     // zero-spike + right skew
     pub fwci: Option<f32>,
     pub is_retracted: Option<bool>, // null on 209/558,403 records
@@ -157,8 +165,8 @@ pub struct Authorship {
 
 #[derive(Clone, Debug, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
 pub struct Institution {
-    pub id: i64,
-    pub name: String,             // display_name
+    pub id: Option<i64>,          // null on unresolved institutions
+    pub name: Option<String>,     // display_name; null on unresolved institutions
     pub ror: Option<SmolStr>,     // payload after `https://ror.org/` (variable length)
     pub country: Option<SmolStr>, // ISO-2
     pub inst_type: Option<InstType>,
@@ -383,8 +391,8 @@ pub struct AuthorshipCol {
 
 #[derive(Clone, Debug, PartialEq, columnar::Columnar, serde::Serialize, serde::Deserialize)]
 pub struct InstitutionCol {
-    pub id: i64,
-    pub name: String,
+    pub id: Option<i64>,
+    pub name: Option<String>,
     pub ror: Option<String>,
     pub country: Option<String>,
     pub inst_type: Option<u8>,
@@ -434,6 +442,7 @@ fn work_type_u8(t: &WorkType) -> u8 {
         WorkType::Standard => 22,
         WorkType::SoftwarePaper => 23,
         WorkType::Libguides => 24,
+        WorkType::Database => 25,
     }
 }
 
@@ -456,6 +465,7 @@ fn source_type_u8(t: &SourceType) -> u8 {
         SourceType::BookSeries => 3,
         SourceType::EbookPlatform => 4,
         SourceType::Metadata => 5,
+        SourceType::Other => 6,
     }
 }
 
@@ -619,9 +629,8 @@ mod openalex_sc {
     #[columnar(vec, ser, de)]
     #[derive(Debug, Clone, PartialEq)]
     pub struct InstitutionScRow {
-        #[columnar(strategy = "DeltaRle")]
-        pub id: i64,
-        pub name: String,
+        pub id: Option<i64>,
+        pub name: Option<String>,
         pub ror: Option<String>,
         pub country: Option<String>,
         pub inst_type: Option<u8>,
@@ -782,8 +791,8 @@ pub struct AuthorshipVx {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct InstitutionVx {
-    pub id: i64,
-    pub name: String,
+    pub id: Option<i64>,
+    pub name: Option<String>,
     pub ror: Option<String>,
     pub country: Option<String>,
     pub inst_type: Option<String>,
@@ -833,6 +842,7 @@ fn work_type_str(t: &WorkType) -> &'static str {
         WorkType::Standard => "standard",
         WorkType::SoftwarePaper => "software-paper",
         WorkType::Libguides => "libguides",
+        WorkType::Database => "database",
     }
 }
 
@@ -855,6 +865,7 @@ fn source_type_str(t: &SourceType) -> &'static str {
         SourceType::BookSeries => "book series",
         SourceType::EbookPlatform => "ebook platform",
         SourceType::Metadata => "metadata",
+        SourceType::Other => "other",
     }
 }
 
@@ -1017,8 +1028,8 @@ struct AuthorJson {
 
 #[derive(serde::Deserialize)]
 struct InstitutionJson {
-    id: String,
-    display_name: String,
+    id: Option<String>,
+    display_name: Option<String>,
     ror: Option<String>,
     country_code: Option<String>,
     #[serde(rename = "type")]
@@ -1101,6 +1112,7 @@ fn work_type(s: &str) -> WorkType {
         "standard" => WorkType::Standard,
         "software-paper" => WorkType::SoftwarePaper,
         "libguides" => WorkType::Libguides,
+        "database" => WorkType::Database,
         other => panic!("unknown work_type: {other:?}"),
     }
 }
@@ -1125,6 +1137,7 @@ fn source_type(s: &str) -> SourceType {
         "book series" => SourceType::BookSeries,
         "ebook platform" => SourceType::EbookPlatform,
         "metadata" => SourceType::Metadata,
+        "other" => SourceType::Other,
         other => panic!("unknown source_type: {other:?}"),
     }
 }
@@ -1200,7 +1213,7 @@ impl From<AuthorshipJson> for Authorship {
 impl From<InstitutionJson> for Institution {
     fn from(j: InstitutionJson) -> Self {
         Institution {
-            id: openalex_id(&j.id),
+            id: j.id.as_deref().map(openalex_id),
             name: j.display_name,
             ror: j.ror.map(|r| SmolStr::new(strip_prefix(&r, "https://ror.org/").as_str())),
             country: j.country_code.map(SmolStr::new),
@@ -1236,7 +1249,7 @@ impl From<KwJson> for Kw {
 
 fn load() -> Vec<Work> {
     let mut works: Vec<Work> = Vec::new();
-    for (ds, expected) in [(DS_0, 278_720usize), (DS_1, 279_683)] {
+    for (ds, expected) in [(DS_0, 400_000usize), (DS_1, 232_276)] {
         let path = ds.ensure_downloaded();
         let file = std::fs::File::open(&path).unwrap();
         let gz = flate2::read::GzDecoder::new(file);
