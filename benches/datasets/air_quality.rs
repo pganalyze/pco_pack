@@ -6,6 +6,7 @@
 use chrono::{DateTime, Duration, Utc};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use pco_pack::PcoPack;
+use std::collections::HashMap;
 
 use super::common::{self, CodecResults, Ds};
 
@@ -99,12 +100,12 @@ pub fn bench() {
     let pcof_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(exp_pcof.iter()).map(|(q, e)| (q, *e)).collect();
 
-    let pco = common::bench_pco_pack(data.to_vec(), &pco_filters, |back| {
+    let (mut pco, pco_bytes) = common::bench_pco_pack_full(data.to_vec(), &pco_filters, |back| {
         verify(data.iter().map(|r| r.floored()).collect(), back);
     });
 
     let dataf: Vec<AqF> = data.iter().map(AqF::from).collect();
-    let pcof = common::bench_pco_pack(dataf, &pcof_filters, |back| {
+    let (mut pcof, pcof_bytes) = common::bench_pco_pack_full(dataf, &pcof_filters, |back| {
         let mut a: Vec<AqF> = data.iter().map(AqF::rounded).collect();
         let mut b = back.to_vec();
         a.sort_by_key(|r| r.kafka_offset);
@@ -112,11 +113,50 @@ pub fn bench() {
         assert_eq!(a, b, "air_quality lossy roundtrip mismatch");
     });
 
+    // Projection + reduce: filter the 1 h window, load only
+    // [kafka_partition, pm_2_5], reduce partition => average pm2.5. No
+    // other columns inflate; there is no text column in this schema, so
+    // the text-filter scenario is not applicable here.
+    let proj_q = serde_json::json!({ "timestamp": { "start": us_ranges[0].0, "end": us_ranges[0].1 } });
+    let mut proj_truth: std::collections::HashMap<i32, (i64, u64)> = Default::default();
+    for r in data.iter() {
+        if (us_ranges[0].0..=us_ranges[0].1).contains(&r.timestamp.timestamp_micros()) {
+            let e = proj_truth.entry(r.kafka_partition).or_default();
+            e.0 += r.pm_2_5 as i64;
+            e.1 += 1;
+        }
+    }
+    let (ms, map) = common::bench_pco_pack_projected::<AirQuality, _>(
+        &pco_bytes,
+        &proj_q,
+        &["kafka_partition", "pm_2_5"],
+        exp_pco[0],
+        |rows| {
+            let mut acc: std::collections::HashMap<i32, (i64, u64)> = Default::default();
+            for r in rows {
+                let e = acc.entry(r.kafka_partition).or_default();
+                e.0 += r.pm_2_5 as i64;
+                e.1 += 1;
+            }
+            acc
+        },
+    );
+    assert_eq!(map, proj_truth, "air_quality projected reduce");
+    pco.project_ms = Some(ms);
+    let (msf, _) = common::bench_pco_pack_projected::<AqF, _>(
+        &pcof_bytes,
+        &proj_q,
+        &["kafka_partition", "pm_2_5"],
+        exp_pcof[0],
+        |rows| rows.len(),
+    );
+    pcof.project_ms = Some(msf);
+
     // Mirrors store ns, msgpack stores exact instants: one (i64, i64) ns
     // range serves all four codecs.
     let ns_filters: Vec<((i64, i64), usize)> = ns_ranges.iter().zip(exp_ns.iter()).map(|(r, e)| (*r, *e)).collect();
 
-    let col = common::bench_columnar(
+    let (mut col, col_buf) = common::bench_columnar(
         n,
         || data.iter().map(AqCol::from).collect(),
         &ns_filters,
@@ -130,8 +170,26 @@ pub fn bench() {
                 .count()
         },
     );
+    // Honest reduce: full indexed decode, partition => avg pm2.5.
+    col.project_ms = Some(common::reduce_columnar::<AqCol, (i64, i64), _, _>(
+        &col_buf,
+        &ns_ranges[0],
+        |decoded: &columnar::BorrowedOf<'_, AqCol>, k: &(i64, i64)| {
+            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+            for i in 0..columnar::Len::len(decoded) {
+                let r = columnar::Index::get(decoded, i);
+                if k.0 <= *r.timestamp && *r.timestamp <= k.1 {
+                    let e = acc.entry(*r.kafka_partition).or_default();
+                    e.0 += *r.pm_2_5 as i64;
+                    e.1 += 1;
+                }
+            }
+            acc
+        },
+        &proj_truth,
+    ));
 
-    let sc = common::bench_serde_columnar(
+    let (mut sc, sc_buf) = common::bench_serde_columnar(
         n,
         || aq_sc::AqScStore { data: data.iter().map(aq_sc::AqScRow::from).collect() },
         &ns_filters,
@@ -139,21 +197,79 @@ pub fn bench() {
             s.data.iter().filter(|r| k.0 <= r.timestamp && r.timestamp <= k.1).count()
         },
     );
+    sc.project_ms = Some(common::reduce_serde_columnar::<aq_sc::AqScStore, (i64, i64), _, _>(
+        &sc_buf,
+        &ns_ranges[0],
+        |s: &aq_sc::AqScStore, k: &(i64, i64)| {
+            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+            for r in s.data.iter().filter(|r| k.0 <= r.timestamp && r.timestamp <= k.1) {
+                let e = acc.entry(r.kafka_partition).or_default();
+                e.0 += r.pm_2_5 as i64;
+                e.1 += 1;
+            }
+            acc
+        },
+        &proj_truth,
+    ));
 
-    let mp = common::bench_msgpack(&data, &ns_filters, |r: &AirQuality, k: &(i64, i64)| {
+    let (mut mp, mp_buf) = common::bench_msgpack(&data, &ns_filters, |r: &AirQuality, k: &(i64, i64)| {
         let ns = r.timestamp.timestamp_nanos_opt().unwrap();
         k.0 <= ns && ns <= k.1
     });
+    mp.project_ms = Some(common::reduce_msgpack::<AirQuality, (i64, i64), _, _>(
+        &mp_buf,
+        n,
+        &ns_ranges[0],
+        |rows: &[AirQuality], k: &(i64, i64)| {
+            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+            for r in rows.iter().filter(|r| {
+                let ns = r.timestamp.timestamp_nanos_opt().unwrap();
+                k.0 <= ns && ns <= k.1
+            }) {
+                let e = acc.entry(r.kafka_partition).or_default();
+                e.0 += r.pm_2_5 as i64;
+                e.1 += 1;
+            }
+            acc
+        },
+        &proj_truth,
+    ));
 
     // Vortex uses the i64-ns mirror + numeric ranges; chrono strings vary in
     // fractional digits, so lexicographic range != temporal range.
     let data_vx: Vec<AqVx> = data.iter().map(AqVx::from).collect();
-    let vx = common::bench_vortex_ds(&data_vx, &ns_filters, |k: &(i64, i64)| {
+    let (mut vx, vx_buf) = common::bench_vortex_ds(&data_vx, &ns_filters, |k: &(i64, i64)| {
         vortex::array::expr::and(
             vortex::array::expr::gt_eq(vortex::array::expr::col("timestamp"), vortex::array::expr::lit(k.0)),
             vortex::array::expr::lt_eq(vortex::array::expr::col("timestamp"), vortex::array::expr::lit(k.1)),
         )
     });
+    // Filter + projection pushdown over the i64-ns ranges; survivors arrive
+    // in file order and the fold counts every row (the pushed filter is
+    // exact, verified by the filter cells).
+    vx.project_ms = common::reduce_vortex_ds::<(i32, i16), (i64, i64), _, _, _>(
+        &vx_buf,
+        &ns_ranges[0],
+        |k: &(i64, i64)| {
+            vortex::array::expr::and(
+                vortex::array::expr::gt_eq(vortex::array::expr::col("timestamp"), vortex::array::expr::lit(k.0)),
+                vortex::array::expr::lt_eq(vortex::array::expr::col("timestamp"), vortex::array::expr::lit(k.1)),
+            )
+        },
+        &["kafka_partition", "pm_2_5"],
+        |rows: Vec<(i32, i16)>, _: &(i64, i64)| {
+            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+            for (part, pm) in rows {
+                let e = acc.entry(part).or_default();
+                e.0 += pm as i64;
+                e.1 += 1;
+            }
+            acc
+        },
+        &proj_truth,
+    );
+
+    let reduce_label = common::reduce_label(exp_pco[0], n);
 
     CodecResults {
         pco_pack: pco,
@@ -163,7 +279,7 @@ pub fn bench() {
         msgpack: mp,
         vortex: vx,
     }
-    .print(&label_refs);
+    .print(&label_refs, Some(&reduce_label));
 }
 
 /// Lossy variant: `time_round = 1 s` drops the sub-second noise of the two

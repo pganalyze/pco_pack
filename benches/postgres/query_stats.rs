@@ -7,6 +7,7 @@
 use chrono::{DateTime, Utc};
 use pco_pack::PcoPack;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use super::common::{self, CodecRow, cell};
 
@@ -144,6 +145,14 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
 
     let keys = [Sk::Time(last_us - 3_600_000_000, last_us), Sk::Loud, Sk::Db(db0)];
     let kf: Vec<(Sk, usize)> = keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches(r)).count())).collect();
+
+    // Ground truth for the projection fold: fingerprint => average calls
+    // over the last-1h window, folded before `rows` moves into the
+    // encode benches.
+    let window = &keys[0];
+    let truth = fold_avg_calls(rows.iter().filter(|r| window.matches(r)).map(|r| (r.fingerprint, r.calls)));
+    let truth_time_round =
+        fold_avg_calls(rows.iter().filter(|r| window.matches_time_round(r)).map(|r| (r.fingerprint, r.calls)));
     let labels: Vec<String> = kf.iter().map(|(_, e)| common::filter_label(*e, n)).collect();
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
 
@@ -164,12 +173,21 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
         keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches_time_round(r)).count())).collect();
     let time_round_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_time_round.iter()).map(|(q, (_, e))| (q, *e)).collect();
-    let pco_time_round = common::bench_pco_pack(time_round_rows, &time_round_filters, |back| {
+    let (mut pco_time_round, tr_bytes) = common::bench_pco_pack_full(time_round_rows, &time_round_filters, |back| {
         assert_eq!(back.len(), n, "{name} (TimeRound) row count")
     });
+    let (project_ms, fold_time_round) = common::bench_pco_pack_projected::<QueryStatTimeRound, _>(
+        &tr_bytes,
+        &queries[0],
+        &["fingerprint", "calls"],
+        kf_time_round[0].1,
+        |survivors| fold_avg_calls(survivors.iter().map(|r| (r.fingerprint, r.calls))),
+    );
+    assert_eq!(fold_time_round, truth_time_round, "{name} (TimeRound) projected fold");
+    pco_time_round.project_ms = Some(project_ms);
 
     let col_rows: Vec<QueryStatCol> = rows.iter().map(QueryStatCol::from).collect();
-    let col = common::bench_columnar(
+    let (mut col, col_buf) = common::bench_columnar(
         n,
         move || col_rows,
         &kf,
@@ -190,9 +208,39 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
                 .count()
         },
     );
+    col.project_ms = Some(common::reduce_columnar::<QueryStatCol, Sk, HashMap<i64, f64>, _>(
+        &col_buf,
+        &keys[0],
+        |decoded: &columnar::BorrowedOf<'_, QueryStatCol>, k: &Sk| {
+            fold_avg_calls((0..columnar::Len::len(decoded)).filter_map(|i| {
+                let r = columnar::Index::get(decoded, i);
+                match k {
+                    Sk::Time(a, b) => {
+                        let us = *r.collected_at;
+                        if *a <= us && us <= *b { Some((*r.fingerprint, *r.calls)) } else { None }
+                    }
+                    Sk::Loud => {
+                        if r.toplevel && *r.calls >= 10 {
+                            Some((*r.fingerprint, *r.calls))
+                        } else {
+                            None
+                        }
+                    }
+                    Sk::Db(id) => {
+                        if *r.database_id == *id {
+                            Some((*r.fingerprint, *r.calls))
+                        } else {
+                            None
+                        }
+                    }
+                }
+            }))
+        },
+        &truth,
+    ));
 
     let vx_rows: Vec<QueryStatCol> = rows.iter().map(QueryStatCol::from).collect();
-    let vx = common::bench_vortex_ds(&vx_rows, &kf, |k: &Sk| {
+    let (mut vx, vx_buf) = common::bench_vortex_ds(&vx_rows, &kf, |k: &Sk| {
         use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq};
         match k {
             Sk::Time(a, b) => and(gt_eq(col("collected_at"), lit(*a)), lt_eq(col("collected_at"), lit(*b))),
@@ -200,9 +248,24 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
             Sk::Db(id) => eq(col("database_id"), lit(*id)),
         }
     });
+    vx.project_ms = common::reduce_vortex_ds::<(i64, i64), Sk, _, _, _>(
+        &vx_buf,
+        &keys[0],
+        |k: &Sk| {
+            use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq};
+            match k {
+                Sk::Time(a, b) => and(gt_eq(col("collected_at"), lit(*a)), lt_eq(col("collected_at"), lit(*b))),
+                Sk::Loud => and(eq(col("toplevel"), lit(true)), gt_eq(col("calls"), lit(10i64))),
+                Sk::Db(id) => eq(col("database_id"), lit(*id)),
+            }
+        },
+        &["fingerprint", "calls"],
+        |rows: Vec<(i64, i64)>, _: &Sk| fold_avg_calls(rows.into_iter()),
+        &truth,
+    );
     drop(vx_rows);
 
-    let sc = common::bench_serde_columnar(
+    let (mut sc, sc_buf) = common::bench_serde_columnar(
         n,
         || stats_sc::QueryStatsScStore { data: rows.iter().map(stats_sc::QueryStatsScRow::from).collect() },
         &kf,
@@ -217,10 +280,46 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
                 .count()
         },
     );
+    sc.project_ms = Some(common::reduce_serde_columnar::<stats_sc::QueryStatsScStore, Sk, _, _>(
+        &sc_buf,
+        &keys[0],
+        |s: &stats_sc::QueryStatsScStore, k: &Sk| {
+            fold_avg_calls(
+                s.data
+                    .iter()
+                    .filter(|r| match k {
+                        Sk::Time(a, b) => *a <= r.collected_at && r.collected_at <= *b,
+                        Sk::Loud => r.toplevel && r.calls >= 10,
+                        Sk::Db(id) => r.database_id == *id,
+                    })
+                    .map(|r| (r.fingerprint, r.calls)),
+            )
+        },
+        &truth,
+    ));
 
-    let mp = common::bench_msgpack(&rows, &kf, |r: &QueryStat, k: &Sk| k.matches(r));
+    let (mut mp, mp_buf) = common::bench_msgpack(&rows, &kf, |r: &QueryStat, k: &Sk| k.matches(r));
+    mp.project_ms = Some(common::reduce_msgpack::<QueryStat, Sk, _, _>(
+        &mp_buf,
+        n,
+        &keys[0],
+        |rows: &[QueryStat], k: &Sk| {
+            fold_avg_calls(rows.iter().filter(|r| k.matches(r)).map(|r| (r.fingerprint, r.calls)))
+        },
+        &truth,
+    ));
 
-    let pco = common::bench_pco_pack(rows, &pco_filters, move |back| assert_eq!(back.len(), n, "{name} row count"));
+    let (mut pco, pco_bytes) =
+        common::bench_pco_pack_full(rows, &pco_filters, move |back| assert_eq!(back.len(), n, "{name} row count"));
+    let (project_ms, fold) = common::bench_pco_pack_projected::<QueryStat, _>(
+        &pco_bytes,
+        &queries[0],
+        &["fingerprint", "calls"],
+        kf[0].1,
+        |survivors| fold_avg_calls(survivors.iter().map(|r| (r.fingerprint, r.calls))),
+    );
+    assert_eq!(fold, truth, "{name} projected fold");
+    pco.project_ms = Some(project_ms);
 
     let metrics = ["Size", "Serialize", "Deserialize"];
     let mut out: Vec<CodecRow> = metrics
@@ -246,8 +345,28 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
             msgpack: cell(&mp, "Filter", Some(i)),
         });
     }
+    out.push(CodecRow {
+        metric: common::reduce_label(kf[0].1, n),
+        pco_pack: cell(&pco, "Project", None),
+        pco_time_round: cell(&pco_time_round, "Project", None),
+        vortex: cell(&vx, "Project", None),
+        columnar: cell(&col, "Project", None),
+        serde_columnar: cell(&sc, "Project", None),
+        msgpack: cell(&mp, "Project", None),
+    });
     println!("{}", markdown_tables::as_table(&out));
     println!();
+}
+
+/// fingerprint => average calls, over (fingerprint, calls) pairs.
+fn fold_avg_calls(pairs: impl Iterator<Item = (i64, i64)>) -> HashMap<i64, f64> {
+    let mut sums: HashMap<i64, (i64, u64)> = HashMap::new();
+    for (fingerprint, calls) in pairs {
+        let entry = sums.entry(fingerprint).or_insert((0, 0));
+        entry.0 += calls;
+        entry.1 += 1;
+    }
+    sums.into_iter().map(|(k, (sum, cnt))| (k, sum as f64 / cnt as f64)).collect()
 }
 
 /// columnar/vortex mirror: timestamps to i64 us (exact; pg timestamps are

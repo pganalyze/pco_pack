@@ -195,55 +195,240 @@ pub fn bench() {
     let data = load();
     let n = data.len();
 
+    /// Filter keys: `work_type` discriminant equality plus text equality on
+    /// `language` (the most common ISO code) and `title` (a rare probe).
+    #[derive(Clone)]
+    enum Okk {
+        WorkType(u8, &'static str),
+        Language(String),
+        Title(String),
+    }
+
     // `work_type` equality filters: selective (`Retraction` = 21), moderate
-    // (`Preprint` = 1); PcoPack filters by discriminant.
+    // (`Preprint` = 1); PcoPack filters by discriminant. Text equality
+    // queries exercise the guarded text-column blobs end to end.
     let picks: [(WorkType, &str); 2] = [(WorkType::Retraction, "retraction"), (WorkType::Preprint, "preprint")];
-    let keys: Vec<(u8, &str)> = picks.iter().map(|(t, name)| (work_type_u8(t), *name)).collect();
-    let exps: Vec<usize> = picks.iter().map(|(t, _)| data.iter().filter(|w| w.work_type == *t).count()).collect();
-    let labels: Vec<String> = exps.iter().map(|&e| common::filter_label(e, n)).collect();
+    let mut lang_counts: std::collections::HashMap<String, usize> = Default::default();
+    for w in data.iter() {
+        if let Some(l) = &w.language {
+            *lang_counts.entry(l.to_string()).or_default() += 1;
+        }
+    }
+    let lang = lang_counts.iter().max_by_key(|(_, c)| **c).map(|(l, _)| l.clone()).unwrap();
+    let lang_exp = lang_counts[&lang];
+    let title = data.iter().find_map(|w| w.title.clone()).unwrap();
+    let title_exp = data.iter().filter(|w| w.title.as_deref() == Some(title.as_str())).count();
+
+    let keys: Vec<Okk> = vec![
+        Okk::WorkType(work_type_u8(&picks[0].0), picks[0].1),
+        Okk::WorkType(work_type_u8(&picks[1].0), picks[1].1),
+        Okk::Language(lang.clone()),
+        Okk::Title(title.clone()),
+    ];
+    let exps: Vec<usize> = vec![
+        data.iter().filter(|w| w.work_type == picks[0].0).count(),
+        data.iter().filter(|w| w.work_type == picks[1].0).count(),
+        lang_exp,
+        title_exp,
+    ];
+    let labels: Vec<String> = keys
+        .iter()
+        .zip(exps.iter())
+        .map(|(k, &e)| match k {
+            Okk::WorkType(..) => common::filter_label(e, n),
+            Okk::Language(..) | Okk::Title(..) => common::text_filter_label(e, n),
+        })
+        .collect();
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
 
     println!("### openalex ({n} works)\n");
 
-    let queries: Vec<serde_json::Value> =
-        keys.iter().map(|(disc, _)| serde_json::json!({ "work_type": disc })).collect();
+    let queries: Vec<serde_json::Value> = keys
+        .iter()
+        .map(|k| match k {
+            Okk::WorkType(disc, _) => serde_json::json!({ "work_type": disc }),
+            Okk::Language(l) => serde_json::json!({ "language": l }),
+            Okk::Title(t) => serde_json::json!({ "title": t }),
+        })
+        .collect();
     let pco_filters: Vec<(&serde_json::Value, usize)> = queries.iter().zip(exps.iter()).map(|(q, e)| (q, *e)).collect();
 
-    let pco = common::bench_pco_pack(data.to_vec(), &pco_filters, |back| verify(&data, back));
+    let (mut pco, pco_bytes) = common::bench_pco_pack_full(data.to_vec(), &pco_filters, |back| verify(&data, back));
 
     let dataf: Vec<WorkF> = data.iter().map(WorkF::from).collect();
-    let pcof = common::bench_pco_pack(dataf, &pco_filters, |back| verify_lossy(&data, back));
+    let (mut pcof, pcof_bytes) = common::bench_pco_pack_full(dataf, &pco_filters, |back| verify_lossy(&data, back));
 
-    let key_filters: Vec<((u8, &str), usize)> = keys.iter().zip(exps.iter()).map(|(k, e)| (*k, *e)).collect();
+    // Projection + reduce: filter by language, load only
+    // [publication_year, cited_by_count], reduce to year => average
+    // citations. The title/abstract/nested columns never inflate.
+    let proj_q = serde_json::json!({ "language": lang });
+    let mut proj_truth: std::collections::HashMap<i32, (i64, u64)> = Default::default();
+    for w in data.iter() {
+        if w.language.as_deref() == Some(lang.as_str()) {
+            if let Some(y) = w.publication_year {
+                let e = proj_truth.entry(y).or_default();
+                e.0 += w.cited_by_count as i64;
+                e.1 += 1;
+            }
+        }
+    }
+    let fold = |rows: &[Work]| -> std::collections::HashMap<i32, (i64, u64)> {
+        let mut acc: std::collections::HashMap<i32, (i64, u64)> = Default::default();
+        for r in rows {
+            if let Some(y) = r.publication_year {
+                let e = acc.entry(y).or_default();
+                e.0 += r.cited_by_count as i64;
+                e.1 += 1;
+            }
+        }
+        acc
+    };
+    let (ms, map) = common::bench_pco_pack_projected::<Work, _>(
+        &pco_bytes,
+        &proj_q,
+        &["publication_year", "cited_by_count"],
+        lang_exp,
+        fold,
+    );
+    assert_eq!(map, proj_truth, "openalex projected reduce");
+    pco.project_ms = Some(ms);
+    let (msf, _) = common::bench_pco_pack_projected::<WorkF, _>(
+        &pcof_bytes,
+        &proj_q,
+        &["publication_year", "cited_by_count"],
+        lang_exp,
+        |rows| rows.len(),
+    );
+    pcof.project_ms = Some(msf);
 
-    let col = common::bench_columnar(
+    let key_filters: Vec<(Okk, usize)> = keys.into_iter().zip(exps.iter()).map(|(k, e)| (k, *e)).collect();
+
+    let (mut col, col_buf) = common::bench_columnar(
         n,
         || data.iter().map(WorkCol::from).collect(),
         &key_filters,
-        |decoded: &columnar::BorrowedOf<WorkCol>, k: &(u8, &str)| {
+        |decoded: &columnar::BorrowedOf<WorkCol>, k: &Okk| {
             let count = columnar::Len::len(decoded);
             (0..count)
                 .filter(|&i| {
                     let r = columnar::Index::get(decoded, i);
-                    *r.work_type == k.0
+                    match k {
+                        Okk::WorkType(disc, _) => *r.work_type == *disc,
+                        Okk::Language(l) => r.language == Some(l.as_bytes()),
+                        Okk::Title(t) => r.title == Some(t.as_bytes()),
+                    }
                 })
                 .count()
         },
     );
+    // Honest reduce: full indexed decode, fold survivors of the language eq.
+    col.project_ms = Some(common::reduce_columnar::<WorkCol, String, HashMap<i32, (i64, u64)>, _>(
+        &col_buf,
+        &lang,
+        |decoded: &columnar::BorrowedOf<'_, WorkCol>, l: &String| {
+            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+            for i in 0..columnar::Len::len(decoded) {
+                let r = columnar::Index::get(decoded, i);
+                if r.language == Some(l.as_bytes()) {
+                    if let Some(y) = r.publication_year {
+                        let e = acc.entry(*y).or_default();
+                        e.0 += *r.cited_by_count as i64;
+                        e.1 += 1;
+                    }
+                }
+            }
+            acc
+        },
+        &proj_truth,
+    ));
 
-    let sc = common::bench_serde_columnar(
+    let (mut sc, sc_buf) = common::bench_serde_columnar(
         n,
         || openalex_sc::WorkScStore { data: data.iter().map(openalex_sc::WorkScRow::from).collect() },
         &key_filters,
-        |s: &openalex_sc::WorkScStore, k: &(u8, &str)| s.data.iter().filter(|r| r.work_type == k.0).count(),
+        |s: &openalex_sc::WorkScStore, k: &Okk| {
+            s.data
+                .iter()
+                .filter(|r| match k {
+                    Okk::WorkType(disc, _) => r.work_type == *disc,
+                    Okk::Language(l) => r.language.as_deref() == Some(l.as_str()),
+                    Okk::Title(t) => r.title.as_deref() == Some(t.as_str()),
+                })
+                .count()
+        },
     );
+    sc.project_ms = Some(common::reduce_serde_columnar::<openalex_sc::WorkScStore, String, _, _>(
+        &sc_buf,
+        &lang,
+        |s: &openalex_sc::WorkScStore, l: &String| {
+            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+            for r in s.data.iter().filter(|r| r.language.as_deref() == Some(l.as_str())) {
+                if let Some(y) = r.publication_year {
+                    let e = acc.entry(y).or_default();
+                    e.0 += r.cited_by_count as i64;
+                    e.1 += 1;
+                }
+            }
+            acc
+        },
+        &proj_truth,
+    ));
 
-    let mp = common::bench_msgpack(&data, &key_filters, |w: &Work, k: &(u8, &str)| work_type_u8(&w.work_type) == k.0);
+    let (mut mp, mp_buf) = common::bench_msgpack(&data, &key_filters, |w: &Work, k: &Okk| match k {
+        Okk::WorkType(disc, _) => work_type_u8(&w.work_type) == *disc,
+        Okk::Language(l) => w.language.as_deref() == Some(l.as_str()),
+        Okk::Title(t) => w.title.as_deref() == Some(t.as_str()),
+    });
+    mp.project_ms = Some(common::reduce_msgpack::<Work, String, _, _>(
+        &mp_buf,
+        n,
+        &lang,
+        |rows: &[Work], l: &String| {
+            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+            for r in rows.iter().filter(|w| w.language.as_deref() == Some(l.as_str())) {
+                if let Some(y) = r.publication_year {
+                    let e = acc.entry(y).or_default();
+                    e.0 += r.cited_by_count as i64;
+                    e.1 += 1;
+                }
+            }
+            acc
+        },
+        &proj_truth,
+    ));
 
     let data_vx: Vec<WorkVx> = data.iter().map(WorkVx::from).collect();
-    let vx = common::bench_vortex_ds(&data_vx, &key_filters, |k: &(u8, &str)| {
-        vortex::array::expr::eq(vortex::array::expr::col("work_type"), vortex::array::expr::lit(k.1))
+    let (mut vx, vx_buf) = common::bench_vortex_ds(&data_vx, &key_filters, |k: &Okk| {
+        use vortex::array::expr::{col, eq, lit};
+        match k {
+            Okk::WorkType(_, name) => eq(col("work_type"), lit(*name)),
+            Okk::Language(l) => eq(col("language"), lit(l.clone())),
+            Okk::Title(t) => eq(col("title"), lit(t.clone())),
+        }
     });
+    // Vortex's filter + projection pushdown is its native partial read:
+    // survivors only, and only the fold columns materialize through Arrow.
+    // The pushed language eq is exact, so the fold only skips null years.
+    vx.project_ms = common::reduce_vortex_ds::<(Option<i32>, i32), String, _, _, _>(
+        &vx_buf,
+        &lang,
+        |l: &String| vortex::array::expr::eq(vortex::array::expr::col("language"), vortex::array::expr::lit(l.clone())),
+        &["publication_year", "cited_by_count"],
+        |rows: Vec<(Option<i32>, i32)>, _: &String| {
+            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+            for (y, c) in rows {
+                if let Some(y) = y {
+                    let e = acc.entry(y).or_default();
+                    e.0 += c as i64;
+                    e.1 += 1;
+                }
+            }
+            acc
+        },
+        &proj_truth,
+    );
+
+    let reduce_label = common::reduce_label(lang_exp, n);
 
     CodecResults {
         pco_pack: pco,
@@ -253,7 +438,7 @@ pub fn bench() {
         msgpack: mp,
         vortex: vx,
     }
-    .print(&label_refs);
+    .print(&label_refs, Some(&reduce_label));
 }
 
 // ---- lossy mirror: `float_round = 4` on structs owning floats;

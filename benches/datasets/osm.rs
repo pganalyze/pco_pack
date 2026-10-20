@@ -140,13 +140,13 @@ pub fn bench() {
         let pcof_filters: Vec<(&serde_json::Value, usize)> =
             queries.iter().zip(exp_f.iter()).map(|(q, e)| (q, *e)).collect();
 
-        let pco = common::bench_pco_pack(nodes.to_vec(), &pco_filters, |back| {
+        let (mut pco, pco_bytes) = common::bench_pco_pack_full(nodes.to_vec(), &pco_filters, |back| {
             // No `timestamp` field -> PcoPack keeps file order -> positional roundtrip check.
             assert_eq!(back, &nodes[..], "osm node roundtrip mismatch");
         });
 
         let nodesf: Vec<NodeF> = nodes.iter().map(NodeF::from).collect();
-        let pcof = common::bench_pco_pack(nodesf, &pcof_filters, |back| {
+        let (mut pcof, pcof_bytes) = common::bench_pco_pack_full(nodesf, &pcof_filters, |back| {
             for (b, r) in back.iter().zip(nodes.iter()) {
                 assert_eq!(b.id, r.id);
                 assert_eq!(b.tags, r.tags);
@@ -155,10 +155,44 @@ pub fn bench() {
             }
         });
 
+        // Projection + reduce: filter the bbox, load only [id, lat, lon]
+        // (the tags map blob never inflates), and reduce 0.1deg grid cells
+        // => row counts. Text filters are not applicable: the only text is
+        // inside the tags map, which the query engine does not index.
+        let (la, lb, lo, ho) = boxes[0];
+        let proj_q = serde_json::json!({
+            "lat": { "start": la, "end": lb },
+            "lon": { "start": lo, "end": ho },
+        });
+        let mut proj_truth: std::collections::HashMap<(i32, i32), u32> = Default::default();
+        for r in nodes.iter() {
+            if r.lat >= la && r.lat <= lb && r.lon >= lo && r.lon <= ho {
+                *proj_truth.entry(((r.lat * 10.0) as i32, (r.lon * 10.0) as i32)).or_default() += 1;
+            }
+        }
+        let (ms, map) =
+            common::bench_pco_pack_projected::<Node, _>(&pco_bytes, &proj_q, &["id", "lat", "lon"], exp[0], |rows| {
+                let mut acc: std::collections::HashMap<(i32, i32), u32> = Default::default();
+                for r in rows {
+                    *acc.entry(((r.lat * 10.0) as i32, (r.lon * 10.0) as i32)).or_default() += 1;
+                }
+                acc
+            });
+        assert_eq!(map, proj_truth, "osm node projected reduce");
+        pco.project_ms = Some(ms);
+        let (msf, _) = common::bench_pco_pack_projected::<NodeF, _>(
+            &pcof_bytes,
+            &proj_q,
+            &["id", "lat", "lon"],
+            exp_f[0],
+            |rows| rows.len(),
+        );
+        pcof.project_ms = Some(msf);
+
         let box_filters: Vec<((f64, f64, f64, f64), usize)> =
             boxes.iter().zip(exp.iter()).map(|(b, e)| (*b, *e)).collect();
 
-        let col = common::bench_columnar(
+        let (mut col, col_buf) = common::bench_columnar(
             n_nodes,
             || nodes.iter().map(NodeCol::from).collect(),
             &box_filters,
@@ -172,8 +206,24 @@ pub fn bench() {
                     .count()
             },
         );
+        // Honest reduce: full indexed decode, grid cell => counts.
+        col.project_ms = Some(common::reduce_columnar::<NodeCol, (f64, f64, f64, f64), _, _>(
+            &col_buf,
+            &boxes[0],
+            |decoded: &columnar::BorrowedOf<'_, NodeCol>, k: &(f64, f64, f64, f64)| {
+                let mut acc: HashMap<(i32, i32), u32> = Default::default();
+                for i in 0..columnar::Len::len(decoded) {
+                    let r = columnar::Index::get(decoded, i);
+                    if k.0 <= *r.lat && *r.lat <= k.1 && k.2 <= *r.lon && *r.lon <= k.3 {
+                        *acc.entry(((r.lat * 10.0) as i32, (r.lon * 10.0) as i32)).or_default() += 1;
+                    }
+                }
+                acc
+            },
+            &proj_truth,
+        ));
 
-        let sc = common::bench_serde_columnar(
+        let (mut sc, sc_buf) = common::bench_serde_columnar(
             n_nodes,
             || osm_sc::NodeScStore { data: nodes.iter().map(osm_sc::NodeScRow::from).collect() },
             &box_filters,
@@ -181,11 +231,36 @@ pub fn bench() {
                 s.data.iter().filter(|r| k.0 <= r.lat && r.lat <= k.1 && k.2 <= r.lon && r.lon <= k.3).count()
             },
         );
+        sc.project_ms = Some(common::reduce_serde_columnar::<osm_sc::NodeScStore, (f64, f64, f64, f64), _, _>(
+            &sc_buf,
+            &boxes[0],
+            |s: &osm_sc::NodeScStore, k: &(f64, f64, f64, f64)| {
+                let mut acc: HashMap<(i32, i32), u32> = Default::default();
+                for r in s.data.iter().filter(|r| k.0 <= r.lat && r.lat <= k.1 && k.2 <= r.lon && r.lon <= k.3) {
+                    *acc.entry(((r.lat * 10.0) as i32, (r.lon * 10.0) as i32)).or_default() += 1;
+                }
+                acc
+            },
+            &proj_truth,
+        ));
 
-        let mp = common::bench_msgpack(&nodes, &box_filters, in_box);
+        let (mut mp, mp_buf) = common::bench_msgpack(&nodes, &box_filters, in_box);
+        mp.project_ms = Some(common::reduce_msgpack::<Node, (f64, f64, f64, f64), _, _>(
+            &mp_buf,
+            n_nodes,
+            &boxes[0],
+            |rows: &[Node], k: &(f64, f64, f64, f64)| {
+                let mut acc: HashMap<(i32, i32), u32> = Default::default();
+                for r in rows.iter().filter(|r| k.0 <= r.lat && r.lat <= k.1 && k.2 <= r.lon && r.lon <= k.3) {
+                    *acc.entry(((r.lat * 10.0) as i32, (r.lon * 10.0) as i32)).or_default() += 1;
+                }
+                acc
+            },
+            &proj_truth,
+        ));
 
         let nodes_vx: Vec<NodeVx> = nodes.iter().map(NodeVx::from).collect();
-        let vx = common::bench_vortex_ds(&nodes_vx, &box_filters, |k: &(f64, f64, f64, f64)| {
+        let (mut vx, vx_buf) = common::bench_vortex_ds(&nodes_vx, &box_filters, |k: &(f64, f64, f64, f64)| {
             vortex::array::expr::and(
                 vortex::array::expr::and(
                     vortex::array::expr::gt_eq(vortex::array::expr::col("lat"), vortex::array::expr::lit(k.0)),
@@ -197,6 +272,35 @@ pub fn bench() {
                 ),
             )
         });
+        // Filter + projection pushdown: bbox survivors, lat/lon only; the
+        // pushed range filter is exact so the fold grids every row.
+        vx.project_ms = common::reduce_vortex_ds::<(f64, f64), (f64, f64, f64, f64), _, _, _>(
+            &vx_buf,
+            &boxes[0],
+            |k: &(f64, f64, f64, f64)| {
+                vortex::array::expr::and(
+                    vortex::array::expr::and(
+                        vortex::array::expr::gt_eq(vortex::array::expr::col("lat"), vortex::array::expr::lit(k.0)),
+                        vortex::array::expr::lt_eq(vortex::array::expr::col("lat"), vortex::array::expr::lit(k.1)),
+                    ),
+                    vortex::array::expr::and(
+                        vortex::array::expr::gt_eq(vortex::array::expr::col("lon"), vortex::array::expr::lit(k.2)),
+                        vortex::array::expr::lt_eq(vortex::array::expr::col("lon"), vortex::array::expr::lit(k.3)),
+                    ),
+                )
+            },
+            &["lat", "lon"],
+            |rows: Vec<(f64, f64)>, _: &(f64, f64, f64, f64)| {
+                let mut acc: HashMap<(i32, i32), u32> = Default::default();
+                for (lat, lon) in rows {
+                    *acc.entry(((lat * 10.0) as i32, (lon * 10.0) as i32)).or_default() += 1;
+                }
+                acc
+            },
+            &proj_truth,
+        );
+
+        let reduce_label = common::reduce_label(exp[0], n_nodes);
 
         CodecResults {
             pco_pack: pco,
@@ -206,7 +310,7 @@ pub fn bench() {
             msgpack: mp,
             vortex: vx,
         }
-        .print(&label_refs);
+        .print(&label_refs, Some(&reduce_label));
     }
     drop(nodes);
 
@@ -217,21 +321,21 @@ pub fn bench() {
         let pco = common::bench_pco_pack(ways.to_vec(), &[], |back| {
             assert_eq!(back, &ways[..], "osm way roundtrip mismatch");
         });
-        let col = common::bench_columnar(
+        let (col, _) = common::bench_columnar(
             n_ways,
             || ways.iter().map(WayCol::from).collect(),
             &[] as &[((), usize)],
             |_: &columnar::BorrowedOf<WayCol>, _: &()| 0,
         );
-        let sc = common::bench_serde_columnar(
+        let (sc, _) = common::bench_serde_columnar(
             n_ways,
             || osm_sc::WayScStore { data: ways.iter().map(osm_sc::WayScRow::from).collect() },
             &[] as &[((), usize)],
             |_: &osm_sc::WayScStore, _: &()| 0,
         );
-        let mp = common::bench_msgpack(&ways, &[] as &[((), usize)], |_: &Way, _: &()| false);
+        let (mp, _) = common::bench_msgpack(&ways, &[] as &[((), usize)], |_: &Way, _: &()| false);
         let ways_vx: Vec<WayVx> = ways.iter().map(WayVx::from).collect();
-        let vx = common::bench_vortex_ds(&ways_vx, &[] as &[((), usize)], |_: &()| unreachable!());
+        let (vx, _) = common::bench_vortex_ds(&ways_vx, &[] as &[((), usize)], |_: &()| unreachable!());
 
         CodecResults {
             pco_pack: pco,
@@ -241,7 +345,7 @@ pub fn bench() {
             msgpack: mp,
             vortex: vx,
         }
-        .print(&[]);
+        .print(&[], None);
     }
     drop(ways);
 
@@ -252,21 +356,21 @@ pub fn bench() {
         let pco = common::bench_pco_pack(rels.to_vec(), &[], |back| {
             assert_eq!(back, &rels[..], "osm relation roundtrip mismatch");
         });
-        let col = common::bench_columnar(
+        let (col, _) = common::bench_columnar(
             n_rels,
             || rels.iter().map(RelationCol::from).collect(),
             &[] as &[((), usize)],
             |_: &columnar::BorrowedOf<RelationCol>, _: &()| 0,
         );
-        let sc = common::bench_serde_columnar(
+        let (sc, _) = common::bench_serde_columnar(
             n_rels,
             || osm_sc::RelationScStore { data: rels.iter().map(osm_sc::RelationScRow::from).collect() },
             &[] as &[((), usize)],
             |_: &osm_sc::RelationScStore, _: &()| 0,
         );
-        let mp = common::bench_msgpack(&rels, &[] as &[((), usize)], |_: &Relation, _: &()| false);
+        let (mp, _) = common::bench_msgpack(&rels, &[] as &[((), usize)], |_: &Relation, _: &()| false);
         let rels_vx: Vec<RelationVx> = rels.iter().map(RelationVx::from).collect();
-        let vx = common::bench_vortex_ds(&rels_vx, &[] as &[((), usize)], |_: &()| unreachable!());
+        let (vx, _) = common::bench_vortex_ds(&rels_vx, &[] as &[((), usize)], |_: &()| unreachable!());
 
         CodecResults {
             pco_pack: pco,
@@ -276,7 +380,7 @@ pub fn bench() {
             msgpack: mp,
             vortex: vx,
         }
-        .print(&[]);
+        .print(&[], None);
     }
 }
 

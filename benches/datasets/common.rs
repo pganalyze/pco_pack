@@ -27,9 +27,24 @@ pub struct CodecMetrics {
     pub size: Option<usize>,
     /// One entry per measured filter, in order; `None` if not expressible.
     pub filter_ms: Vec<Option<f64>>,
+    /// `filter(query, fields)` + reduce over the projected survivors; `None`
+    /// for codecs without a partial-column read path.
+    pub project_ms: Option<f64>,
 }
 
 pub fn bench_pco_pack<T, V>(data: Vec<T>, filters: &[(&serde_json::Value, usize)], verify: V) -> CodecMetrics
+where
+    T: pco_pack::PcoPack + std::fmt::Debug,
+    V: FnOnce(&[T]),
+{
+    bench_pco_pack_full(data, filters, verify).0
+}
+
+/// Same as `bench_pco_pack` but also returns the serialized buffer, so a
+/// projection scenario can load the exact bytes this pass measured.
+pub fn bench_pco_pack_full<T, V>(
+    data: Vec<T>, filters: &[(&serde_json::Value, usize)], verify: V,
+) -> (CodecMetrics, Vec<u8>)
 where
     T: pco_pack::PcoPack + std::fmt::Debug,
     V: FnOnce(&[T]),
@@ -44,8 +59,146 @@ where
     )
 }
 
+/// Filter + projection + reduce runner (PcoPack): `filter_bytes(query, fields)`
+/// materializes only the projected columns (unprojected payloads stay
+/// compressed and never inflate), then the caller folds the survivors into
+/// its aggregate. Returns the reduce output so scenarios assert exact results.
+pub fn bench_pco_pack_projected<T, R>(
+    bytes: &[u8], query: &serde_json::Value, fields: &[&str], expected: usize, reduce: impl FnOnce(&[T]) -> R,
+) -> (f64, R)
+where
+    T: pco_pack::PcoPack + std::fmt::Debug,
+{
+    one_pass(|| {
+        let rows = T::filter_bytes(bytes, query.clone(), fields).unwrap();
+        assert_eq!(rows.len(), expected, "projected filter count");
+        reduce(&rows)
+    })
+}
+
+/// Honest reduce baselines: a codec without a partial-column read path
+/// decodes every projected row and folds the survivors in Rust. Each helper
+/// re-reads the same bytes the size/filter row measured, times decode+fold
+/// as one pass, and asserts the aggregate against ground truth.
+///
+/// columnar materializes columns lazily, so touching only projected fields
+/// is its real cost; the fold still pays the full indexed decode setup.
+pub fn reduce_columnar<R, K, M, F>(buf: &[u8], key: &K, fold: F, truth: &M) -> f64
+where
+    R: columnar::Columnar + std::fmt::Debug,
+    F: for<'a> Fn(&columnar::BorrowedOf<'a, R>, &K) -> M,
+    M: PartialEq + std::fmt::Debug,
+{
+    let (ms, got) = one_pass(|| {
+        let decompressed = zstd::decode_all(buf).unwrap();
+        let words: &[u64] = bytemuck::cast_slice(&decompressed);
+        let decoded = columnar::BorrowedOf::<R>::from_bytes(&mut columnar::bytes::indexed::decode(words));
+        fold(&decoded, key)
+    });
+    assert_eq!(got, *truth, "columnar reduce");
+    ms
+}
+
+/// serde_columnar: full store decode + fold over survivors.
+pub fn reduce_serde_columnar<S, K, M, F>(buf: &[u8], key: &K, fold: F, truth: &M) -> f64
+where
+    S: ScStore,
+    F: Fn(&S, &K) -> M,
+    M: PartialEq + std::fmt::Debug,
+{
+    let (ms, got) = one_pass(|| {
+        let decompressed = zstd::decode_all(buf).unwrap();
+        let store: S = serde_columnar::from_bytes(&decompressed).unwrap();
+        fold(&store, key)
+    });
+    assert_eq!(got, *truth, "serde_columnar reduce");
+    ms
+}
+
+/// msgpack+zstd: full multi-frame decode + fold over survivors.
+pub fn reduce_msgpack<T, K, M, F>(buf: &[u8], n_rows: usize, key: &K, fold: F, truth: &M) -> f64
+where
+    T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
+    F: Fn(&[T], &K) -> M,
+    M: PartialEq + std::fmt::Debug,
+{
+    let (ms, got) = one_pass(|| {
+        let decompressed = zstd::decode_all(buf).unwrap();
+        let n_frames = (n_rows + CHUNK_ROWS - 1) / CHUNK_ROWS;
+        let mut cursor = std::io::Cursor::new(decompressed);
+        let mut rows: Vec<T> = Vec::new();
+        for _ in 0..n_frames {
+            let frame: Vec<T> = rmp_serde::from_read(&mut cursor).unwrap();
+            rows.extend(frame);
+        }
+        fold(&rows, key)
+    });
+    assert_eq!(got, *truth, "msgpack reduce");
+    ms
+}
+
+/// Vortex: filter + projection pushdown (its native partial read: only
+/// filtered rows, and only the projected columns decoded). The projected
+/// batch materializes through serde_arrow into `Vec<R>` rows, the same fold
+/// input every other codec's baseline consumes; R is a positional tuple
+/// mirroring the projection list, so no extra row struct is needed. The
+/// pushed filter is exact over the stored column values (the filter cells
+/// verify survivor counts for the same expression over the same bytes), so
+/// the fold accumulates every row without re-testing the predicate. A
+/// caught panic returns `None`, degrading the cell to "-" like the main
+/// runner.
+pub fn reduce_vortex_ds<R, K, E, M, F>(
+    buf: &[u8], key: &K, build_expr: E, projection: &[&'static str], fold: F, truth: &M,
+) -> Option<f64>
+where
+    R: serde::de::DeserializeOwned,
+    E: Fn(&K) -> vortex::array::expr::Expression,
+    F: Fn(Vec<R>, &K) -> M,
+    M: PartialEq + std::fmt::Debug,
+{
+    let old_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        use vortex::array::expr::{root, select};
+        use vortex::array::stream::ArrayStreamExt;
+        use vortex::arrow::ArrowSessionExt as _;
+        use vortex::buffer::ByteBuffer;
+        use vortex::file::OpenOptionsSessionExt as _;
+        let rt = ds_vortex_rt();
+        let session = ds_vortex_session();
+        let buffer = ByteBuffer::from(buf.to_vec());
+        let (ms, got) = one_pass(|| {
+            rt.block_on(async {
+                let file = session.open_options().open_buffer(buffer.clone()).unwrap();
+                let mut scan = file.scan().unwrap();
+                let bound = build_expr(key).bind(file.dtype()).unwrap().optimize_recursive().unwrap();
+                scan = scan.with_filter(bound);
+                let proj = select(projection, root()).bind(file.dtype()).unwrap().optimize_recursive().unwrap();
+                scan = scan.with_projection(proj);
+                let array = scan.into_array_stream().unwrap().read_all().await.unwrap();
+                let schema_out = session.arrow().to_arrow_schema(array.dtype()).unwrap();
+                #[allow(deprecated)] // deprecated, but the stable export path
+                {
+                    use vortex::array::VortexSessionExecute;
+                    use vortex::arrow::ArrowArrayExecutor as _;
+                    let mut ctx = session.create_execution_ctx();
+                    let batch = array.execute_record_batch(&schema_out, &mut ctx).unwrap();
+                    let rows: Vec<R> = serde_arrow::from_record_batch(&batch).unwrap();
+                    fold(rows, key)
+                }
+            })
+        });
+        assert_eq!(got, *truth, "vortex reduce");
+        ms
+    }));
+    std::panic::set_hook(old_hook);
+    result.ok()
+}
+
 /// Serialize/deserialize/filter tail shared by the pco_pack runners.
-fn bench_pco_pack_serial<T, S, V>(serialize: S, filters: &[(&serde_json::Value, usize)], verify: V) -> CodecMetrics
+fn bench_pco_pack_serial<T, S, V>(
+    serialize: S, filters: &[(&serde_json::Value, usize)], verify: V,
+) -> (CodecMetrics, Vec<u8>)
 where
     T: pco_pack::PcoPack + std::fmt::Debug,
     S: FnOnce() -> Vec<u8>,
@@ -80,14 +233,23 @@ where
         }
         filter_ms.push(Some(ms));
     }
-    CodecMetrics { serial_ms: Some(serial_ms), deserial_ms: Some(deserial_ms), size: Some(bytes.len()), filter_ms }
+    (
+        CodecMetrics {
+            serial_ms: Some(serial_ms),
+            deserial_ms: Some(deserial_ms),
+            size: Some(bytes.len()),
+            filter_ms,
+            project_ms: None,
+        },
+        bytes,
+    )
 }
 
 /// columnar runner. Serialize: mirror to `Container` + indexed encode +
 /// zstd L3. Deserialize/filter: decode + per-row `Index::get` + count assert.
 pub fn bench_columnar<R, B, K, F>(
     n_rows: usize, build_rows: B, filters: &[(K, usize)], count_matches: F,
-) -> CodecMetrics
+) -> (CodecMetrics, Vec<u8>)
 where
     R: columnar::Columnar + std::fmt::Debug,
     B: FnOnce() -> Vec<R>,
@@ -126,7 +288,16 @@ where
         assert_eq!(matched, *expected, "columnar filter count");
         filter_ms.push(Some(ms));
     }
-    CodecMetrics { serial_ms: Some(serial_ms), deserial_ms: Some(deserial_ms), size: Some(buf.len()), filter_ms }
+    (
+        CodecMetrics {
+            serial_ms: Some(serial_ms),
+            deserial_ms: Some(deserial_ms),
+            size: Some(buf.len()),
+            filter_ms,
+            project_ms: None,
+        },
+        buf,
+    )
 }
 
 /// A serde_columnar store: the per-dataset `#[columnar(ser, de)]` wrapper over
@@ -139,7 +310,7 @@ pub trait ScStore: serde::Serialize + for<'de> serde::Deserialize<'de> {
 /// Deserialize/filter: full decode + in-Rust store predicate + count assert.
 pub fn bench_serde_columnar<S, B, K, F>(
     n_rows: usize, build_store: B, filters: &[(K, usize)], count_matches: F,
-) -> CodecMetrics
+) -> (CodecMetrics, Vec<u8>)
 where
     S: ScStore,
     B: FnOnce() -> S,
@@ -166,12 +337,21 @@ where
         assert_eq!(matched, *expected, "serde_columnar filter count");
         filter_ms.push(Some(ms));
     }
-    CodecMetrics { serial_ms: Some(serial_ms), deserial_ms: Some(deserial_ms), size: Some(buf.len()), filter_ms }
+    (
+        CodecMetrics {
+            serial_ms: Some(serial_ms),
+            deserial_ms: Some(deserial_ms),
+            size: Some(buf.len()),
+            filter_ms,
+            project_ms: None,
+        },
+        buf,
+    )
 }
 
 /// msgpack+zstd runner. Serialize uses `to_msgpack_zstd` (zstd L3);
 /// deserialize is a full multi-frame decode + full value roundtrip.
-pub fn bench_msgpack<T, K, F>(data: &[T], filters: &[(K, usize)], matches: F) -> CodecMetrics
+pub fn bench_msgpack<T, K, F>(data: &[T], filters: &[(K, usize)], matches: F) -> (CodecMetrics, Vec<u8>)
 where
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
     F: Fn(&T, &K) -> bool,
@@ -199,7 +379,16 @@ where
         assert_eq!(matched, *expected, "msgpack filter count");
         filter_ms.push(Some(ms));
     }
-    CodecMetrics { serial_ms: Some(serial_ms), deserial_ms: Some(deserial_ms), size: Some(buf.len()), filter_ms }
+    (
+        CodecMetrics {
+            serial_ms: Some(serial_ms),
+            deserial_ms: Some(deserial_ms),
+            size: Some(buf.len()),
+            filter_ms,
+            project_ms: None,
+        },
+        buf,
+    )
 }
 
 /// Current-thread tokio runtime, shared across the dataset benches.
@@ -220,7 +409,7 @@ fn ds_vortex_session() -> &'static vortex::session::VortexSession {
 
 /// Vortex runner. Compact btrblocks file (serde_arrow->arrow->vortex),
 /// roundtrip-verified unmeasured. A caught panic degrades all metrics to "-".
-pub fn bench_vortex_ds<T, K, E>(data: &[T], filters: &[(K, usize)], build_expr: E) -> CodecMetrics
+pub fn bench_vortex_ds<T, K, E>(data: &[T], filters: &[(K, usize)], build_expr: E) -> (CodecMetrics, Vec<u8>)
 where
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + PartialEq + std::fmt::Debug,
     E: Fn(&K) -> vortex::array::expr::Expression,
@@ -307,11 +496,20 @@ where
             assert_eq!(rows.len(), *expected, "vortex filter count");
             filter_ms.push(Some(ms));
         }
-        CodecMetrics { serial_ms: Some(serial_ms), deserial_ms: Some(deserial_ms), size: Some(bytes.len()), filter_ms }
+        (
+            CodecMetrics {
+                serial_ms: Some(serial_ms),
+                deserial_ms: Some(deserial_ms),
+                size: Some(bytes.len()),
+                filter_ms,
+                project_ms: None,
+            },
+            bytes,
+        )
     }));
     std::panic::set_hook(old_hook);
     match result {
-        Ok(metrics) => metrics,
+        Ok((metrics, bytes)) => (metrics, bytes),
         Err(panic) => {
             // `PCO_PACK_BENCH_DEBUG=1` prints the caught panic.
             if std::env::var_os("PCO_PACK_BENCH_DEBUG").is_some() {
@@ -322,7 +520,8 @@ where
                     .unwrap_or_else(|| "non-string panic".to_string());
                 eprintln!("vortex pipeline panic: {msg}");
             }
-            CodecMetrics::default() // all None -> "-" cells
+            // all None -> "-" cells
+            (CodecMetrics::default(), Vec::new())
         }
     }
 }
@@ -439,6 +638,7 @@ fn cell(m: &CodecMetrics, kind: &str, filter_idx: Option<usize>) -> String {
         "Serialize" => m.serial_ms.as_ref().map(|v| format_ms(*v)),
         "Deserialize" => m.deserial_ms.as_ref().map(|v| format_ms(*v)),
         "Size" => m.size.as_ref().map(|v| format_bytes(*v)),
+        "Project" => m.project_ms.map(format_ms),
         _ => match filter_idx {
             Some(i) if i < m.filter_ms.len() => {
                 let v: Option<f64> = m.filter_ms[i];
@@ -465,7 +665,7 @@ pub struct CodecResults {
 impl CodecResults {
     /// The dataset codec table: `Metric | PcoPack | [PcoPack (lossy)] | Vortex
     /// | columnar | serde_columnar | msgpack`, Size first.
-    pub fn print(self, filter_labels: &[&str]) {
+    pub fn print(self, filter_labels: &[&str], project_label: Option<&str>) {
         let metrics = ["Size", "Serialize", "Deserialize"];
         if let Some(l) = &self.pco_pack_lossy {
             let mut rows: Vec<CodecRowLossy> = metrics
@@ -491,6 +691,17 @@ impl CodecResults {
                     msgpack: cell(&self.msgpack, "Filter", Some(i)),
                 });
             }
+            if let Some(label) = project_label {
+                rows.push(CodecRowLossy {
+                    metric: label.to_string(),
+                    pco_pack: cell(&self.pco_pack, "Project", None),
+                    pco_pack_lossy: cell(l, "Project", None),
+                    vortex: cell(&self.vortex, "Project", None),
+                    columnar: cell(&self.columnar, "Project", None),
+                    serde_columnar: cell(&self.serde_columnar, "Project", None),
+                    msgpack: cell(&self.msgpack, "Project", None),
+                });
+            }
             println!("{}", markdown_tables::as_table(&rows));
         } else {
             let mut rows: Vec<CodecRow> = metrics
@@ -512,6 +723,16 @@ impl CodecResults {
                     columnar: cell(&self.columnar, "Filter", Some(i)),
                     serde_columnar: cell(&self.serde_columnar, "Filter", Some(i)),
                     msgpack: cell(&self.msgpack, "Filter", Some(i)),
+                });
+            }
+            if let Some(label) = project_label {
+                rows.push(CodecRow {
+                    metric: label.to_string(),
+                    pco_pack: cell(&self.pco_pack, "Project", None),
+                    vortex: cell(&self.vortex, "Project", None),
+                    columnar: cell(&self.columnar, "Project", None),
+                    serde_columnar: cell(&self.serde_columnar, "Project", None),
+                    msgpack: cell(&self.msgpack, "Project", None),
                 });
             }
             println!("{}", markdown_tables::as_table(&rows));
@@ -582,4 +803,25 @@ pub fn filter_label(matched: usize, total: usize) -> String {
     }
     let num = format!("{:.2}", pct).trim_end_matches('0').trim_end_matches('.').to_string();
     format!("Filter {num}%")
+}
+
+/// Text-filter row label: `Text eq 42.1%`, same trimming as `filter_label`.
+pub fn text_filter_label(matched: usize, total: usize) -> String {
+    let pct = matched as f64 * 100.0 / total as f64;
+    if pct < 0.01 {
+        return "Text eq <0.01%".to_string();
+    }
+    let num = format!("{:.2}", pct).trim_end_matches('0').trim_end_matches('.').to_string();
+    format!("Text eq {num}%")
+}
+
+/// Row label for the projection-reduce scenario: the share of rows the
+/// filter keeps, so the table names the selectivity it measures.
+pub fn reduce_label(matched: usize, total: usize) -> String {
+    let pct = matched as f64 * 100.0 / total as f64;
+    if pct < 0.01 {
+        return "Reduce <0.01%".to_string();
+    }
+    let num = format!("{:.2}", pct).trim_end_matches('0').trim_end_matches('.').to_string();
+    format!("Reduce {num}%")
 }
