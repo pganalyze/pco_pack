@@ -8,6 +8,9 @@ use pco_pack::{rmp_serde, zstd};
 use std::io::BufRead as _;
 use std::path::{Path, PathBuf};
 
+// Re-exported so every scenario reaches one `super::common` path; a bench
+// that exercises only part of the surface must not warn on the rest.
+#[allow(unused_imports)]
 pub use crate::ds_common::{
     CodecMetrics, ScStore, bench_columnar, bench_msgpack, bench_pco_pack, bench_serde_columnar, bench_vortex_ds,
     filter_label, round_f32, ts_rounded,

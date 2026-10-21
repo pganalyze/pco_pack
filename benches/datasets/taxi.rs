@@ -428,7 +428,7 @@ fn flag_value(s: &str) -> Option<bool> {
     }
 }
 
-fn load() -> Vec<Trip> {
+pub fn load() -> Vec<Trip> {
     let path = DS.ensure_downloaded();
     let file = std::fs::File::open(&path).unwrap();
     let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();

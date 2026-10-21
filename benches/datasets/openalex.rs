@@ -1247,7 +1247,7 @@ impl From<KwJson> for Kw {
 
 // ---- load: gzip + serde_json per line, two pinned parts ----
 
-fn load() -> Vec<Work> {
+pub fn load() -> Vec<Work> {
     let mut works: Vec<Work> = Vec::new();
     for (ds, expected) in [(DS_0, 400_000usize), (DS_1, 232_276)] {
         let path = ds.ensure_downloaded();
