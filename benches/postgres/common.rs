@@ -9,8 +9,9 @@ use std::io::BufRead as _;
 use std::path::{Path, PathBuf};
 
 pub use crate::ds_common::{
-    CodecMetrics, ScStore, bench_columnar, bench_msgpack, bench_pco_pack, bench_serde_columnar, bench_vortex_ds,
-    filter_label, round_f32, ts_rounded,
+    CodecMetrics, ScStore, bench_columnar, bench_msgpack, bench_pco_pack_full, bench_pco_pack_projected,
+    bench_serde_columnar, bench_vortex_ds, filter_label, reduce_columnar, reduce_label, reduce_msgpack,
+    reduce_serde_columnar, reduce_vortex_ds, round_f32, text_filter_label, ts_rounded,
 };
 
 // ---- Captures: neutral msgpack+zstd inputs ----
@@ -151,31 +152,21 @@ impl markdown_tables::MarkdownTableRow for CodecRowOther {
     }
 }
 
-/// backend_snapshots: the codec table plus the `PcoPack Timeline` dedup column.
+/// backend_snapshots: the PcoPack scenarios table (full fidelity, rounded
+/// timestamps, exact fold, 10 s bucket fold); the comparison crates land in
+/// the shared `CodecRowOther` table, the same split as `query_explains`.
 #[derive(Debug)]
 pub struct CodecRowTimeline {
     pub metric: String,
     pub pco_pack: String,
     pub pco_time_round: String,
     pub pco_timeline: String,
-    pub vortex: String,
-    pub columnar: String,
-    pub serde_columnar: String,
-    pub msgpack: String,
+    pub pco_timeline_10s: String,
 }
 
 impl markdown_tables::MarkdownTableRow for CodecRowTimeline {
     fn column_names() -> Vec<&'static str> {
-        vec![
-            "Metric",
-            "PcoPack",
-            "PcoPack time_round",
-            "PcoPack Timeline",
-            "Vortex",
-            "columnar",
-            "serde_columnar",
-            "msgpack",
-        ]
+        vec!["Metric", "full", "time_round", "Timeline", "Timeline 10s"]
     }
     fn column_values(&self) -> Vec<String> {
         vec![
@@ -183,10 +174,7 @@ impl markdown_tables::MarkdownTableRow for CodecRowTimeline {
             self.pco_pack.clone(),
             self.pco_time_round.clone(),
             self.pco_timeline.clone(),
-            self.vortex.clone(),
-            self.columnar.clone(),
-            self.serde_columnar.clone(),
-            self.msgpack.clone(),
+            self.pco_timeline_10s.clone(),
         ]
     }
 }
@@ -196,6 +184,7 @@ pub fn cell(m: &CodecMetrics, kind: &str, filter_idx: Option<usize>) -> String {
         "Serialize" => m.serial_ms.map(format_ms),
         "Deserialize" => m.deserial_ms.map(format_ms),
         "Size" => m.size.map(format_bytes),
+        "Project" => m.project_ms.map(format_ms),
         _ => match filter_idx {
             Some(i) => m.filter_ms.get(i).copied().flatten().map(format_ms),
             None => None,
