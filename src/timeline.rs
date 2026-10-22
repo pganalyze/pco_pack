@@ -156,9 +156,7 @@ impl<const RESOLUTION: i64> Timeline<RESOLUTION> {
         if self.ranges.is_empty() {
             self.ranges.extend_from_slice(&input.ranges);
         } else {
-            for &(start, end) in &input.ranges {
-                self.add(start, end);
-            }
+            self.extend_ranges(&input.ranges);
         }
     }
 }
