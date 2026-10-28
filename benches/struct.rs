@@ -21,82 +21,125 @@ use vortex::session::VortexSession;
 const SENTINEL: usize = 12_345;
 
 fn main() {
+    init_crate_filter();
     let data = data(500_000);
     println!("## Structs\n");
 
     // ---- PcoPack benchmarks ----
-    let pco_serial_ms = avg_ms(|| Record::write(data.clone()).unwrap());
-    let pco_compressed = Record::write(data.clone()).unwrap();
-    let pco_buf = Record::to_bytes(&pco_compressed).unwrap();
-    let pco_deserial_ms = avg_ms(|| {
-        let compressed = Record::from_bytes(&pco_buf).unwrap();
-        let results = Record::filter(&compressed, json!({}), &vec![]).unwrap();
-        assert_eq!(results.len(), data.len());
-    });
+    let (pco_serial_ms, _, pco_size_bytes, pco_deserial_ms) = if enabled("pco_pack") {
+        let pco_serial_ms = min_ms(|| Record::write(data.clone()).unwrap());
+        let pco_compressed = Record::write(data.clone()).unwrap();
+        let pco_buf = Record::to_bytes(&pco_compressed).unwrap();
+        let pco_deserial_ms = min_ms(|| {
+            let compressed = Record::from_bytes(&pco_buf).unwrap();
+            let results = Record::filter(&compressed, json!({}), &vec![]).unwrap();
+            assert_eq!(results.len(), data.len());
+        });
+        let pco_size_bytes = pco_buf.len();
+        (pco_serial_ms, pco_buf, pco_size_bytes, pco_deserial_ms)
+    } else {
+        (f64::NAN, Vec::new(), usize::MAX, f64::NAN)
+    };
 
     // ---- Columnar benchmarks ----
-    let columnar_serial_ms = avg_ms(|| build_columnar(&data));
-    let columnar_buf = build_columnar(&data);
-    let columnar_size_bytes = columnar_buf.len();
-    let columnar_deserial_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
-        let words: &[u64] = bytemuck::cast_slice(&decompressed);
-        type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
-        let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
-        black_box(decoded);
-        assert_eq!(Len::len(&decoded), data.len());
-    });
+    let (columnar_serial_ms, columnar_buf, columnar_size_bytes, columnar_deserial_ms) = if enabled("columnar") {
+        let columnar_serial_ms = min_ms(|| build_columnar(&data));
+        let columnar_buf = build_columnar(&data);
+        let columnar_size_bytes = columnar_buf.len();
+        let columnar_deserial_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
+            let words: &[u64] = bytemuck::cast_slice(&decompressed);
+            type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
+            let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
+            black_box(decoded);
+            assert_eq!(Len::len(&decoded), data.len());
+        });
+        (columnar_serial_ms, columnar_buf, columnar_size_bytes, columnar_deserial_ms)
+    } else {
+        (f64::NAN, Vec::new(), usize::MAX, f64::NAN)
+    };
 
     // ---- serde_columnar benchmarks ----
-    let sc_serial_ms = avg_ms(|| build_serde_columnar(&data));
-    let sc_buf = build_serde_columnar(&data);
-    let sc_deserial_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*sc_buf).unwrap();
-        let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
-        black_box(decoded.data.len());
-    });
+    let (sc_serial_ms, sc_buf, sc_size_bytes, sc_deserial_ms) = if enabled("serde_columnar") {
+        let sc_serial_ms = min_ms(|| build_serde_columnar(&data));
+        let sc_buf = build_serde_columnar(&data);
+        let sc_deserial_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*sc_buf).unwrap();
+            let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
+            black_box(decoded.data.len());
+        });
+        let sc_size_bytes = sc_buf.len();
+        (sc_serial_ms, sc_buf, sc_size_bytes, sc_deserial_ms)
+    } else {
+        (f64::NAN, Vec::new(), usize::MAX, f64::NAN)
+    };
 
     // ---- msgpack benchmarks (single-frame) ----
-    let map_serial_ms = avg_ms(|| serialize_flat_map(&data));
-    let map_buf = serialize_flat_map(&data);
-    let map_deserial_ms = avg_ms(|| deserialize_flat(&map_buf));
+    let (map_serial_ms, map_buf, map_size_bytes, map_deserial_ms) = if enabled("msgpack") {
+        let map_serial_ms = min_ms(|| serialize_flat_map(&data));
+        let map_buf = serialize_flat_map(&data);
+        let map_deserial_ms = min_ms(|| deserialize_flat(&map_buf));
+        let map_size_bytes = map_buf.len();
+        (map_serial_ms, map_buf, map_size_bytes, map_deserial_ms)
+    } else {
+        (f64::NAN, Vec::new(), usize::MAX, f64::NAN)
+    };
 
     // ---- Vortex benchmarks ----
     let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-    let (vortex_session, vortex_buf) = setup_vortex_file(&rt, &data);
-    let vortex_serial_ms = avg_ms(|| {
-        let bytes = rt.block_on(async { write_vortex_file(&vortex_session, &data).await });
-        black_box(bytes.len())
-    });
-    let vortex_deserial_ms = avg_ms(|| {
-        let rows = rt.block_on(async { vortex_read_all(&vortex_session, vortex_buf.clone()).await });
-        assert_eq!(rows.len(), data.len());
-        black_box(rows.len())
-    });
-    let vfilter_single = eq(col("account_id"), lit(2_i64));
-    let vortex_filter_single_ms = avg_ms(|| {
-        rt.block_on(async {
-            let batch =
-                vortex_scan(&vortex_session, vortex_buf.clone(), Some(vfilter_single.clone()), Some(&["account_id"]))
-                    .await;
-            assert_eq!(batch.num_rows(), 100_000);
-            black_box(batch)
-        })
-    });
-    let vfilter_multi = and(eq(col("color"), lit(0_u8)), eq(col("score"), lit(500_f64)));
-    let vortex_filter_multi_ms = avg_ms(|| {
-        rt.block_on(async {
-            let batch = vortex_scan(
-                &vortex_session,
-                vortex_buf.clone(),
-                Some(vfilter_multi.clone()),
-                Some(&["color", "score"]),
-            )
-            .await;
-            assert_eq!(batch.num_rows(), 1);
-            black_box(batch)
-        })
-    });
+    let (vortex_session, vortex_buf, vortex_size_bytes) = if enabled("vortex") {
+        let (session, buf) = setup_vortex_file(&rt, &data);
+        let len = buf.len();
+        (session, buf, len)
+    } else {
+        let session = rt.block_on(async {
+            use vortex::VortexSessionDefault as _;
+            VortexSession::default()
+        });
+        (session, ByteBuffer::from(Vec::new()), usize::MAX)
+    };
+    let (vortex_serial_ms, vortex_deserial_ms, vortex_filter_single_ms, vortex_filter_multi_ms) = if enabled("vortex") {
+        let vortex_serial_ms = min_ms(|| {
+            let bytes = rt.block_on(async { write_vortex_file(&vortex_session, &data).await });
+            black_box(bytes.len())
+        });
+        let vortex_deserial_ms = min_ms(|| {
+            let rows = rt.block_on(async { vortex_read_all(&vortex_session, vortex_buf.clone()).await });
+            assert_eq!(rows.len(), data.len());
+            black_box(rows.len())
+        });
+        let vfilter_single = eq(col("account_id"), lit(2_i64));
+        let vortex_filter_single_ms = min_ms(|| {
+            rt.block_on(async {
+                let batch = vortex_scan(
+                    &vortex_session,
+                    vortex_buf.clone(),
+                    Some(vfilter_single.clone()),
+                    Some(&["account_id"]),
+                )
+                .await;
+                assert_eq!(batch.num_rows(), 100_000);
+                black_box(batch)
+            })
+        });
+        let vfilter_multi = and(eq(col("color"), lit(0_u8)), eq(col("score"), lit(500_f64)));
+        let vortex_filter_multi_ms = min_ms(|| {
+            rt.block_on(async {
+                let batch = vortex_scan(
+                    &vortex_session,
+                    vortex_buf.clone(),
+                    Some(vfilter_multi.clone()),
+                    Some(&["color", "score"]),
+                )
+                .await;
+                assert_eq!(batch.num_rows(), 1);
+                black_box(batch)
+            })
+        });
+        (vortex_serial_ms, vortex_deserial_ms, vortex_filter_single_ms, vortex_filter_multi_ms)
+    } else {
+        (f64::NAN, f64::NAN, f64::NAN, f64::NAN)
+    };
 
     #[derive(Debug)]
     struct StructRow {
@@ -126,92 +169,127 @@ fn main() {
     }
 
     // --- Single filter: account_id == 2 ---
-    let pco_compressed2 = Record::write(data.clone()).unwrap();
-    let pco_buf2 = Record::to_bytes(&pco_compressed2).unwrap();
-    let pco_filter_single_ms = avg_ms(|| {
-        let compressed = Record::from_bytes(&pco_buf2).unwrap();
-        let results = Record::filter(&compressed, json!({"account_id": 2}), &vec![]).unwrap();
-        assert_eq!(results.len(), 100_000);
-    });
+    let (pco_buf2, pco_filter_single_ms) = if enabled("pco_pack") {
+        let pco_compressed2 = Record::write(data.clone()).unwrap();
+        let pco_buf2 = Record::to_bytes(&pco_compressed2).unwrap();
+        let pco_filter_single_ms = min_ms(|| {
+            let compressed = Record::from_bytes(&pco_buf2).unwrap();
+            let results = Record::filter(&compressed, json!({"account_id": 2}), &vec![]).unwrap();
+            assert_eq!(results.len(), 100_000);
+        });
+        (pco_buf2, pco_filter_single_ms)
+    } else {
+        (Vec::new(), f64::NAN)
+    };
 
-    let col_filter_single_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
-        let words: &[u64] = bytemuck::cast_slice(&decompressed);
-        type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
-        let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
-        let count = Len::len(&decoded);
-        let mut matches: usize = 0;
-        for i in 0..count {
-            let record = Index::get(&decoded, i);
-            if *record.account_id == 2 {
-                matches += 1;
+    let col_filter_single_ms = if enabled("columnar") {
+        let col_filter_single_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
+            let words: &[u64] = bytemuck::cast_slice(&decompressed);
+            type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
+            let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
+            let count = Len::len(&decoded);
+            let mut matches: usize = 0;
+            for i in 0..count {
+                let record = Index::get(&decoded, i);
+                if *record.account_id == 2 {
+                    matches += 1;
+                }
             }
-        }
-        assert_eq!(matches, 100_000);
-    });
+            assert_eq!(matches, 100_000);
+        });
+        col_filter_single_ms
+    } else {
+        f64::NAN
+    };
 
-    let map_filter_single_ms = avg_ms(|| {
-        let deserialized = deserialize_flat(&map_buf);
-        let results: Vec<_> = deserialized.into_iter().filter(|r| r.account_id == 2).collect();
-        assert_eq!(results.len(), 100_000);
-    });
+    let map_filter_single_ms = if enabled("msgpack") {
+        let map_filter_single_ms = min_ms(|| {
+            let deserialized = deserialize_flat(&map_buf);
+            let results: Vec<_> = deserialized.into_iter().filter(|r| r.account_id == 2).collect();
+            assert_eq!(results.len(), 100_000);
+        });
+        map_filter_single_ms
+    } else {
+        f64::NAN
+    };
 
     // --- Multi filter: color == Red && score == 500.0 ---
-    let pco_filter_multi_ms = avg_ms(|| {
-        let compressed = Record::from_bytes(&pco_buf2).unwrap();
-        let results = Record::filter(&compressed, json!({"color": 0, "score": 500.0}), &vec![]).unwrap();
-        assert_eq!(results.len(), 1);
-    });
+    let pco_filter_multi_ms = if enabled("pco_pack") {
+        let pco_filter_multi_ms = min_ms(|| {
+            let compressed = Record::from_bytes(&pco_buf2).unwrap();
+            let results = Record::filter(&compressed, json!({"color": 0, "score": 500.0}), &vec![]).unwrap();
+            assert_eq!(results.len(), 1);
+        });
+        pco_filter_multi_ms
+    } else {
+        f64::NAN
+    };
 
-    let col_filter_multi_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
-        let words: &[u64] = bytemuck::cast_slice(&decompressed);
-        type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
-        let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
-        let count = Len::len(&decoded);
-        let mut matches: usize = 0;
-        for i in 0..count {
-            let record = Index::get(&decoded, i);
-            if *record.color == 0 && *record.score == 500.0 {
-                matches += 1;
+    let col_filter_multi_ms = if enabled("columnar") {
+        let col_filter_multi_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
+            let words: &[u64] = bytemuck::cast_slice(&decompressed);
+            type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
+            let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
+            let count = Len::len(&decoded);
+            let mut matches: usize = 0;
+            for i in 0..count {
+                let record = Index::get(&decoded, i);
+                if *record.color == 0 && *record.score == 500.0 {
+                    matches += 1;
+                }
             }
-        }
-        assert_eq!(matches, 1);
-    });
+            assert_eq!(matches, 1);
+        });
+        col_filter_multi_ms
+    } else {
+        f64::NAN
+    };
 
-    let map_filter_multi_ms = avg_ms(|| {
-        let deserialized = deserialize_flat(&map_buf);
-        let results: Vec<_> =
-            deserialized.into_iter().filter(|r| matches!(r.color, Color::Red) && r.score == 500.0).collect();
-        assert_eq!(results.len(), 1);
-    });
+    let map_filter_multi_ms = if enabled("msgpack") {
+        let map_filter_multi_ms = min_ms(|| {
+            let deserialized = deserialize_flat(&map_buf);
+            let results: Vec<_> =
+                deserialized.into_iter().filter(|r| matches!(r.color, Color::Red) && r.score == 500.0).collect();
+            assert_eq!(results.len(), 1);
+        });
+        map_filter_multi_ms
+    } else {
+        f64::NAN
+    };
 
     // --- serde_columnar filter: full deserialize then in-Rust filter ---
-    let sc_filter_single_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*sc_buf).unwrap();
-        let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
-        let count = decoded.data.len();
-        let mut matches: usize = 0;
-        for i in 0..count {
-            if decoded.data[i].account_id == 2 {
-                matches += 1;
+    let (sc_filter_single_ms, sc_filter_multi_ms) = if enabled("serde_columnar") {
+        let sc_filter_single_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*sc_buf).unwrap();
+            let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
+            let count = decoded.data.len();
+            let mut matches: usize = 0;
+            for i in 0..count {
+                if decoded.data[i].account_id == 2 {
+                    matches += 1;
+                }
             }
-        }
-        assert_eq!(matches, 100_000);
-    });
+            assert_eq!(matches, 100_000);
+        });
 
-    let sc_filter_multi_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*sc_buf).unwrap();
-        let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
-        let count = decoded.data.len();
-        let mut matches: usize = 0;
-        for i in 0..count {
-            if decoded.data[i].color == 0 && decoded.data[i].score == 500.0 {
-                matches += 1;
+        let sc_filter_multi_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*sc_buf).unwrap();
+            let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
+            let count = decoded.data.len();
+            let mut matches: usize = 0;
+            for i in 0..count {
+                if decoded.data[i].color == 0 && decoded.data[i].score == 500.0 {
+                    matches += 1;
+                }
             }
-        }
-        assert_eq!(matches, 1);
-    });
+            assert_eq!(matches, 1);
+        });
+        (sc_filter_single_ms, sc_filter_multi_ms)
+    } else {
+        (f64::NAN, f64::NAN)
+    };
 
     // --- Text filters over the high-cardinality `name` column ---
     let name_hit = data[17].name.clone();
@@ -220,141 +298,207 @@ fn main() {
     let name_in = vec![data[0].name.clone(), name_hit.clone()];
     let text_in_exp = data.iter().filter(|r| name_in.contains(&r.name)).count();
 
-    let pco_text_eq_ms = avg_ms(|| {
-        let compressed = Record::from_bytes(&pco_buf2).unwrap();
-        let results = Record::filter(&compressed, json!({"name": name_hit.clone()}), &vec![]).unwrap();
-        assert_eq!(results.len(), text_eq_exp);
-    });
-    let pco_text_miss_ms = avg_ms(|| {
-        let compressed = Record::from_bytes(&pco_buf2).unwrap();
-        let results = Record::filter(&compressed, json!({"name": "name_zzz_no_such_name"}), &vec![]).unwrap();
-        assert!(results.is_empty());
-    });
-    let pco_text_in_ms = avg_ms(|| {
-        let compressed = Record::from_bytes(&pco_buf2).unwrap();
-        let results = Record::filter(&compressed, json!({"name": name_in.clone()}), &vec![]).unwrap();
-        assert_eq!(results.len(), text_in_exp);
-    });
+    let (pco_text_eq_ms, pco_text_miss_ms, pco_text_in_ms) = if enabled("pco_pack") {
+        let pco_text_eq_ms = min_ms(|| {
+            let compressed = Record::from_bytes(&pco_buf2).unwrap();
+            let results = Record::filter(&compressed, json!({"name": name_hit.clone()}), &vec![]).unwrap();
+            assert_eq!(results.len(), text_eq_exp);
+        });
+        let pco_text_miss_ms = min_ms(|| {
+            let compressed = Record::from_bytes(&pco_buf2).unwrap();
+            let results = Record::filter(&compressed, json!({"name": "name_zzz_no_such_name"}), &vec![]).unwrap();
+            assert!(results.is_empty());
+        });
+        let pco_text_in_ms = min_ms(|| {
+            let compressed = Record::from_bytes(&pco_buf2).unwrap();
+            let results = Record::filter(&compressed, json!({"name": name_in.clone()}), &vec![]).unwrap();
+            assert_eq!(results.len(), text_in_exp);
+        });
+        (pco_text_eq_ms, pco_text_miss_ms, pco_text_in_ms)
+    } else {
+        (f64::NAN, f64::NAN, f64::NAN)
+    };
 
-    let col_text_eq_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
-        let words: &[u64] = bytemuck::cast_slice(&decompressed);
-        type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
-        let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
-        let count = Len::len(&decoded);
-        let mut matches: usize = 0;
-        for i in 0..count {
-            let record = Index::get(&decoded, i);
-            if record.name == name_hit.as_bytes() {
-                matches += 1;
+    let col_text_eq_ms = if enabled("columnar") {
+        let col_text_eq_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
+            let words: &[u64] = bytemuck::cast_slice(&decompressed);
+            type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
+            let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
+            let count = Len::len(&decoded);
+            let mut matches: usize = 0;
+            for i in 0..count {
+                let record = Index::get(&decoded, i);
+                if record.name == name_hit.as_bytes() {
+                    matches += 1;
+                }
             }
-        }
-        assert_eq!(matches, text_eq_exp);
-    });
+            assert_eq!(matches, text_eq_exp);
+        });
+        col_text_eq_ms
+    } else {
+        f64::NAN
+    };
 
-    let sc_text_eq_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*sc_buf).unwrap();
-        let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
-        let matches = decoded.data.iter().filter(|r| r.name == name_hit).count();
-        assert_eq!(matches, text_eq_exp);
-    });
+    let sc_text_eq_ms = if enabled("serde_columnar") {
+        let sc_text_eq_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*sc_buf).unwrap();
+            let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
+            let matches = decoded.data.iter().filter(|r| r.name == name_hit).count();
+            assert_eq!(matches, text_eq_exp);
+        });
+        sc_text_eq_ms
+    } else {
+        f64::NAN
+    };
 
-    let col_text_miss_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
-        let words: &[u64] = bytemuck::cast_slice(&decompressed);
-        type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
-        let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
-        let count = Len::len(&decoded);
-        let mut matches: usize = 0;
-        for i in 0..count {
-            let record = Index::get(&decoded, i);
-            if record.name == "name_zzz_no_such_name".as_bytes() {
-                matches += 1;
+    let col_text_miss_ms = if enabled("columnar") {
+        let col_text_miss_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
+            let words: &[u64] = bytemuck::cast_slice(&decompressed);
+            type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
+            let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
+            let count = Len::len(&decoded);
+            let mut matches: usize = 0;
+            for i in 0..count {
+                let record = Index::get(&decoded, i);
+                if record.name == "name_zzz_no_such_name".as_bytes() {
+                    matches += 1;
+                }
             }
-        }
-        assert_eq!(matches, 0);
-    });
+            assert_eq!(matches, 0);
+        });
+        col_text_miss_ms
+    } else {
+        f64::NAN
+    };
 
-    let sc_text_miss_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*sc_buf).unwrap();
-        let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
-        let matches = decoded.data.iter().filter(|r| r.name == "name_zzz_no_such_name").count();
-        assert_eq!(matches, 0);
-    });
+    let sc_text_miss_ms = if enabled("serde_columnar") {
+        let sc_text_miss_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*sc_buf).unwrap();
+            let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
+            let matches = decoded.data.iter().filter(|r| r.name == "name_zzz_no_such_name").count();
+            assert_eq!(matches, 0);
+        });
+        sc_text_miss_ms
+    } else {
+        f64::NAN
+    };
 
-    let map_text_miss_ms = avg_ms(|| {
-        let deserialized = deserialize_flat(&map_buf);
-        let results: Vec<_> = deserialized.into_iter().filter(|r| r.name == "name_zzz_no_such_name").collect();
-        assert!(results.is_empty());
-    });
+    let map_text_miss_ms = if enabled("msgpack") {
+        let map_text_miss_ms = min_ms(|| {
+            let deserialized = deserialize_flat(&map_buf);
+            let results: Vec<_> = deserialized.into_iter().filter(|r| r.name == "name_zzz_no_such_name").collect();
+            assert!(results.is_empty());
+        });
+        map_text_miss_ms
+    } else {
+        f64::NAN
+    };
 
-    let vfilter_text_miss = eq(col("name"), lit("name_zzz_no_such_name"));
-    let vortex_text_miss_ms = avg_ms(|| {
-        rt.block_on(async {
-            let batch =
-                vortex_scan(&vortex_session, vortex_buf.clone(), Some(vfilter_text_miss.clone()), Some(&["name"]))
-                    .await;
-            assert_eq!(batch.num_rows(), 0);
-            black_box(batch)
-        })
-    });
+    let vortex_text_miss_ms = if enabled("vortex") {
+        let vfilter_text_miss = eq(col("name"), lit("name_zzz_no_such_name"));
+        let vortex_text_miss_ms = min_ms(|| {
+            rt.block_on(async {
+                let batch =
+                    vortex_scan(&vortex_session, vortex_buf.clone(), Some(vfilter_text_miss.clone()), Some(&["name"]))
+                        .await;
+                assert_eq!(batch.num_rows(), 0);
+                black_box(batch)
+            })
+        });
+        vortex_text_miss_ms
+    } else {
+        f64::NAN
+    };
 
-    let map_text_eq_ms = avg_ms(|| {
-        let deserialized = deserialize_flat(&map_buf);
-        let results: Vec<_> = deserialized.into_iter().filter(|r| r.name == name_hit).collect();
-        assert_eq!(results.len(), text_eq_exp);
-    });
+    let map_text_eq_ms = if enabled("msgpack") {
+        let map_text_eq_ms = min_ms(|| {
+            let deserialized = deserialize_flat(&map_buf);
+            let results: Vec<_> = deserialized.into_iter().filter(|r| r.name == name_hit).collect();
+            assert_eq!(results.len(), text_eq_exp);
+        });
+        map_text_eq_ms
+    } else {
+        f64::NAN
+    };
 
-    let vfilter_text = eq(col("name"), lit(name_hit.clone()));
-    let vortex_text_eq_ms = avg_ms(|| {
-        rt.block_on(async {
-            let batch =
-                vortex_scan(&vortex_session, vortex_buf.clone(), Some(vfilter_text.clone()), Some(&["name"])).await;
-            assert_eq!(batch.num_rows(), text_eq_exp);
-            black_box(batch)
-        })
-    });
+    let vortex_text_eq_ms = if enabled("vortex") {
+        let vfilter_text = eq(col("name"), lit(name_hit.clone()));
+        let vortex_text_eq_ms = min_ms(|| {
+            rt.block_on(async {
+                let batch =
+                    vortex_scan(&vortex_session, vortex_buf.clone(), Some(vfilter_text.clone()), Some(&["name"])).await;
+                assert_eq!(batch.num_rows(), text_eq_exp);
+                black_box(batch)
+            })
+        });
+        vortex_text_eq_ms
+    } else {
+        f64::NAN
+    };
 
     // Text IN over both names: the comparison codecs run the membership
     // test in Rust after decode; Vortex gets an or() filter pushdown.
-    let col_text_in_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
-        let words: &[u64] = bytemuck::cast_slice(&decompressed);
-        type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
-        let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
-        let count = Len::len(&decoded);
-        let mut matches: usize = 0;
-        for i in 0..count {
-            let record = Index::get(&decoded, i);
-            if name_in.iter().any(|n| record.name == n.as_bytes()) {
-                matches += 1;
+    let col_text_in_ms = if enabled("columnar") {
+        let col_text_in_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
+            let words: &[u64] = bytemuck::cast_slice(&decompressed);
+            type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
+            let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
+            let count = Len::len(&decoded);
+            let mut matches: usize = 0;
+            for i in 0..count {
+                let record = Index::get(&decoded, i);
+                if name_in.iter().any(|n| record.name == n.as_bytes()) {
+                    matches += 1;
+                }
             }
-        }
-        assert_eq!(matches, text_in_exp);
-    });
+            assert_eq!(matches, text_in_exp);
+        });
+        col_text_in_ms
+    } else {
+        f64::NAN
+    };
 
-    let sc_text_in_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*sc_buf).unwrap();
-        let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
-        let matches = decoded.data.iter().filter(|r| name_in.contains(&r.name)).count();
-        assert_eq!(matches, text_in_exp);
-    });
+    let sc_text_in_ms = if enabled("serde_columnar") {
+        let sc_text_in_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*sc_buf).unwrap();
+            let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
+            let matches = decoded.data.iter().filter(|r| name_in.contains(&r.name)).count();
+            assert_eq!(matches, text_in_exp);
+        });
+        sc_text_in_ms
+    } else {
+        f64::NAN
+    };
 
-    let map_text_in_ms = avg_ms(|| {
-        let deserialized = deserialize_flat(&map_buf);
-        let results: Vec<_> = deserialized.into_iter().filter(|r| name_in.contains(&r.name)).collect();
-        assert_eq!(results.len(), text_in_exp);
-    });
+    let map_text_in_ms = if enabled("msgpack") {
+        let map_text_in_ms = min_ms(|| {
+            let deserialized = deserialize_flat(&map_buf);
+            let results: Vec<_> = deserialized.into_iter().filter(|r| name_in.contains(&r.name)).collect();
+            assert_eq!(results.len(), text_in_exp);
+        });
+        map_text_in_ms
+    } else {
+        f64::NAN
+    };
 
-    let vfilter_text_in = or(eq(col("name"), lit(name_in[0].clone())), eq(col("name"), lit(name_in[1].clone())));
-    let vortex_text_in_ms = avg_ms(|| {
-        rt.block_on(async {
-            let batch =
-                vortex_scan(&vortex_session, vortex_buf.clone(), Some(vfilter_text_in.clone()), Some(&["name"])).await;
-            assert_eq!(batch.num_rows(), text_in_exp);
-            black_box(batch)
-        })
-    });
+    let vortex_text_in_ms = if enabled("vortex") {
+        let vfilter_text_in = or(eq(col("name"), lit(name_in[0].clone())), eq(col("name"), lit(name_in[1].clone())));
+        let vortex_text_in_ms = min_ms(|| {
+            rt.block_on(async {
+                let batch =
+                    vortex_scan(&vortex_session, vortex_buf.clone(), Some(vfilter_text_in.clone()), Some(&["name"]))
+                        .await;
+                assert_eq!(batch.num_rows(), text_in_exp);
+                black_box(batch)
+            })
+        });
+        vortex_text_in_ms
+    } else {
+        f64::NAN
+    };
 
     // --- Filter + projection + reduce: active == true, load [account_id,
     // score] only, reduce account_id => avg(score). The name/tags/color
@@ -366,90 +510,115 @@ fn main() {
         e.0 += r.score;
         e.1 += 1;
     }
-    let (proj_ms, proj_map) = avg_ms_pair(|| {
-        let compressed = Record::from_bytes(&pco_buf2).unwrap();
-        let results = Record::filter(&compressed, json!({"active": true}), &["account_id", "score"]).unwrap();
-        assert_eq!(results.len(), active_exp);
-        assert!(results.iter().all(|r| r.name.is_empty()), "unprojected text stays default");
-        let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
-        for r in &results {
-            let e = acc.entry(r.account_id).or_default();
-            e.0 += r.score;
-            e.1 += 1;
-        }
-        acc
-    });
-    assert_eq!(proj_map, proj_truth, "projected reduce");
+    let proj_ms = if enabled("pco_pack") {
+        let (proj_ms, proj_map) = min_ms_pair(|| {
+            let compressed = Record::from_bytes(&pco_buf2).unwrap();
+            let results = Record::filter(&compressed, json!({"active": true}), &["account_id", "score"]).unwrap();
+            assert_eq!(results.len(), active_exp);
+            assert!(results.iter().all(|r| r.name.is_empty()), "unprojected text stays default");
+            let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
+            for r in &results {
+                let e = acc.entry(r.account_id).or_default();
+                e.0 += r.score;
+                e.1 += 1;
+            }
+            acc
+        });
+        assert_eq!(proj_map, proj_truth, "projected reduce");
+        proj_ms
+    } else {
+        f64::NAN
+    };
 
     // Comparison-codec baselines: none can project, so each decodes every
     // row it filters and folds active survivors into the same map. The
     // numbers name the full-decode cost of not having metadata.
-    let col_reduce_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
-        let words: &[u64] = bytemuck::cast_slice(&decompressed);
-        type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
-        let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
-        let count = Len::len(&decoded);
-        let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
-        for i in 0..count {
-            let record = Index::get(&decoded, i);
-            if record.active {
-                let e = acc.entry(*record.account_id).or_default();
-                e.0 += *record.score;
-                e.1 += 1;
-            }
-        }
-        assert_eq!(acc, proj_truth, "columnar reduce");
-    });
-
-    let sc_reduce_ms = avg_ms(|| {
-        let decompressed = zstd::decode_all(&*sc_buf).unwrap();
-        let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
-        let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
-        for r in decoded.data.iter().filter(|r| r.active) {
-            let e = acc.entry(r.account_id).or_default();
-            e.0 += r.score;
-            e.1 += 1;
-        }
-        assert_eq!(acc, proj_truth, "serde_columnar reduce");
-    });
-
-    let map_reduce_ms = avg_ms(|| {
-        let deserialized = deserialize_flat(&map_buf);
-        let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
-        for r in deserialized.iter().filter(|r| r.active) {
-            let e = acc.entry(r.account_id).or_default();
-            e.0 += r.score;
-            e.1 += 1;
-        }
-        assert_eq!(acc, proj_truth, "msgpack reduce");
-    });
-
-    let vfilter_active = eq(col("active"), lit(true));
-    let vortex_reduce_ms = avg_ms(|| {
-        rt.block_on(async {
-            // Same partial read as PcoPack's projected reduce: the pushed
-            // active filter is exact, so the fold consumes every projected
-            // (account_id, score) row without re-testing.
-            let batch = vortex_scan(
-                &vortex_session,
-                vortex_buf.clone(),
-                Some(vfilter_active.clone()),
-                Some(&["account_id", "score"]),
-            )
-            .await;
-            assert_eq!(batch.num_rows(), active_exp);
-            let rows: Vec<(i64, f64)> = serde_arrow::from_record_batch(&batch).unwrap();
+    let col_reduce_ms = if enabled("columnar") {
+        let col_reduce_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
+            let words: &[u64] = bytemuck::cast_slice(&decompressed);
+            type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
+            let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
+            let count = Len::len(&decoded);
             let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
-            for (account_id, score) in &rows {
-                let e = acc.entry(*account_id).or_default();
-                e.0 += *score;
+            for i in 0..count {
+                let record = Index::get(&decoded, i);
+                if record.active {
+                    let e = acc.entry(*record.account_id).or_default();
+                    e.0 += *record.score;
+                    e.1 += 1;
+                }
+            }
+            assert_eq!(acc, proj_truth, "columnar reduce");
+        });
+        col_reduce_ms
+    } else {
+        f64::NAN
+    };
+
+    let sc_reduce_ms = if enabled("serde_columnar") {
+        let sc_reduce_ms = min_ms(|| {
+            let decompressed = zstd::decode_all(&*sc_buf).unwrap();
+            let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
+            let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
+            for r in decoded.data.iter().filter(|r| r.active) {
+                let e = acc.entry(r.account_id).or_default();
+                e.0 += r.score;
                 e.1 += 1;
             }
-            assert_eq!(acc, proj_truth, "vortex reduce");
-            black_box(rows)
-        })
-    });
+            assert_eq!(acc, proj_truth, "serde_columnar reduce");
+        });
+        sc_reduce_ms
+    } else {
+        f64::NAN
+    };
+
+    let map_reduce_ms = if enabled("msgpack") {
+        let map_reduce_ms = min_ms(|| {
+            let deserialized = deserialize_flat(&map_buf);
+            let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
+            for r in deserialized.iter().filter(|r| r.active) {
+                let e = acc.entry(r.account_id).or_default();
+                e.0 += r.score;
+                e.1 += 1;
+            }
+            assert_eq!(acc, proj_truth, "msgpack reduce");
+        });
+        map_reduce_ms
+    } else {
+        f64::NAN
+    };
+
+    let vortex_reduce_ms = if enabled("vortex") {
+        let vfilter_active = eq(col("active"), lit(true));
+        let vortex_reduce_ms = min_ms(|| {
+            rt.block_on(async {
+                // Same partial read as PcoPack's projected reduce: the pushed
+                // active filter is exact, so the fold consumes every projected
+                // (account_id, score) row without re-testing.
+                let batch = vortex_scan(
+                    &vortex_session,
+                    vortex_buf.clone(),
+                    Some(vfilter_active.clone()),
+                    Some(&["account_id", "score"]),
+                )
+                .await;
+                assert_eq!(batch.num_rows(), active_exp);
+                let rows: Vec<(i64, f64)> = serde_arrow::from_record_batch(&batch).unwrap();
+                let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
+                for (account_id, score) in &rows {
+                    let e = acc.entry(*account_id).or_default();
+                    e.0 += *score;
+                    e.1 += 1;
+                }
+                assert_eq!(acc, proj_truth, "vortex reduce");
+                black_box(rows)
+            })
+        });
+        vortex_reduce_ms
+    } else {
+        f64::NAN
+    };
 
     let text_eq_label = format!("Text eq ({} rows)", text_eq_exp);
     let text_in_label = format!("Text IN ({} rows)", text_in_exp);
@@ -460,75 +629,75 @@ fn main() {
     let rows = vec![
         StructRow {
             metric: "Size".to_string(),
-            pco_pack: format_bytes(pco_buf.len()),
-            columnar: format_bytes(columnar_size_bytes),
-            serde_columnar: format_bytes(sc_buf.len()),
-            msgpack: format_bytes(map_buf.len()),
-            vortex: format_bytes(vortex_buf.len()),
+            pco_pack: fmt_sz(pco_size_bytes),
+            columnar: fmt_sz(columnar_size_bytes),
+            serde_columnar: fmt_sz(sc_size_bytes),
+            msgpack: fmt_sz(map_size_bytes),
+            vortex: fmt_sz(vortex_size_bytes),
         },
         StructRow {
             metric: "Serialize".to_string(),
-            pco_pack: format_ms(pco_serial_ms),
-            columnar: format_ms(columnar_serial_ms),
-            serde_columnar: format_ms(sc_serial_ms),
-            msgpack: format_ms(map_serial_ms),
-            vortex: format_ms(vortex_serial_ms),
+            pco_pack: fmt_gated(pco_serial_ms),
+            columnar: fmt_gated(columnar_serial_ms),
+            serde_columnar: fmt_gated(sc_serial_ms),
+            msgpack: fmt_gated(map_serial_ms),
+            vortex: fmt_gated(vortex_serial_ms),
         },
         StructRow {
             metric: "Deserialize".to_string(),
-            pco_pack: format_ms(pco_deserial_ms),
-            columnar: format_ms(columnar_deserial_ms),
-            serde_columnar: format_ms(sc_deserial_ms),
-            msgpack: format_ms(map_deserial_ms),
-            vortex: format_ms(vortex_deserial_ms),
+            pco_pack: fmt_gated(pco_deserial_ms),
+            columnar: fmt_gated(columnar_deserial_ms),
+            serde_columnar: fmt_gated(sc_deserial_ms),
+            msgpack: fmt_gated(map_deserial_ms),
+            vortex: fmt_gated(vortex_deserial_ms),
         },
         StructRow {
             metric: "Filter 20%".to_string(),
-            pco_pack: format_ms(pco_filter_single_ms),
-            columnar: format_ms(col_filter_single_ms),
-            serde_columnar: format_ms(sc_filter_single_ms),
-            msgpack: format_ms(map_filter_single_ms),
-            vortex: format_ms(vortex_filter_single_ms),
+            pco_pack: fmt_gated(pco_filter_single_ms),
+            columnar: fmt_gated(col_filter_single_ms),
+            serde_columnar: fmt_gated(sc_filter_single_ms),
+            msgpack: fmt_gated(map_filter_single_ms),
+            vortex: fmt_gated(vortex_filter_single_ms),
         },
         StructRow {
             metric: "Filter <0.01%".to_string(),
-            pco_pack: format_ms(pco_filter_multi_ms),
-            columnar: format_ms(col_filter_multi_ms),
-            serde_columnar: format_ms(sc_filter_multi_ms),
-            msgpack: format_ms(map_filter_multi_ms),
-            vortex: format_ms(vortex_filter_multi_ms),
+            pco_pack: fmt_gated(pco_filter_multi_ms),
+            columnar: fmt_gated(col_filter_multi_ms),
+            serde_columnar: fmt_gated(sc_filter_multi_ms),
+            msgpack: fmt_gated(map_filter_multi_ms),
+            vortex: fmt_gated(vortex_filter_multi_ms),
         },
         StructRow {
             metric: text_eq_label,
-            pco_pack: format_ms(pco_text_eq_ms),
-            columnar: format_ms(col_text_eq_ms),
-            serde_columnar: format_ms(sc_text_eq_ms),
-            msgpack: format_ms(map_text_eq_ms),
-            vortex: format_ms(vortex_text_eq_ms),
+            pco_pack: fmt_gated(pco_text_eq_ms),
+            columnar: fmt_gated(col_text_eq_ms),
+            serde_columnar: fmt_gated(sc_text_eq_ms),
+            msgpack: fmt_gated(map_text_eq_ms),
+            vortex: fmt_gated(vortex_text_eq_ms),
         },
         StructRow {
             metric: "Text miss".to_string(),
-            pco_pack: format_ms(pco_text_miss_ms),
-            columnar: format_ms(col_text_miss_ms),
-            serde_columnar: format_ms(sc_text_miss_ms),
-            msgpack: format_ms(map_text_miss_ms),
-            vortex: format_ms(vortex_text_miss_ms),
+            pco_pack: fmt_gated(pco_text_miss_ms),
+            columnar: fmt_gated(col_text_miss_ms),
+            serde_columnar: fmt_gated(sc_text_miss_ms),
+            msgpack: fmt_gated(map_text_miss_ms),
+            vortex: fmt_gated(vortex_text_miss_ms),
         },
         StructRow {
             metric: text_in_label,
-            pco_pack: format_ms(pco_text_in_ms),
-            columnar: format_ms(col_text_in_ms),
-            serde_columnar: format_ms(sc_text_in_ms),
-            msgpack: format_ms(map_text_in_ms),
-            vortex: format_ms(vortex_text_in_ms),
+            pco_pack: fmt_gated(pco_text_in_ms),
+            columnar: fmt_gated(col_text_in_ms),
+            serde_columnar: fmt_gated(sc_text_in_ms),
+            msgpack: fmt_gated(map_text_in_ms),
+            vortex: fmt_gated(vortex_text_in_ms),
         },
         StructRow {
             metric: reduce_label,
-            pco_pack: format_ms(proj_ms),
-            columnar: format_ms(col_reduce_ms),
-            serde_columnar: format_ms(sc_reduce_ms),
-            msgpack: format_ms(map_reduce_ms),
-            vortex: format_ms(vortex_reduce_ms),
+            pco_pack: fmt_gated(proj_ms),
+            columnar: fmt_gated(col_reduce_ms),
+            serde_columnar: fmt_gated(sc_reduce_ms),
+            msgpack: fmt_gated(map_reduce_ms),
+            vortex: fmt_gated(vortex_reduce_ms),
         },
     ];
     println!("{}", as_table(&rows));

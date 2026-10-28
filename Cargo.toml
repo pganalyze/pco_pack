@@ -6,10 +6,17 @@ license = "MIT"
 description = "Zero-config columnar compression"
 keywords = ["compression", "columnar", "timeseries"]
 repository = "https://github.com/pganalyze/pco_pack"
+autobenches = false
 exclude = ["src/test*.rs", "src/test/*", "tests/*.rs", "benches/*.rs", "examples/*"]
 
 [workspace]
 members = [".", "pco_pack_derive"]
+
+# cargo bench must not run the libtest harness: it forwards every bench
+# argument and rejects the suite's --crates flag. Unit tests still run via
+# cargo test, and all real benchmarks are declared [[bench]] targets.
+[lib]
+bench = false
 
 [dependencies]
 ahash = "0.8"

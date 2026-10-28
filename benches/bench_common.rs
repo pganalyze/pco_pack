@@ -2,33 +2,142 @@ use std::hint::black_box;
 use std::io::Cursor;
 use std::time::Instant;
 
-pub const ITERATIONS: usize = 50;
+use peak_alloc::PeakAlloc;
+
+/// Global allocator tracking live Rust heap; C allocations (zstd/vortex
+/// arenas) are not counted. Shared by every bench binary; chunk_size.rs
+/// reads the same static for its peak-memory table.
+#[global_allocator]
+static PEAK: PeakAlloc = PeakAlloc;
+
+/// Run f, report its peak added live bytes to stderr attributed to tag, and
+/// return f's result. Baseline-delta like chunk_size's peak_of so retained
+/// inputs never pollute the attribution.
+#[allow(dead_code)]
+fn peak_of<T, F: FnOnce() -> T>(tag: &str, f: F) -> T {
+    let baseline = PEAK.current_usage();
+    PEAK.reset_peak_usage();
+    let out = f();
+    let peak = PEAK.peak_usage().saturating_sub(baseline);
+    let live = PEAK.current_usage();
+    eprintln!(
+        "[peak] {tag}: +{:.2} GB (absolute peak {:.2} GB, live after {:.2} GB)",
+        peak as f64 / (1 << 30) as f64,
+        PEAK.peak_usage() as f64 / (1 << 30) as f64,
+        live as f64 / (1 << 30) as f64,
+    );
+    out
+}
+
+/// Repeat count for the synthetic benches. Sized so the minimum lands near
+/// the uncontended floor; `$BENCH_ITERS` overrides this and the real-data
+/// count (`DS_ITERATIONS`).
+pub const ITERATIONS: usize = 100;
 
 /// pco_pack's rows per chunk; every codec (pco, PcoPack, msgpack+zstd) is
 /// measured at this size for a fair comparison.
 pub const CHUNK_ROWS: usize = 262_144;
 
-/// Benchmark a closure and return average time in milliseconds (rounded to 1 decimal).
-pub fn avg_ms<T, F: Fn() -> T>(f: F) -> f64 {
-    let mut total_ns: u128 = 0;
-    for _ in 0..ITERATIONS {
-        let start = Instant::now();
-        let _ = black_box(f());
-        total_ns += start.elapsed().as_nanos();
-    }
-    ((total_ns / ITERATIONS as u128) as f64 / 1_000_000.0 * 10.0).round() / 10.0
+/// Repeat count for the synthetic benches, taken from `ITERATIONS`;
+/// `$BENCH_ITERS` overrides.
+pub fn synth_iters() -> usize {
+    std::env::var("BENCH_ITERS").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(ITERATIONS).max(1)
 }
 
-/// Benchmark a closure, returning the average time in ms and its last result.
-pub fn avg_ms_pair<T, F: Fn() -> T>(f: F) -> (f64, T) {
-    let mut total_ns: u128 = 0;
-    let result = black_box(f());
-    for _ in 1..ITERATIONS {
-        let start = Instant::now();
-        black_box(f());
-        total_ns += start.elapsed().as_nanos();
+/// Codec names accepted by `--crates`; the dash-separated spellings match
+/// the cargo dependency names.
+const CRATE_NAMES: &[&str] = &["pco_pack", "pco", "vortex", "columnar", "serde_columnar", "msgpack"];
+
+static CRATE_FILTER: std::sync::OnceLock<Option<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+
+/// Parse `--crates=name,name,...` (or `--crates name`) from argv, else the
+/// `BENCH_CRATES` env so a wrapper can forward the selection to
+/// every bench binary without each main reparsing args. Without a filter all
+/// codecs run. Returns the positional args left over for scenario mains.
+pub fn init_crate_filter() -> Vec<String> {
+    let mut names: Option<Vec<String>> = None;
+    let mut positional = Vec::new();
+    let mut argv = std::env::args().skip(1).into_iter();
+    while let Some(arg) = argv.next() {
+        if let Some(v) = arg.strip_prefix("--crates=") {
+            names = Some(split_crates(v));
+        } else if arg == "--crates" {
+            let v = argv.next().expect("--crates needs a comma-separated list of crate names");
+            names = Some(split_crates(&v));
+        } else if arg.starts_with('-') {
+            // cargo passes harness flags (e.g. `--bench`) to every bench
+            // binary; scenario dispatch matches names only, so ignore them.
+        } else {
+            positional.push(arg);
+        }
     }
-    (((total_ns / (ITERATIONS as u128 - 1)) as f64 / 1_000_000.0 * 10.0).round() / 10.0, result)
+
+    let filter = match names {
+        Some(names) => Some(validate_crates(names)),
+        None => std::env::var("BENCH_CRATES").ok().map(|v| validate_crates(split_crates(&v))),
+    };
+    let _ = CRATE_FILTER.set(filter);
+    positional
+}
+
+fn split_crates(v: &str) -> Vec<String> {
+    v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+}
+
+fn validate_crates(names: Vec<String>) -> std::collections::HashSet<String> {
+    let set: std::collections::HashSet<String> = names.into_iter().collect();
+    assert!(!set.is_empty(), "--crates needs at least one crate name");
+    for name in &set {
+        assert!(CRATE_NAMES.contains(&name.as_str()), "unknown crate '{name}'; valid: {}", CRATE_NAMES.join(", "));
+    }
+    set
+}
+
+/// Whether a codec's measurements should run: true unless a `--crates`
+/// filter excluded it. Skipped cells print "-" like the existing Vortex
+/// degrade: gated times carry NAN and gated sizes `usize::MAX` until they
+/// are rendered through [`fmt_gated`] / [`fmt_sz`].
+pub fn enabled(crate_name: &str) -> bool {
+    let filter = CRATE_FILTER
+        .get_or_init(|| std::env::var("BENCH_CRATES").ok().map(|v| validate_crates(split_crates(&v))));
+    match filter {
+        Some(set) => set.contains(crate_name),
+        None => true,
+    }
+}
+
+/// Render a gated time cell: NAN marks a codec skipped by `--crates`.
+pub fn fmt_gated(ms: f64) -> String {
+    if ms.is_nan() { "-".to_string() } else { format_ms(ms) }
+}
+
+/// Render a gated size cell: `usize::MAX` marks a codec skipped by
+/// `--crates`.
+pub fn fmt_sz(bytes: usize) -> String {
+    if bytes == usize::MAX { "-".to_string() } else { format_bytes(bytes) }
+}
+
+/// Benchmark a closure over ITERATIONS runs and return the minimum time in
+/// milliseconds (rounded to 1 decimal). The minimum damps the scheduler and
+/// frequency noise that made the old per-run averages jump around.
+pub fn min_ms<T, F: Fn() -> T>(f: F) -> f64 {
+    min_ms_pair(f).0
+}
+
+/// Benchmark a closure over `synth_iters()` runs, returning the minimum time
+/// in ms and the result from the fastest run.
+pub fn min_ms_pair<T, F: Fn() -> T>(f: F) -> (f64, T) {
+    let mut best: Option<(f64, T)> = None;
+    for _ in 0..synth_iters() {
+        let start = Instant::now();
+        let result = black_box(f());
+        let ms = start.elapsed().as_nanos() as f64 / 1_000_000.0;
+        if best.as_ref().is_none_or(|(b, _)| ms < *b) {
+            best = Some((ms, result));
+        }
+    }
+    let (ms, result) = best.unwrap();
+    ((ms * 10.0).round() / 10.0, result)
 }
 
 /// Format bytes into a human-readable string (B, KB, MB, GB).
@@ -160,7 +269,7 @@ pub fn bench_write<T: pco_pack::PcoSerde + Clone + PartialEq + std::fmt::Debug, 
     label: &str, n_rows: usize, build: F,
 ) -> (String, f64, usize) {
     let data = build(n_rows);
-    let (ms, buf) = avg_ms_pair(|| T::write(data.clone(), 0, Default::default()).unwrap());
+    let (ms, buf) = min_ms_pair(|| T::write(data.clone(), 0, Default::default()).unwrap());
     let mut cursor = Cursor::new(&buf[..]);
     let mut reader = T::read(&mut cursor, 0, Default::default()).unwrap();
     for idx in 0..n_rows {
@@ -179,7 +288,7 @@ pub fn bench_write_round<
     label: &str, n_rows: usize, build: F, float_round: u32, time_round: chrono::Duration, expect: E,
 ) -> (String, f64, usize) {
     let data = build(n_rows);
-    let (ms, buf) = avg_ms_pair(|| T::write(data.clone(), float_round, time_round).unwrap());
+    let (ms, buf) = min_ms_pair(|| T::write(data.clone(), float_round, time_round).unwrap());
     let mut cursor = Cursor::new(&buf[..]);
     let mut reader = T::read(&mut cursor, float_round, time_round).unwrap();
     for idx in 0..n_rows {
@@ -198,13 +307,13 @@ pub fn bench_msgpack<T: serde::Serialize + for<'de> serde::Deserialize<'de>>(dat
     let decompressed = zstd::decode_all(&z[..]).unwrap();
     let back: Vec<T> = rmp_serde::from_read(Cursor::new(decompressed)).expect("msgpack decode failed");
     assert_eq!(back.len(), data.len());
-    avg_ms(|| to_msgpack_zstd(data))
+    min_ms(|| to_msgpack_zstd(data))
 }
 
 /// Standalone pco (`ChunkConfig::default()`, pco's own chunking) on a flat
 /// numeric column; returns (write ms, size bytes).
 pub fn bench_pco_col<T: pco::data_types::Number>(data: &[T]) -> (f64, usize) {
-    let (ms, buf) = avg_ms_pair(|| pco::standalone::simple_compress(data, &pco::ChunkConfig::default()).unwrap());
+    let (ms, buf) = min_ms_pair(|| pco::standalone::simple_compress(data, &pco::ChunkConfig::default()).unwrap());
     (ms, buf.len())
 }
 
@@ -212,7 +321,7 @@ pub fn bench_pco_col<T: pco::data_types::Number>(data: &[T]) -> (f64, usize) {
 /// `u8`/`i8`; PcoPack enables them by default.
 pub fn bench_pco_col_8bit<T: pco::data_types::Number>(data: &[T]) -> (f64, usize) {
     let cfg = pco::ChunkConfig::default().with_enable_8_bit(true);
-    let (ms, buf) = avg_ms_pair(|| pco::standalone::simple_compress(data, &cfg).unwrap());
+    let (ms, buf) = min_ms_pair(|| pco::standalone::simple_compress(data, &cfg).unwrap());
     (ms, buf.len())
 }
 
@@ -220,7 +329,7 @@ pub fn bench_pco_col_8bit<T: pco::data_types::Number>(data: &[T]) -> (f64, usize
 /// no serde API for them, so they are stored as msgpack+zstd.
 #[allow(dead_code)]
 pub fn bench_pco_fallback<T: serde::Serialize>(data: &[T]) -> (f64, usize) {
-    let (ms, buf) = avg_ms_pair(|| to_msgpack_zstd(data));
+    let (ms, buf) = min_ms_pair(|| to_msgpack_zstd(data));
     (ms, buf.len())
 }
 
@@ -313,7 +422,7 @@ pub fn bench_vortex_map_mode<
         };
 
         let items: Vec<Item<T>> = data.iter().cloned().map(Item).collect();
-        let (ms, bytes) = avg_ms_pair(|| {
+        let (ms, bytes) = min_ms_pair(|| {
             rt.block_on(async {
                 let batch = serde_arrow::to_record_batch(&fields, &items).unwrap();
                 let schema_in = batch.schema();

@@ -2,15 +2,11 @@ include!("bench_common.rs");
 
 use markdown_tables::{MarkdownTableRow, as_table};
 use pco_pack::PcoPack;
-use peak_alloc::PeakAlloc;
 use serde_json::json;
 
-/// Global allocator that tracks the current and peak live Rust heap.
-/// Note: C allocations (zstd compression contexts) are not tracked.
-#[global_allocator]
-static PEAK: PeakAlloc = PeakAlloc;
-
-fn peak_of<T, F: FnOnce() -> T>(f: F) -> (T, usize) {
+/// Peak added live bytes for f, reported as table cells rather than stderr
+/// like bench_common's peak_of.
+fn peak_bytes_of<T, F: FnOnce() -> T>(f: F) -> (T, usize) {
     let baseline = PEAK.current_usage();
     PEAK.reset_peak_usage();
     let out = f();
@@ -20,9 +16,9 @@ fn peak_of<T, F: FnOnce() -> T>(f: F) -> (T, usize) {
 
 fn measure_peaks<T: PcoPack + Clone>(data: &[T]) -> (Vec<T::Chunk>, Vec<u8>, usize, usize) {
     let input = data.to_vec(); // excluded from peak measurement
-    let (chunks, write_peak) = peak_of(|| <T as PcoPack>::write(input).unwrap());
+    let (chunks, write_peak) = peak_bytes_of(|| <T as PcoPack>::write(input).unwrap());
     let buf = T::to_bytes(&chunks).unwrap();
-    let (_, read_peak) = peak_of(|| {
+    let (_, read_peak) = peak_bytes_of(|| {
         let c = T::from_bytes(&buf).unwrap();
         let r = T::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
         assert_eq!(r.len(), data.len());
@@ -490,6 +486,10 @@ fn print_group_results<T>(label: &str, results: &[ChunkResult]) {
 
 fn main() {
     println!("## chunk_size\n");
+    init_crate_filter();
+    if !enabled("pco_pack") {
+        return;
+    }
 
     // ---- Small structs ----
     let mut small_results = Vec::new();
@@ -497,8 +497,8 @@ fn main() {
     {
         let data = generate::<Small13>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small13>(&data);
-        let serial_ms = avg_ms(|| Small13::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Small13::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Small13::from_bytes(&buf).unwrap();
             let r = Small13::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -518,8 +518,8 @@ fn main() {
     {
         let data = generate::<Small14>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small14>(&data);
-        let serial_ms = avg_ms(|| Small14::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Small14::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Small14::from_bytes(&buf).unwrap();
             let r = Small14::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -539,8 +539,8 @@ fn main() {
     {
         let data = generate::<Small15>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small15>(&data);
-        let serial_ms = avg_ms(|| Small15::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Small15::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Small15::from_bytes(&buf).unwrap();
             let r = Small15::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -560,8 +560,8 @@ fn main() {
     {
         let data = generate::<Small16>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small16>(&data);
-        let serial_ms = avg_ms(|| Small16::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Small16::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Small16::from_bytes(&buf).unwrap();
             let r = Small16::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -581,8 +581,8 @@ fn main() {
     {
         let data = generate::<Small17>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small17>(&data);
-        let serial_ms = avg_ms(|| Small17::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Small17::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Small17::from_bytes(&buf).unwrap();
             let r = Small17::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -602,8 +602,8 @@ fn main() {
     {
         let data = generate::<Small18>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small18>(&data);
-        let serial_ms = avg_ms(|| Small18::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Small18::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Small18::from_bytes(&buf).unwrap();
             let r = Small18::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -623,8 +623,8 @@ fn main() {
     {
         let data = generate::<Small19>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Small19>(&data);
-        let serial_ms = avg_ms(|| Small19::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Small19::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Small19::from_bytes(&buf).unwrap();
             let r = Small19::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -649,8 +649,8 @@ fn main() {
     {
         let data = generate::<Medium13>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium13>(&data);
-        let serial_ms = avg_ms(|| Medium13::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Medium13::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Medium13::from_bytes(&buf).unwrap();
             let r = Medium13::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -670,8 +670,8 @@ fn main() {
     {
         let data = generate::<Medium14>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium14>(&data);
-        let serial_ms = avg_ms(|| Medium14::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Medium14::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Medium14::from_bytes(&buf).unwrap();
             let r = Medium14::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -691,8 +691,8 @@ fn main() {
     {
         let data = generate::<Medium15>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium15>(&data);
-        let serial_ms = avg_ms(|| Medium15::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Medium15::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Medium15::from_bytes(&buf).unwrap();
             let r = Medium15::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -712,8 +712,8 @@ fn main() {
     {
         let data = generate::<Medium16>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium16>(&data);
-        let serial_ms = avg_ms(|| Medium16::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Medium16::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Medium16::from_bytes(&buf).unwrap();
             let r = Medium16::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -733,8 +733,8 @@ fn main() {
     {
         let data = generate::<Medium17>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium17>(&data);
-        let serial_ms = avg_ms(|| Medium17::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Medium17::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Medium17::from_bytes(&buf).unwrap();
             let r = Medium17::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -754,8 +754,8 @@ fn main() {
     {
         let data = generate::<Medium18>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium18>(&data);
-        let serial_ms = avg_ms(|| Medium18::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Medium18::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Medium18::from_bytes(&buf).unwrap();
             let r = Medium18::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -775,8 +775,8 @@ fn main() {
     {
         let data = generate::<Medium19>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Medium19>(&data);
-        let serial_ms = avg_ms(|| Medium19::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Medium19::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Medium19::from_bytes(&buf).unwrap();
             let r = Medium19::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -801,8 +801,8 @@ fn main() {
     {
         let data = generate::<Large13>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large13>(&data);
-        let serial_ms = avg_ms(|| Large13::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Large13::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Large13::from_bytes(&buf).unwrap();
             let r = Large13::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -822,8 +822,8 @@ fn main() {
     {
         let data = generate::<Large14>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large14>(&data);
-        let serial_ms = avg_ms(|| Large14::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Large14::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Large14::from_bytes(&buf).unwrap();
             let r = Large14::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -843,8 +843,8 @@ fn main() {
     {
         let data = generate::<Large15>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large15>(&data);
-        let serial_ms = avg_ms(|| Large15::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Large15::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Large15::from_bytes(&buf).unwrap();
             let r = Large15::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -864,8 +864,8 @@ fn main() {
     {
         let data = generate::<Large16>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large16>(&data);
-        let serial_ms = avg_ms(|| Large16::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Large16::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Large16::from_bytes(&buf).unwrap();
             let r = Large16::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -885,8 +885,8 @@ fn main() {
     {
         let data = generate::<Large17>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large17>(&data);
-        let serial_ms = avg_ms(|| Large17::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Large17::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Large17::from_bytes(&buf).unwrap();
             let r = Large17::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -906,8 +906,8 @@ fn main() {
     {
         let data = generate::<Large18>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large18>(&data);
-        let serial_ms = avg_ms(|| Large18::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Large18::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Large18::from_bytes(&buf).unwrap();
             let r = Large18::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
@@ -927,8 +927,8 @@ fn main() {
     {
         let data = generate::<Large19>();
         let (chunks_c, buf, write_peak, read_peak) = measure_peaks::<Large19>(&data);
-        let serial_ms = avg_ms(|| Large19::write(data.clone()));
-        let deserial_ms = avg_ms(|| {
+        let serial_ms = min_ms(|| Large19::write(data.clone()));
+        let deserial_ms = min_ms(|| {
             let c = Large19::from_bytes(&buf).unwrap();
             let r = Large19::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());

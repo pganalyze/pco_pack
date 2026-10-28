@@ -24,6 +24,10 @@ impl MarkdownTableRow for FilterRow {
 }
 
 fn main() {
+    init_crate_filter();
+    if !enabled("pco_pack") {
+        return;
+    }
     let n_rows = 100_000;
     let data = generate_data(n_rows);
     let mut rows = Vec::new();
@@ -265,7 +269,7 @@ where
         tolerance,
         actual
     );
-    let ms = avg_ms(|| {
+    let ms = min_ms(|| {
         let result = filter_fn(bytes);
         black_box(result);
     });

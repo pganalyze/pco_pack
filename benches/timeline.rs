@@ -5,6 +5,10 @@ use markdown_tables::{MarkdownTableRow, as_table};
 use pco_pack::{PcoPack, Timeline};
 
 fn main() {
+    init_crate_filter();
+    if !enabled("pco_pack") {
+        return;
+    }
     let num_records = 100_000;
     let uniqueness_pcts = [10, 20, 50, 80, 90];
 
@@ -90,9 +94,9 @@ fn main() {
             .sum();
         assert_eq!(dt_data.len(), coverage);
 
-        let tl_serial_ms = avg_ms(|| TimelineRecord::write(timeline_data.clone()).unwrap());
-        let dt_serial_ms = avg_ms(|| DateTimeRecord::write(dt_data.clone()).unwrap());
-        let round_serial_ms = avg_ms(|| TimeRoundRecord::write(round_data.clone()).unwrap());
+        let tl_serial_ms = min_ms(|| TimelineRecord::write(timeline_data.clone()).unwrap());
+        let dt_serial_ms = min_ms(|| DateTimeRecord::write(dt_data.clone()).unwrap());
+        let round_serial_ms = min_ms(|| TimeRoundRecord::write(round_data.clone()).unwrap());
 
         let tl_compressed = TimelineRecord::write(timeline_data.clone()).unwrap();
         let dt_compressed = DateTimeRecord::write(dt_data.clone()).unwrap();

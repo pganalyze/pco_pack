@@ -21,9 +21,9 @@ pub use crate::ds_common::{
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
 
 /// Public captures live in `benches/data/` (Git LFS); override with
-/// `$PCO_PACK_BENCH_DATA` to point at a local re-capture.
+/// `$BENCH_DATA` to point at a local re-capture.
 pub fn data_dir() -> PathBuf {
-    match std::env::var("PCO_PACK_BENCH_DATA") {
+    match std::env::var("BENCH_DATA") {
         Ok(p) if !p.is_empty() => PathBuf::from(p),
         _ => Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/data"),
     }

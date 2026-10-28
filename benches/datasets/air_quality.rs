@@ -100,18 +100,32 @@ pub fn bench() {
     let pcof_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(exp_pcof.iter()).map(|(q, e)| (q, *e)).collect();
 
-    let (mut pco, pco_bytes) = common::bench_pco_pack_full(data.to_vec(), &pco_filters, |back| {
-        verify(data.iter().map(|r| r.floored()).collect(), back);
-    });
+    let (mut pco, pco_bytes) = common::bench_pco_pack_full(
+        &data,
+        &pco_filters,
+        |back, off| {
+            verify(data[off..off + back.len()].iter().map(|r| r.floored()).collect(), back);
+        },
+        || {},
+    );
 
     let dataf: Vec<AqF> = data.iter().map(AqF::from).collect();
-    let (mut pcof, pcof_bytes) = common::bench_pco_pack_full(dataf, &pcof_filters, |back| {
-        let mut a: Vec<AqF> = data.iter().map(AqF::rounded).collect();
-        let mut b = back.to_vec();
-        a.sort_by_key(|r| r.kafka_offset);
-        b.sort_by_key(|r| r.kafka_offset);
-        assert_eq!(a, b, "air_quality lossy roundtrip mismatch");
-    });
+    // The lossy variant's stored order can differ from input order, so the
+    // multiset check accumulates every survivor and compares once at the end.
+    let pcof_back: std::cell::RefCell<Vec<AqF>> = std::cell::RefCell::new(Vec::new());
+    let (mut pcof, pcof_bytes) = common::bench_pco_pack_full(
+        &dataf,
+        &pcof_filters,
+        |back, _off| pcof_back.borrow_mut().extend(back.iter().cloned()),
+        || {
+            let mut a: Vec<AqF> = data.iter().map(AqF::rounded).collect();
+            let mut b = std::mem::take(&mut *pcof_back.borrow_mut());
+            a.sort_by_key(|r| r.kafka_offset);
+            b.sort_by_key(|r| r.kafka_offset);
+            assert_eq!(a, b, "air_quality lossy roundtrip mismatch");
+        },
+    );
+    drop(dataf);
 
     // Projection + reduce: filter the 1 h window, load only
     // [kafka_partition, pm_2_5], reduce partition => average pm2.5. No
@@ -126,31 +140,35 @@ pub fn bench() {
             e.1 += 1;
         }
     }
-    let (ms, map) = common::bench_pco_pack_projected::<AirQuality, _>(
-        &pco_bytes,
-        &proj_q,
-        &["kafka_partition", "pm_2_5"],
-        exp_pco[0],
-        |rows| {
-            let mut acc: std::collections::HashMap<i32, (i64, u64)> = Default::default();
-            for r in rows {
-                let e = acc.entry(r.kafka_partition).or_default();
-                e.0 += r.pm_2_5 as i64;
-                e.1 += 1;
-            }
-            acc
-        },
-    );
-    assert_eq!(map, proj_truth, "air_quality projected reduce");
-    pco.project_ms = Some(ms);
-    let (msf, _) = common::bench_pco_pack_projected::<AqF, _>(
-        &pcof_bytes,
-        &proj_q,
-        &["kafka_partition", "pm_2_5"],
-        exp_pcof[0],
-        |rows| rows.len(),
-    );
-    pcof.project_ms = Some(msf);
+    if crate::enabled("pco_pack") {
+        let (ms, map) = common::bench_pco_pack_projected::<AirQuality, _>(
+            &pco_bytes,
+            &proj_q,
+            &["kafka_partition", "pm_2_5"],
+            exp_pco[0],
+            |rows| {
+                let mut acc: std::collections::HashMap<i32, (i64, u64)> = Default::default();
+                for r in rows {
+                    let e = acc.entry(r.kafka_partition).or_default();
+                    e.0 += r.pm_2_5 as i64;
+                    e.1 += 1;
+                }
+                acc
+            },
+        );
+        assert_eq!(map, proj_truth, "air_quality projected reduce");
+        pco.project_ms = Some(ms);
+        drop(pco_bytes);
+        let (msf, _) = common::bench_pco_pack_projected::<AqF, _>(
+            &pcof_bytes,
+            &proj_q,
+            &["kafka_partition", "pm_2_5"],
+            exp_pcof[0],
+            |rows| rows.len(),
+        );
+        pcof.project_ms = Some(msf);
+        drop(pcof_bytes);
+    }
 
     // Mirrors store ns, msgpack stores exact instants: one (i64, i64) ns
     // range serves all four codecs.
@@ -170,70 +188,101 @@ pub fn bench() {
                 .count()
         },
     );
-    // Honest reduce: full indexed decode, partition => avg pm2.5.
-    col.project_ms = Some(common::reduce_columnar::<AqCol, (i64, i64), _, _>(
-        &col_buf,
-        &ns_ranges[0],
-        |decoded: &columnar::BorrowedOf<'_, AqCol>, k: &(i64, i64)| {
-            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
-            for i in 0..columnar::Len::len(decoded) {
-                let r = columnar::Index::get(decoded, i);
-                if k.0 <= *r.timestamp && *r.timestamp <= k.1 {
-                    let e = acc.entry(*r.kafka_partition).or_default();
-                    e.0 += *r.pm_2_5 as i64;
+    if crate::enabled("columnar") {
+        // Honest reduce: full indexed decode, partition => avg pm2.5.
+        col.project_ms = Some(common::reduce_columnar::<AqCol, (i64, i64), (i32, i64), _, _, _>(
+            &col_buf,
+            &ns_ranges[0],
+            |decoded: &columnar::BorrowedOf<'_, AqCol>, k: &(i64, i64)| {
+                (0..columnar::Len::len(decoded))
+                    .filter_map(|i| {
+                        let r = columnar::Index::get(decoded, i);
+                        if k.0 <= *r.timestamp && *r.timestamp <= k.1 {
+                            Some((*r.kafka_partition, *r.pm_2_5 as i64))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            },
+            |pairs, _k| {
+                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+                for (part, pm) in pairs {
+                    let e = acc.entry(part).or_default();
+                    e.0 += pm;
                     e.1 += 1;
                 }
-            }
-            acc
-        },
-        &proj_truth,
-    ));
+                acc
+            },
+            &proj_truth,
+        ));
+    }
+    drop(col_buf);
 
     let (mut sc, sc_buf) = common::bench_serde_columnar(
         n,
-        || aq_sc::AqScStore { data: data.iter().map(aq_sc::AqScRow::from).collect() },
+        &data,
+        |chunk| aq_sc::AqScStore { data: chunk.iter().map(aq_sc::AqScRow::from).collect() },
         &ns_filters,
         |s: &aq_sc::AqScStore, k: &(i64, i64)| {
             s.data.iter().filter(|r| k.0 <= r.timestamp && r.timestamp <= k.1).count()
         },
     );
-    sc.project_ms = Some(common::reduce_serde_columnar::<aq_sc::AqScStore, (i64, i64), _, _>(
-        &sc_buf,
-        &ns_ranges[0],
-        |s: &aq_sc::AqScStore, k: &(i64, i64)| {
-            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
-            for r in s.data.iter().filter(|r| k.0 <= r.timestamp && r.timestamp <= k.1) {
-                let e = acc.entry(r.kafka_partition).or_default();
-                e.0 += r.pm_2_5 as i64;
-                e.1 += 1;
-            }
-            acc
-        },
-        &proj_truth,
-    ));
+    if crate::enabled("serde_columnar") {
+        sc.project_ms = Some(common::reduce_serde_columnar::<aq_sc::AqScStore, (i64, i64), (i32, i64), _, _, _>(
+            &sc_buf,
+            &ns_ranges[0],
+            |s: &aq_sc::AqScStore, k: &(i64, i64)| {
+                s.data
+                    .iter()
+                    .filter(|r| k.0 <= r.timestamp && r.timestamp <= k.1)
+                    .map(|r| (r.kafka_partition, r.pm_2_5 as i64))
+                    .collect()
+            },
+            |pairs, _k| {
+                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+                for (part, pm) in pairs {
+                    let e = acc.entry(part).or_default();
+                    e.0 += pm;
+                    e.1 += 1;
+                }
+                acc
+            },
+            &proj_truth,
+        ));
+    }
+    drop(sc_buf);
 
     let (mut mp, mp_buf) = common::bench_msgpack(&data, &ns_filters, |r: &AirQuality, k: &(i64, i64)| {
         let ns = r.timestamp.timestamp_nanos_opt().unwrap();
         k.0 <= ns && ns <= k.1
     });
-    mp.project_ms = Some(common::reduce_msgpack::<AirQuality, (i64, i64), _, _>(
-        &mp_buf,
-        n,
-        &ns_ranges[0],
-        |rows: &[AirQuality], k: &(i64, i64)| {
-            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
-            for r in rows.iter().filter(|r| {
-                let ns = r.timestamp.timestamp_nanos_opt().unwrap();
-                k.0 <= ns && ns <= k.1
-            }) {
-                let e = acc.entry(r.kafka_partition).or_default();
-                e.0 += r.pm_2_5 as i64;
-                e.1 += 1;
-            }
-            acc
-        },
-        &proj_truth,
-    ));
+    if crate::enabled("msgpack") {
+        mp.project_ms = Some(common::reduce_msgpack::<AirQuality, (i64, i64), (i32, i64), _, _, _>(
+            &mp_buf,
+            &ns_ranges[0],
+            |rows: &[AirQuality], k: &(i64, i64)| {
+                rows.iter()
+                    .filter(|r| {
+                        let ns = r.timestamp.timestamp_nanos_opt().unwrap();
+                        k.0 <= ns && ns <= k.1
+                    })
+                    .map(|r| (r.kafka_partition, r.pm_2_5 as i64))
+                    .collect()
+            },
+            |pairs, _k| {
+                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+                for (part, pm) in pairs {
+                    let e = acc.entry(part).or_default();
+                    e.0 += pm;
+                    e.1 += 1;
+                }
+                acc
+            },
+            &proj_truth,
+        ));
+    }
+    drop(mp_buf);
 
     // Vortex uses the i64-ns mirror + numeric ranges; chrono strings vary in
     // fractional digits, so lexicographic range != temporal range.
@@ -244,30 +293,34 @@ pub fn bench() {
             vortex::array::expr::lt_eq(vortex::array::expr::col("timestamp"), vortex::array::expr::lit(k.1)),
         )
     });
-    // Filter + projection pushdown over the i64-ns ranges; survivors arrive
-    // in file order and the fold counts every row (the pushed filter is
-    // exact, verified by the filter cells).
-    vx.project_ms = common::reduce_vortex_ds::<(i32, i16), (i64, i64), _, _, _>(
-        &vx_buf,
-        &ns_ranges[0],
-        |k: &(i64, i64)| {
-            vortex::array::expr::and(
-                vortex::array::expr::gt_eq(vortex::array::expr::col("timestamp"), vortex::array::expr::lit(k.0)),
-                vortex::array::expr::lt_eq(vortex::array::expr::col("timestamp"), vortex::array::expr::lit(k.1)),
-            )
-        },
-        &["kafka_partition", "pm_2_5"],
-        |rows: Vec<(i32, i16)>, _: &(i64, i64)| {
-            let mut acc: HashMap<i32, (i64, u64)> = Default::default();
-            for (part, pm) in rows {
-                let e = acc.entry(part).or_default();
-                e.0 += pm as i64;
-                e.1 += 1;
-            }
-            acc
-        },
-        &proj_truth,
-    );
+    if crate::enabled("vortex") {
+        // Filter + projection pushdown over the i64-ns ranges; survivors arrive
+        // in file order and the fold counts every row (the pushed filter is
+        // exact, verified by the filter cells).
+        vx.project_ms = common::reduce_vortex_ds::<(i32, i16), (i64, i64), _, _, _>(
+            &vx_buf,
+            &ns_ranges[0],
+            |k: &(i64, i64)| {
+                vortex::array::expr::and(
+                    vortex::array::expr::gt_eq(vortex::array::expr::col("timestamp"), vortex::array::expr::lit(k.0)),
+                    vortex::array::expr::lt_eq(vortex::array::expr::col("timestamp"), vortex::array::expr::lit(k.1)),
+                )
+            },
+            &["kafka_partition", "pm_2_5"],
+            |rows: Vec<(i32, i16)>, _: &(i64, i64)| {
+                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+                for (part, pm) in rows {
+                    let e = acc.entry(part).or_default();
+                    e.0 += pm as i64;
+                    e.1 += 1;
+                }
+                acc
+            },
+            &proj_truth,
+        );
+    }
+    drop(data_vx);
+    drop(vx_buf);
 
     let reduce_label = common::reduce_label(exp_pco[0], n);
 

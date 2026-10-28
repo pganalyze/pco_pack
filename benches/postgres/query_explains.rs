@@ -483,75 +483,107 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     let expected_structure: Vec<u64> = rows.iter().map(|r| fingerprint_structure(&r.output_json)).collect();
 
     let string_rows: Vec<QueryExplainString> = rows.iter().map(QueryExplainString::from).collect();
-    let (mut pco_text, text_bytes) = common::bench_pco_pack_full(string_rows, &pco_filters, |back| {
-        assert_eq!(back.len(), n, "query_explains (text) row count")
-    });
-    let (ms_text, fold_text) = common::bench_pco_pack_projected::<QueryExplainString, _>(
-        &text_bytes,
-        &queries[0],
-        &["query_fingerprint", "runtime_ms"],
-        kf[0].1,
-        |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
-    );
-    assert_eq!(fold_text, proj_truth, "query_explains (text) projected fold");
-    pco_text.project_ms = Some(ms_text);
+    let (mut pco_text, text_bytes) = common::bench_pco_pack_full(&string_rows, &pco_filters, |_back, _off| {}, || {});
+    drop(string_rows);
+    if crate::enabled("pco_pack") {
+        let (ms_text, fold_text) = common::bench_pco_pack_projected::<QueryExplainString, _>(
+            &text_bytes,
+            &queries[0],
+            &["query_fingerprint", "runtime_ms"],
+            kf[0].1,
+            |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
+        );
+        assert_eq!(fold_text, proj_truth, "query_explains (text) projected fold");
+        pco_text.project_ms = Some(ms_text);
+        drop(text_bytes);
+    }
 
     let lossy_rows: Vec<QueryExplainLossy> = rows.iter().map(QueryExplainLossy::from).collect();
     let lossy_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_lossy.iter()).map(|(q, (_, e))| (q, *e)).collect();
-    let (mut pco_lossy, lossy_bytes) = common::bench_pco_pack_full(lossy_rows, &lossy_filters, |back| {
-        assert_eq!(back.len(), n, "query_explains (lossy) row count")
-    });
-    let (ms_lossy, _) = common::bench_pco_pack_projected::<QueryExplainLossy, _>(
-        &lossy_bytes,
-        &queries[0],
-        &["query_fingerprint", "runtime_ms"],
-        kf_lossy[0].1,
-        |rows| rows.len(),
-    );
-    pco_lossy.project_ms = Some(ms_lossy);
+    let (mut pco_lossy, lossy_bytes) =
+        common::bench_pco_pack_full(&lossy_rows, &lossy_filters, |_back, _off| {}, || {});
+    drop(lossy_rows);
+    if crate::enabled("pco_pack") {
+        let (ms_lossy, _) = common::bench_pco_pack_projected::<QueryExplainLossy, _>(
+            &lossy_bytes,
+            &queries[0],
+            &["query_fingerprint", "runtime_ms"],
+            kf_lossy[0].1,
+            |rows| rows.len(),
+        );
+        pco_lossy.project_ms = Some(ms_lossy);
+        drop(lossy_bytes);
+    }
 
     let arena_rows: Vec<QueryExplainArena> = rows.iter().map(QueryExplainArena::from).collect();
-    let (mut pco_arena, arena_bytes) = common::bench_pco_pack_full(arena_rows, &pco_filters, move |back| {
-        assert_eq!(back.len(), n, "query_explains (arena) row count");
-        let mut got: Vec<u64> = back.iter().map(|r| fingerprint(&r.arena.as_ref().map(|a| a.rebuild()))).collect();
-        let mut exp = expected.clone();
-        got.sort_unstable();
-        exp.sort_unstable();
-        assert_eq!(got, exp, "query_explains (arena): rebuilt output_json must match the stored JSON (as a multiset)");
-    });
-    let (ms_arena, fold_arena) = common::bench_pco_pack_projected::<QueryExplainArena, _>(
-        &arena_bytes,
-        &queries[0],
-        &["query_fingerprint", "runtime_ms"],
-        kf[0].1,
-        |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
-    );
-    assert_eq!(fold_arena, proj_truth, "query_explains (arena) projected fold");
-    pco_arena.project_ms = Some(ms_arena);
-
-    let arena_lossy_rows: Vec<QueryExplainArenaLossy> = rows.iter().map(QueryExplainArenaLossy::from).collect();
-    let (mut pco_arena_lossy, arena_lossy_bytes) =
-        common::bench_pco_pack_full(arena_lossy_rows, &lossy_filters, move |back| {
-            assert_eq!(back.len(), n, "query_explains (arena lossy) row count");
-            let mut got: Vec<u64> =
-                back.iter().map(|r| fingerprint_structure(&r.arena.as_ref().map(|a| a.rebuild()))).collect();
-            let mut exp = expected_structure.clone();
+    let arena_fingerprints: std::cell::RefCell<Vec<u64>> = std::cell::RefCell::new(Vec::new());
+    let (mut pco_arena, arena_bytes) = common::bench_pco_pack_full(
+        &arena_rows,
+        &pco_filters,
+        |back, _off| {
+            arena_fingerprints
+                .borrow_mut()
+                .extend(back.iter().map(|r| fingerprint(&r.arena.as_ref().map(|a| a.rebuild()))));
+        },
+        || {
+            let mut got = arena_fingerprints.borrow_mut();
             got.sort_unstable();
+            let mut exp = expected.clone();
             exp.sort_unstable();
             assert_eq!(
-                got, exp,
+                *got, exp,
+                "query_explains (arena): rebuilt output_json must match the stored JSON (as a multiset)"
+            );
+        },
+    );
+    drop(arena_rows);
+    if crate::enabled("pco_pack") {
+        let (ms_arena, fold_arena) = common::bench_pco_pack_projected::<QueryExplainArena, _>(
+            &arena_bytes,
+            &queries[0],
+            &["query_fingerprint", "runtime_ms"],
+            kf[0].1,
+            |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
+        );
+        assert_eq!(fold_arena, proj_truth, "query_explains (arena) projected fold");
+        pco_arena.project_ms = Some(ms_arena);
+        drop(arena_bytes);
+    }
+
+    let arena_lossy_rows: Vec<QueryExplainArenaLossy> = rows.iter().map(QueryExplainArenaLossy::from).collect();
+    let arena_lossy_fingerprints: std::cell::RefCell<Vec<u64>> = std::cell::RefCell::new(Vec::new());
+    let (mut pco_arena_lossy, arena_lossy_bytes) = common::bench_pco_pack_full(
+        &arena_lossy_rows,
+        &lossy_filters,
+        |back, _off| {
+            arena_lossy_fingerprints
+                .borrow_mut()
+                .extend(back.iter().map(|r| fingerprint_structure(&r.arena.as_ref().map(|a| a.rebuild()))));
+        },
+        || {
+            let mut got = arena_lossy_fingerprints.borrow_mut();
+            got.sort_unstable();
+            let mut exp = expected_structure.clone();
+            exp.sort_unstable();
+            assert_eq!(
+                *got, exp,
                 "query_explains (arena lossy): rebuilt output_json must match the stored JSON structure (as a multiset)"
             );
-        });
-    let (ms_al, _) = common::bench_pco_pack_projected::<QueryExplainArenaLossy, _>(
-        &arena_lossy_bytes,
-        &queries[0],
-        &["query_fingerprint", "runtime_ms"],
-        kf_lossy[0].1,
-        |rows| rows.len(),
+        },
     );
-    pco_arena_lossy.project_ms = Some(ms_al);
+    drop(arena_lossy_rows);
+    if crate::enabled("pco_pack") {
+        let (ms_al, _) = common::bench_pco_pack_projected::<QueryExplainArenaLossy, _>(
+            &arena_lossy_bytes,
+            &queries[0],
+            &["query_fingerprint", "runtime_ms"],
+            kf_lossy[0].1,
+            |rows| rows.len(),
+        );
+        pco_arena_lossy.project_ms = Some(ms_al);
+        drop(arena_lossy_bytes);
+    }
 
     let col_rows: Vec<QueryExplainCol> = rows.iter().map(QueryExplainCol::from).collect();
     let (mut col, col_buf) = common::bench_columnar(
@@ -576,26 +608,32 @@ fn bench_explains(rows: Vec<QueryExplain>) {
                 .count()
         },
     );
-    col.project_ms = Some(common::reduce_columnar::<QueryExplainCol, Ek, HashMap<i64, f64>, _>(
-        &col_buf,
-        &keys[0],
-        |decoded: &columnar::BorrowedOf<'_, QueryExplainCol>, k: &Ek| {
-            fold_fp_avg((0..columnar::Len::len(decoded)).filter_map(|i| {
-                let r = columnar::Index::get(decoded, i);
-                let hit = match k {
-                    Ek::Time(a, b) => {
-                        let us = *r.seen_at;
-                        *a <= us && us <= *b
-                    }
-                    Ek::Slow => *r.runtime_ms >= 10_000.0,
-                    Ek::Server(id) => *r.server_id == *id,
-                    Ek::Error(e) => r.error == e.as_bytes(),
-                };
-                if hit { Some((*r.query_fingerprint, *r.runtime_ms)) } else { None }
-            }))
-        },
-        &proj_truth,
-    ));
+    if crate::enabled("columnar") {
+        col.project_ms = Some(common::reduce_columnar::<QueryExplainCol, Ek, (i64, f32), HashMap<i64, f64>, _, _>(
+            &col_buf,
+            &keys[0],
+            |decoded: &columnar::BorrowedOf<'_, QueryExplainCol>, k: &Ek| {
+                (0..columnar::Len::len(decoded))
+                    .filter_map(|i| {
+                        let r = columnar::Index::get(decoded, i);
+                        let hit = match k {
+                            Ek::Time(a, b) => {
+                                let us = *r.seen_at;
+                                *a <= us && us <= *b
+                            }
+                            Ek::Slow => *r.runtime_ms >= 10_000.0,
+                            Ek::Server(id) => *r.server_id == *id,
+                            Ek::Error(e) => r.error == e.as_bytes(),
+                        };
+                        if hit { Some((*r.query_fingerprint, *r.runtime_ms)) } else { None }
+                    })
+                    .collect()
+            },
+            |pairs, _k| fold_fp_avg(pairs.into_iter()),
+            &proj_truth,
+        ));
+    }
+    drop(col_buf);
 
     let vx_rows: Vec<QueryExplainCol> = rows.iter().map(QueryExplainCol::from).collect();
     let (mut vx, vx_buf) = common::bench_vortex_ds(&vx_rows, &kf, |k: &Ek| {
@@ -607,27 +645,31 @@ fn bench_explains(rows: Vec<QueryExplain>) {
             Ek::Error(e) => eq(col("error"), lit(e.as_str())),
         }
     });
-    vx.project_ms = common::reduce_vortex_ds::<(i64, f32), Ek, _, _, _>(
-        &vx_buf,
-        &keys[0],
-        |k: &Ek| {
-            use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq};
-            match k {
-                Ek::Time(a, b) => and(gt_eq(col("seen_at"), lit(*a)), lt_eq(col("seen_at"), lit(*b))),
-                Ek::Slow => gt_eq(col("runtime_ms"), lit(10_000.0f32)),
-                Ek::Server(id) => eq(col("server_id"), lit(*id)),
-                Ek::Error(e) => eq(col("error"), lit(e.as_str())),
-            }
-        },
-        &["query_fingerprint", "runtime_ms"],
-        |rows: Vec<(i64, f32)>, _: &Ek| fold_fp_avg(rows.into_iter()),
-        &proj_truth,
-    );
+    if crate::enabled("vortex") {
+        vx.project_ms = common::reduce_vortex_ds::<(i64, f32), Ek, _, _, _>(
+            &vx_buf,
+            &keys[0],
+            |k: &Ek| {
+                use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq};
+                match k {
+                    Ek::Time(a, b) => and(gt_eq(col("seen_at"), lit(*a)), lt_eq(col("seen_at"), lit(*b))),
+                    Ek::Slow => gt_eq(col("runtime_ms"), lit(10_000.0f32)),
+                    Ek::Server(id) => eq(col("server_id"), lit(*id)),
+                    Ek::Error(e) => eq(col("error"), lit(e.as_str())),
+                }
+            },
+            &["query_fingerprint", "runtime_ms"],
+            |rows: Vec<(i64, f32)>, _: &Ek| fold_fp_avg(rows.into_iter()),
+            &proj_truth,
+        );
+    }
     drop(vx_rows);
+    drop(vx_buf);
 
     let (mut sc, sc_buf) = common::bench_serde_columnar(
         n,
-        || explains_sc::ExplainsScStore { data: rows.iter().map(explains_sc::ExplainScRow::from).collect() },
+        &rows,
+        |chunk| explains_sc::ExplainsScStore { data: chunk.iter().map(explains_sc::ExplainScRow::from).collect() },
         &kf,
         |s: &explains_sc::ExplainsScStore, k: &Ek| {
             s.data
@@ -641,11 +683,11 @@ fn bench_explains(rows: Vec<QueryExplain>) {
                 .count()
         },
     );
-    sc.project_ms = Some(common::reduce_serde_columnar::<explains_sc::ExplainsScStore, Ek, _, _>(
-        &sc_buf,
-        &keys[0],
-        |s: &explains_sc::ExplainsScStore, k: &Ek| {
-            fold_fp_avg(
+    if crate::enabled("serde_columnar") {
+        sc.project_ms = Some(common::reduce_serde_columnar::<explains_sc::ExplainsScStore, Ek, (i64, f32), _, _, _>(
+            &sc_buf,
+            &keys[0],
+            |s: &explains_sc::ExplainsScStore, k: &Ek| {
                 s.data
                     .iter()
                     .filter(|r| match k {
@@ -654,35 +696,44 @@ fn bench_explains(rows: Vec<QueryExplain>) {
                         Ek::Server(id) => r.server_id == *id,
                         Ek::Error(e) => r.error == *e,
                     })
-                    .map(|r| (r.query_fingerprint, r.runtime_ms)),
-            )
-        },
-        &proj_truth,
-    ));
+                    .map(|r| (r.query_fingerprint, r.runtime_ms))
+                    .collect()
+            },
+            |pairs, _k| fold_fp_avg(pairs.into_iter()),
+            &proj_truth,
+        ));
+    }
+    drop(sc_buf);
 
     let (mut mp, mp_buf) = common::bench_msgpack(&rows, &kf, |r: &QueryExplain, k: &Ek| k.matches(r));
-    mp.project_ms = Some(common::reduce_msgpack::<QueryExplain, Ek, _, _>(
-        &mp_buf,
-        n,
-        &keys[0],
-        |rows: &[QueryExplain], k: &Ek| {
-            fold_fp_avg(rows.iter().filter(|r| k.matches(r)).map(|r| (r.query_fingerprint, r.runtime_ms)))
-        },
-        &proj_truth,
-    ));
+    if crate::enabled("msgpack") {
+        mp.project_ms = Some(common::reduce_msgpack::<QueryExplain, Ek, (i64, f32), _, _, _>(
+            &mp_buf,
+            &keys[0],
+            |rows: &[QueryExplain], k: &Ek| {
+                rows.iter().filter(|r| k.matches(r)).map(|r| (r.query_fingerprint, r.runtime_ms)).collect()
+            },
+            |pairs, _k| fold_fp_avg(pairs.into_iter()),
+            &proj_truth,
+        ));
+    }
+    drop(mp_buf);
 
-    let (mut pco, pco_bytes) =
-        common::bench_pco_pack_full(rows, &pco_filters, |back| assert_eq!(back.len(), n, "query_explains row count"));
-    pco.project_ms = Some(
-        common::bench_pco_pack_projected::<QueryExplain, _>(
-            &pco_bytes,
-            &queries[0],
-            &["query_fingerprint", "runtime_ms"],
-            kf[0].1,
-            |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
-        )
-        .0,
-    );
+    let (mut pco, pco_bytes) = common::bench_pco_pack_full(&rows, &pco_filters, |_back, _off| {}, || {});
+    if crate::enabled("pco_pack") {
+        pco.project_ms = Some(
+            common::bench_pco_pack_projected::<QueryExplain, _>(
+                &pco_bytes,
+                &queries[0],
+                &["query_fingerprint", "runtime_ms"],
+                kf[0].1,
+                |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
+            )
+            .0,
+        );
+    }
+    drop(pco_bytes);
+    drop(rows);
 
     let metrics = ["Size", "Serialize", "Deserialize"];
     let mut pco_out: Vec<CodecRowPcoPack> = metrics

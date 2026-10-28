@@ -12,7 +12,7 @@ mod datasets {
 /// Run one source alone with `cargo bench --bench datasets -- taxi`
 fn main() {
     println!("## Datasets\n");
-    let args: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with('-')).collect();
+    let args = init_crate_filter();
     let want = |name: &str| args.is_empty() || args.iter().any(|a| a == name);
     if want("air_quality") {
         datasets::air_quality::bench();

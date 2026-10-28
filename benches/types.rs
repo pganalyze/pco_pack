@@ -14,6 +14,7 @@ const N: usize = 100_000;
 
 fn main() {
     println!("## Types\n");
+    init_crate_filter();
     numbers_table();
     booleans_table();
     option_table();
@@ -60,20 +61,28 @@ enum Event {
 macro_rules! row3 {
     ($rows:expr, $label:expr, $n:expr, $gen:expr, $pco:expr) => {{
         let data = ($gen)($n);
-        let (name, pp_t, pp_s) = bench_write($label, $n, $gen);
-        let (p_t, p_s) = $pco(&data);
-        let mp_s = to_msgpack_zstd(&data).len();
-        let mp_t = bench_msgpack(&data);
-        let (vx_s, vx_t) = vortex_cell(&data);
+        let (name, pp_s, pp_t) = if enabled("pco_pack") {
+            let (name, t, s) = bench_write($label, $n, $gen);
+            (name, s, t)
+        } else {
+            ($label.to_string(), usize::MAX, f64::NAN)
+        };
+        let (p_t, p_s) = if enabled("pco") { $pco(&data) } else { (f64::NAN, usize::MAX) };
+        let (mp_s, mp_t) = if enabled("msgpack") {
+            (to_msgpack_zstd(&data).len(), bench_msgpack(&data))
+        } else {
+            (usize::MAX, f64::NAN)
+        };
+        let (vx_s, vx_t) = if enabled("vortex") { vortex_cell(&data) } else { ("-".to_string(), "-".to_string()) };
         $rows.push(ComparisonRow {
             type_name: format!("`{name}`"),
-            pco_size: format_bytes(p_s),
-            pco_pack_size: format_bytes(pp_s),
-            mp_size: format_bytes(mp_s),
+            pco_size: fmt_sz(p_s),
+            pco_pack_size: fmt_sz(pp_s),
+            mp_size: fmt_sz(mp_s),
             vortex_size: vx_s,
-            pco_time: format_ms(p_t),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(mp_t),
+            pco_time: fmt_gated(p_t),
+            pco_pack_time: fmt_gated(pp_t),
+            mp_time: fmt_gated(mp_t),
             vortex_time: vx_t,
         });
     }};
@@ -82,19 +91,27 @@ macro_rules! row3 {
 macro_rules! row3_nopco {
     ($rows:expr, $label:expr, $n:expr, $gen:expr) => {{
         let data = ($gen)($n);
-        let (name, pp_t, pp_s) = bench_write($label, $n, $gen);
-        let mp_s = to_msgpack_zstd(&data).len();
-        let mp_t = bench_msgpack(&data);
-        let (vx_s, vx_t) = vortex_cell(&data);
+        let (name, pp_s, pp_t) = if enabled("pco_pack") {
+            let (name, t, s) = bench_write($label, $n, $gen);
+            (name, s, t)
+        } else {
+            ($label.to_string(), usize::MAX, f64::NAN)
+        };
+        let (mp_s, mp_t) = if enabled("msgpack") {
+            (to_msgpack_zstd(&data).len(), bench_msgpack(&data))
+        } else {
+            (usize::MAX, f64::NAN)
+        };
+        let (vx_s, vx_t) = if enabled("vortex") { vortex_cell(&data) } else { ("-".to_string(), "-".to_string()) };
         $rows.push(ComparisonRow {
             type_name: format!("`{name}`"),
             pco_size: "-".to_string(),
-            pco_pack_size: format_bytes(pp_s),
-            mp_size: format_bytes(mp_s),
+            pco_pack_size: fmt_sz(pp_s),
+            mp_size: fmt_sz(mp_s),
             vortex_size: vx_s,
             pco_time: "-".to_string(),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(mp_t),
+            pco_pack_time: fmt_gated(pp_t),
+            mp_time: fmt_gated(mp_t),
             vortex_time: vx_t,
         });
     }};
@@ -115,17 +132,25 @@ macro_rules! row2 {
 macro_rules! row2_vx {
     ($rows:expr, $label:expr, $n:expr, $gen:expr, $vx:path) => {{
         let data = ($gen)($n);
-        let (name, pp_t, pp_s) = bench_write($label, $n, $gen);
-        let mp_s = to_msgpack_zstd(&data).len();
-        let mp_t = bench_msgpack(&data);
-        let (vx_s, vx_t) = $vx(&data);
+        let (name, pp_s, pp_t) = if enabled("pco_pack") {
+            let (name, t, s) = bench_write($label, $n, $gen);
+            (name, s, t)
+        } else {
+            ($label.to_string(), usize::MAX, f64::NAN)
+        };
+        let (mp_s, mp_t) = if enabled("msgpack") {
+            (to_msgpack_zstd(&data).len(), bench_msgpack(&data))
+        } else {
+            (usize::MAX, f64::NAN)
+        };
+        let (vx_s, vx_t) = if enabled("vortex") { $vx(&data) } else { ("-".to_string(), "-".to_string()) };
         $rows.push(SlimRow {
             type_name: format!("`{name}`"),
-            pco_pack_size: format_bytes(pp_s),
-            mp_size: format_bytes(mp_s),
+            pco_pack_size: fmt_sz(pp_s),
+            mp_size: fmt_sz(mp_s),
             vortex_size: vx_s,
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(mp_t),
+            pco_pack_time: fmt_gated(pp_t),
+            mp_time: fmt_gated(mp_t),
             vortex_time: vx_t,
         });
     }};
@@ -145,26 +170,38 @@ macro_rules! row2_smolstr {
 macro_rules! row2_smolstr_vx {
     ($rows:expr, $label:expr, $n:expr, $gen:expr, $map:ident, $vx:path) => {{
         let data = ($gen)($n);
-        let (name, pp_t, pp_s) = bench_write($label, $n, $gen);
-        let string_data: Vec<$map<(String, i32), i32>> =
-            data.iter().map(|m| m.iter().map(|((k, v), val)| ((k.as_ref().to_string(), *v), *val)).collect()).collect();
-        let mp_size = to_msgpack_zstd(&string_data).len();
-        let mp_rt = avg_ms(|| {
-            let data = ($gen)($n);
+        let (name, pp_s, pp_t) = if enabled("pco_pack") {
+            let (name, t, s) = bench_write($label, $n, $gen);
+            (name, s, t)
+        } else {
+            ($label.to_string(), usize::MAX, f64::NAN)
+        };
+        let (mp_size, mp_rt) = if enabled("msgpack") {
             let string_data: Vec<$map<(String, i32), i32>> = data
                 .iter()
                 .map(|m| m.iter().map(|((k, v), val)| ((k.as_ref().to_string(), *v), *val)).collect())
                 .collect();
-            to_msgpack_zstd(&string_data)
-        });
-        let (vx_s, vx_t) = $vx(&data);
+            let size = to_msgpack_zstd(&string_data).len();
+            let rt = min_ms(|| {
+                let data = ($gen)($n);
+                let string_data: Vec<$map<(String, i32), i32>> = data
+                    .iter()
+                    .map(|m| m.iter().map(|((k, v), val)| ((k.as_ref().to_string(), *v), *val)).collect())
+                    .collect();
+                to_msgpack_zstd(&string_data)
+            });
+            (size, rt)
+        } else {
+            (usize::MAX, f64::NAN)
+        };
+        let (vx_s, vx_t) = if enabled("vortex") { $vx(&data) } else { ("-".to_string(), "-".to_string()) };
         $rows.push(SlimRow {
             type_name: format!("`{name}`"),
-            pco_pack_size: format_bytes(pp_s),
-            mp_size: format_bytes(mp_size),
+            pco_pack_size: fmt_sz(pp_s),
+            mp_size: fmt_sz(mp_size),
             vortex_size: vx_s,
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(mp_rt),
+            pco_pack_time: fmt_gated(pp_t),
+            mp_time: fmt_gated(mp_rt),
             vortex_time: vx_t,
         });
     }};
@@ -400,10 +437,14 @@ fn floats_table() {
 
     // Other codecs have no quantization knob: compute once per type.
     let f64_data = normal_f64(N);
-    let (f64_p_t, f64_p_s) = bench_pco_col(&f64_data);
-    let f64_mp_s = to_msgpack_zstd(&f64_data).len();
-    let f64_mp_t = bench_msgpack(&f64_data);
-    let (f64_vx_s, f64_vx_t) = vortex_cell(&f64_data);
+    let (f64_p_t, f64_p_s) = if enabled("pco") { bench_pco_col(&f64_data) } else { (f64::NAN, usize::MAX) };
+    let (f64_mp_s, f64_mp_t) = if enabled("msgpack") {
+        (to_msgpack_zstd(&f64_data).len(), bench_msgpack(&f64_data))
+    } else {
+        (usize::MAX, f64::NAN)
+    };
+    let (f64_vx_s, f64_vx_t) =
+        if enabled("vortex") { vortex_cell(&f64_data) } else { ("-".to_string(), "-".to_string()) };
     for round in [0u32, 1, 2] {
         let label = if round == 0 {
             "f64 (normal, no round)".to_string()
@@ -411,25 +452,34 @@ fn floats_table() {
             format!("f64 (normal, float_round={round})")
         };
         let expect = |v: &f64| if round == 0 { *v } else { f64_rounded(*v, round) };
-        let (_name, pp_t, pp_s) = bench_write_round(&label, N, normal_f64, round, Duration::default(), expect);
+        let (pp_t, pp_s) = if enabled("pco_pack") {
+            let (_name, t, s) = bench_write_round(&label, N, normal_f64, round, Duration::default(), expect);
+            (t, s)
+        } else {
+            (f64::NAN, usize::MAX)
+        };
         rows.push(ComparisonRow {
             type_name: format!("`{label}`"),
-            pco_size: format_bytes(f64_p_s),
-            pco_pack_size: format_bytes(pp_s),
-            mp_size: format_bytes(f64_mp_s),
+            pco_size: fmt_sz(f64_p_s),
+            pco_pack_size: fmt_sz(pp_s),
+            mp_size: fmt_sz(f64_mp_s),
             vortex_size: f64_vx_s.clone(),
-            pco_time: format_ms(f64_p_t),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(f64_mp_t),
+            pco_time: fmt_gated(f64_p_t),
+            pco_pack_time: fmt_gated(pp_t),
+            mp_time: fmt_gated(f64_mp_t),
             vortex_time: f64_vx_t.clone(),
         });
     }
 
     let f32_data = normal_f32(N);
-    let (f32_p_t, f32_p_s) = bench_pco_col(&f32_data);
-    let f32_mp_s = to_msgpack_zstd(&f32_data).len();
-    let f32_mp_t = bench_msgpack(&f32_data);
-    let (f32_vx_s, f32_vx_t) = vortex_cell(&f32_data);
+    let (f32_p_t, f32_p_s) = if enabled("pco") { bench_pco_col(&f32_data) } else { (f64::NAN, usize::MAX) };
+    let (f32_mp_s, f32_mp_t) = if enabled("msgpack") {
+        (to_msgpack_zstd(&f32_data).len(), bench_msgpack(&f32_data))
+    } else {
+        (usize::MAX, f64::NAN)
+    };
+    let (f32_vx_s, f32_vx_t) =
+        if enabled("vortex") { vortex_cell(&f32_data) } else { ("-".to_string(), "-".to_string()) };
     for round in [0u32, 1, 2] {
         let label = if round == 0 {
             "f32 (normal, no round)".to_string()
@@ -437,16 +487,21 @@ fn floats_table() {
             format!("f32 (normal, float_round={round})")
         };
         let expect = |v: &f32| if round == 0 { *v } else { f32_rounded(*v, round) };
-        let (_name, pp_t, pp_s) = bench_write_round(&label, N, normal_f32, round, Duration::default(), expect);
+        let (pp_t, pp_s) = if enabled("pco_pack") {
+            let (_name, t, s) = bench_write_round(&label, N, normal_f32, round, Duration::default(), expect);
+            (t, s)
+        } else {
+            (f64::NAN, usize::MAX)
+        };
         rows.push(ComparisonRow {
             type_name: format!("`{label}`"),
-            pco_size: format_bytes(f32_p_s),
-            pco_pack_size: format_bytes(pp_s),
-            mp_size: format_bytes(f32_mp_s),
+            pco_size: fmt_sz(f32_p_s),
+            pco_pack_size: fmt_sz(pp_s),
+            mp_size: fmt_sz(f32_mp_s),
             vortex_size: f32_vx_s.clone(),
-            pco_time: format_ms(f32_p_t),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(f32_mp_t),
+            pco_time: fmt_gated(f32_p_t),
+            pco_pack_time: fmt_gated(pp_t),
+            mp_time: fmt_gated(f32_mp_t),
             vortex_time: f32_vx_t.clone(),
         });
     }
@@ -478,10 +533,10 @@ fn timestamps_table() {
 
     let data = generate_datetime_data(N);
     let micros: Vec<i64> = data.iter().map(|dt| dt.timestamp_micros()).collect();
-    let (p_t, p_s) = bench_pco_col(&micros);
-    let mp_s = to_msgpack_zstd(&data).len();
-    let mp_t = bench_msgpack(&data);
-    let (vx_s, vx_t) = vortex_cell(&data);
+    let (p_t, p_s) = if enabled("pco") { bench_pco_col(&micros) } else { (f64::NAN, usize::MAX) };
+    let (mp_s, mp_t) =
+        if enabled("msgpack") { (to_msgpack_zstd(&data).len(), bench_msgpack(&data)) } else { (usize::MAX, f64::NAN) };
+    let (vx_s, vx_t) = if enabled("vortex") { vortex_cell(&data) } else { ("-".to_string(), "-".to_string()) };
 
     for (label, g) in [
         ("DateTime (60s step, no round)", 0i64),
@@ -490,16 +545,21 @@ fn timestamps_table() {
     ] {
         let dur = if g == 0 { Duration::default() } else { Duration::microseconds(g) };
         let expect = |dt: &DateTime<Utc>| ts_rounded(dt, g);
-        let (_name, pp_t, pp_s) = bench_write_round(label, N, generate_datetime_data, 0, dur, expect);
+        let (pp_t, pp_s) = if enabled("pco_pack") {
+            let (_name, t, s) = bench_write_round(label, N, generate_datetime_data, 0, dur, expect);
+            (t, s)
+        } else {
+            (f64::NAN, usize::MAX)
+        };
         rows.push(ComparisonRow {
             type_name: format!("`{label}`"),
-            pco_size: format_bytes(p_s),
-            pco_pack_size: format_bytes(pp_s),
-            mp_size: format_bytes(mp_s),
+            pco_size: fmt_sz(p_s),
+            pco_pack_size: fmt_sz(pp_s),
+            mp_size: fmt_sz(mp_s),
             vortex_size: vx_s.clone(),
-            pco_time: format_ms(p_t),
-            pco_pack_time: format_ms(pp_t),
-            mp_time: format_ms(mp_t),
+            pco_time: fmt_gated(p_t),
+            pco_pack_time: fmt_gated(pp_t),
+            mp_time: fmt_gated(mp_t),
             vortex_time: vx_t.clone(),
         });
     }
