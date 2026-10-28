@@ -1,4 +1,4 @@
-include!("bench_common.rs");
+use super::*;
 
 use markdown_tables::{MarkdownTableRow, as_table};
 use pco_pack::PcoPack;
@@ -484,9 +484,8 @@ fn print_group_results<T>(label: &str, results: &[ChunkResult]) {
     println!("{}", as_table(&rows));
 }
 
-fn main() {
+pub fn bench() {
     println!("## chunk_size\n");
-    init_crate_filter();
     if !enabled("pco_pack") {
         return;
     }

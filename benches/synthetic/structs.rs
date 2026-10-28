@@ -1,4 +1,4 @@
-include!("bench_common.rs");
+use super::*;
 
 use arrow_schema::FieldRef;
 use columnar::{Borrow, Columnar, FromBytes, Index, Len};
@@ -20,8 +20,7 @@ use vortex::session::VortexSession;
 /// its fields are forced and no generated `lognorm_small` value hits 500.0.
 const SENTINEL: usize = 12_345;
 
-fn main() {
-    init_crate_filter();
+pub fn bench() {
     let data = data(500_000);
     println!("## Structs\n");
 

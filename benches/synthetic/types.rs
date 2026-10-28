@@ -4,7 +4,7 @@
 //! All rows share one chunk size so sizes are comparable. pco gets a column
 //! only where it compresses without a major transformation.
 
-include!("bench_common.rs");
+use super::*;
 use chrono::{DateTime, Duration, Utc};
 use pco_pack::PcoPack;
 use serde_bytes::ByteBuf;
@@ -12,9 +12,8 @@ use std::collections::{BTreeMap, HashMap};
 
 const N: usize = 100_000;
 
-fn main() {
+pub fn bench() {
     println!("## Types\n");
-    init_crate_filter();
     numbers_table();
     booleans_table();
     option_table();

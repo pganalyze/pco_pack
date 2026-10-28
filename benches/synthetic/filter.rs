@@ -1,4 +1,4 @@
-include!("bench_common.rs");
+use super::*;
 
 use markdown_tables::{MarkdownTableRow, as_table};
 use pco_pack::PcoPack;
@@ -23,8 +23,7 @@ impl MarkdownTableRow for FilterRow {
     }
 }
 
-fn main() {
-    init_crate_filter();
+pub fn bench() {
     if !enabled("pco_pack") {
         return;
     }

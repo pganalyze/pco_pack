@@ -1,11 +1,10 @@
-include!("bench_common.rs");
+use super::*;
 
 use chrono::Duration;
 use markdown_tables::{MarkdownTableRow, as_table};
 use pco_pack::{PcoPack, Timeline};
 
-fn main() {
-    init_crate_filter();
+pub fn bench() {
     if !enabled("pco_pack") {
         return;
     }

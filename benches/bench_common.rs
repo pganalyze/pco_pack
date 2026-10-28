@@ -1,6 +1,6 @@
-use std::hint::black_box;
+pub use std::hint::black_box;
 use std::io::Cursor;
-use std::time::Instant;
+pub use std::time::Instant;
 
 use peak_alloc::PeakAlloc;
 
