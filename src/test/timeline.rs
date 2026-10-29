@@ -507,9 +507,12 @@ fn timeline_bucket_boundary_belongs_to_next_bucket() {
     // that only covers [0, 10M).
     let result = TimelineBucketed::filter_bytes(&bytes, serde_json::json!({"seen_at": 10_000_000}), &[]).unwrap();
     assert!(result.is_empty());
-    let result =
-        TimelineBucketed::filter_bytes(&bytes, serde_json::json!({"seen_at": {"start": 10_000_000, "end": 15_000_000}}), &[])
-            .unwrap();
+    let result = TimelineBucketed::filter_bytes(
+        &bytes,
+        serde_json::json!({"seen_at": {"start": 10_000_000, "end": 15_000_000}}),
+        &[],
+    )
+    .unwrap();
     assert!(result.is_empty());
     let result = TimelineBucketed::filter_bytes(&bytes, serde_json::json!({"seen_at": 9_999_999}), &[]).unwrap();
     assert_eq!(result.len(), 1);
