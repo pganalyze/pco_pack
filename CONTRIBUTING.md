@@ -2,6 +2,8 @@
 
 ## Running tests
 
+To reduce compile times, most tests live in `src/test` instead of `tests`.
+
 When making changes to the pco_pack crate:
 
 `cargo test --workspace`

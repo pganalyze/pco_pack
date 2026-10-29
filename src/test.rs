@@ -34,6 +34,7 @@ mod struct_index;
 mod time_round;
 mod timeline;
 mod timeline_edge_cases;
+mod timeline_merge;
 mod tuple;
 mod typed_filter;
 mod uuid;
