@@ -47,7 +47,8 @@ impl From<chrono::Duration> for Resolution {
     }
 }
 
-/// Represents a series of non-overlapping, sorted time ranges in microseconds since the epoch.
+/// Represents a series of non-overlapping, sorted, inclusive `(start, end)` ranges in
+/// microseconds since the epoch.
 ///
 /// Unit convention: timestamps passed in and ranges stored are microseconds since the epoch.
 /// The resolution argument is specified in a friendlier unit via [`Resolution`]: a bare
@@ -56,8 +57,8 @@ impl From<chrono::Duration> for Resolution {
 ///
 /// - Exact mode: ranges are stored as-is, merging overlaps.
 /// - Bucket mode: each added timestamp or range is floored to bucket boundaries and recorded
-///   as the full covered bucket windows `[bucket_start, bucket_start + resolution)`. Adjacent
-///   or overlapping buckets are merged.
+///   as inclusive windows `[bucket_start, bucket_start + resolution - 1]` covering every
+///   overlapped bucket. Adjacent or overlapping buckets are merged.
 ///
 /// Incoming ranges merged via [`merge`](Self::merge) are never re-bucketed; they keep the
 /// coverage their source recorded. Bucket mode is useful for de-noising timestamps or
@@ -81,7 +82,7 @@ impl From<chrono::Duration> for Resolution {
 /// tl.add(10, 3_000_000); // 3s -> bucket [0, 10M)
 /// tl.add(10, 7_000_000); // same bucket -> no new range
 /// tl.add(10, 15_000_000); // bucket [10M, 20M), adjacent -> merges
-/// assert_eq!(tl.ranges(), &[(0i64, 20_000_000)]);
+/// assert_eq!(tl.ranges(), &[(0i64, 19_999_999)]);
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Timeline {
@@ -122,7 +123,7 @@ impl Timeline {
 
     pub fn span(&self) -> i64 {
         match (self.ranges.first(), self.ranges.last()) {
-            (Some(first), Some(last)) => last.1.saturating_sub(first.0),
+            (Some(first), Some(last)) => last.1.saturating_sub(first.0).saturating_add(1),
             _ => 0,
         }
     }
@@ -144,15 +145,15 @@ impl Timeline {
     }
 
     /// Add a single observation at `ts_us`, bucketed to `resolution`. Exact resolutions
-    /// store the instant as-is; bucket resolutions record the full bucket window
-    /// `[bucket_start, bucket_start + resolution)`.
+    /// store the instant as-is; bucket resolutions record the inclusive window
+    /// `[bucket_start, bucket_start + resolution - 1]`.
     pub fn add(&mut self, resolution: impl Into<Resolution>, ts_us: i64) {
         let Resolution(res_us) = resolution.into();
         if res_us == 0 {
             self.merge_range(ts_us, ts_us);
         } else {
             let b = Self::bucket_start(ts_us, res_us);
-            self.merge_range(b, b + res_us);
+            self.merge_range(b, b + res_us - 1);
         }
     }
 
@@ -162,8 +163,8 @@ impl Timeline {
     }
 
     /// Add an observation window `[start_us, end_us]`. Exact resolutions store the range
-    /// as-is; bucket resolutions fill every bucket the window overlaps. `start > end`
-    /// is a no-op.
+    /// as-is; bucket resolutions fill every bucket the window overlaps, storing the union
+    /// inclusive. `start > end` is a no-op.
     pub fn add_range(&mut self, resolution: impl Into<Resolution>, start_us: i64, end_us: i64) {
         if start_us > end_us {
             return;
@@ -174,7 +175,7 @@ impl Timeline {
         } else {
             let s = Self::bucket_start(start_us, res_us);
             let e = Self::bucket_start(end_us, res_us);
-            self.merge_range(s, e + res_us);
+            self.merge_range(s, e + res_us - 1);
         }
     }
 

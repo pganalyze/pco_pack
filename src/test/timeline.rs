@@ -224,7 +224,7 @@ fn timeline_bucket_mode_floors_to_bucket() {
     let result = TimelineBucketed::deserialize(&bytes).unwrap();
 
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0].seen_at.ranges(), &[(0i64, 10_000_000)]);
+    assert_eq!(result[0].seen_at.ranges(), &[(0i64, 9_999_999)]);
 }
 
 #[test]
@@ -238,7 +238,7 @@ fn timeline_bucket_mode_same_bucket_no_duplicate() {
     let result = TimelineBucketed::deserialize(&bytes).unwrap();
 
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0].seen_at.ranges(), &[(0i64, 10_000_000)]);
+    assert_eq!(result[0].seen_at.ranges(), &[(0i64, 9_999_999)]);
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn timeline_bucket_mode_adjacent_buckets_merge() {
     let result = TimelineBucketed::deserialize(&bytes).unwrap();
 
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0].seen_at.ranges(), &[(0i64, 20_000_000)]);
+    assert_eq!(result[0].seen_at.ranges(), &[(0i64, 19_999_999)]);
 }
 
 #[test]
@@ -266,7 +266,7 @@ fn timeline_bucket_mode_gap_buckets_stay_separate() {
     let result = TimelineBucketed::deserialize(&bytes).unwrap();
 
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0].seen_at.ranges(), &[(0i64, 10_000_000), (50_000_000, 60_000_000)]);
+    assert_eq!(result[0].seen_at.ranges(), &[(0i64, 9_999_999), (50_000_000, 59_999_999)]);
 }
 
 #[test]
@@ -279,7 +279,7 @@ fn timeline_bucket_mode_negative_timestamps() {
     let result = TimelineBucketed::deserialize(&bytes).unwrap();
 
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0].seen_at.ranges(), &[(-20_000_000i64, 0)]);
+    assert_eq!(result[0].seen_at.ranges(), &[(-20_000_000i64, -1)]);
 }
 
 #[test]
@@ -293,7 +293,7 @@ fn timeline_bucket_mode_negative_crosses_zero() {
     let result = TimelineBucketed::deserialize(&bytes).unwrap();
 
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0].seen_at.ranges(), &[(-10_000_000i64, 10_000_000)]);
+    assert_eq!(result[0].seen_at.ranges(), &[(-10_000_000i64, 9_999_999)]);
 }
 
 #[test]
@@ -480,7 +480,7 @@ fn timeline_bucket_mode_degenerate_range_becomes_full_bucket() {
     let mut tl = Timeline::default();
     tl.add(10, 6_000_000); // point -> full bucket [0, 10M)
 
-    assert_eq!(tl.ranges(), &[(0i64, 10_000_000)]);
+    assert_eq!(tl.ranges(), &[(0i64, 9_999_999)]);
 }
 
 #[test]
@@ -489,7 +489,30 @@ fn timeline_bucket_mode_range_spanning_buckets() {
     let mut tl = Timeline::default();
     tl.add_range(10, 8_000_000, 25_000_000); // spans [0,10M), [10M,20M), [20M,30M) -> merges to one
 
-    assert_eq!(tl.ranges(), &[(0i64, 30_000_000)]);
+    assert_eq!(tl.ranges(), &[(0i64, 29_999_999)]);
+}
+
+#[test]
+fn timeline_bucket_boundary_belongs_to_next_bucket() {
+    let mut tl = Timeline::default();
+    tl.add(10, 5_000_000); // bucket [0, 10M)
+    assert_eq!(tl.ranges(), &[(0i64, 9_999_999)]);
+    assert!(tl.contains(9_999_999));
+    assert!(!tl.contains(10_000_000));
+
+    let data = vec![TimelineBucketed { seen_at: tl.clone(), value: 1 }];
+    let bytes = TimelineBucketed::serialize(data).unwrap();
+
+    // Queries starting at the next bucket's boundary must not match a timeline
+    // that only covers [0, 10M).
+    let result = TimelineBucketed::filter_bytes(&bytes, serde_json::json!({"seen_at": 10_000_000}), &[]).unwrap();
+    assert!(result.is_empty());
+    let result =
+        TimelineBucketed::filter_bytes(&bytes, serde_json::json!({"seen_at": {"start": 10_000_000, "end": 15_000_000}}), &[])
+            .unwrap();
+    assert!(result.is_empty());
+    let result = TimelineBucketed::filter_bytes(&bytes, serde_json::json!({"seen_at": 9_999_999}), &[]).unwrap();
+    assert_eq!(result.len(), 1);
 }
 
 #[test]
@@ -533,7 +556,7 @@ fn timeline_resolution_units_agree() {
     }
     assert_eq!(a.ranges(), b.ranges());
     assert_eq!(b.ranges(), c.ranges());
-    assert_eq!(a.ranges(), &[(0i64, 10_000_000), (50_000_000, 60_000_000), (90_000_000, 100_000_000)]);
+    assert_eq!(a.ranges(), &[(0i64, 9_999_999), (50_000_000, 59_999_999), (90_000_000, 99_999_999)]);
 }
 
 #[test]
@@ -541,7 +564,7 @@ fn timeline_sub_second_resolution_via_duration() {
     let mut tl = Timeline::default();
     tl.add(chrono::Duration::milliseconds(500), 1_200_000); // bucket [1.0M, 1.5M)
     tl.add(chrono::Duration::milliseconds(500), 1_700_000); // bucket [1.5M, 2.0M), adjacent -> merges
-    assert_eq!(tl.ranges(), &[(1_000_000i64, 2_000_000)]);
+    assert_eq!(tl.ranges(), &[(1_000_000i64, 1_999_999)]);
 }
 
 #[test]
@@ -552,7 +575,7 @@ fn timeline_mixed_resolutions_never_rebucket() {
     tl.add(10, 3_000_000); // [0, 10M)
     tl.add(1, 5_000_000); // [5M, 6M) contained -> no change
     tl.add(1, 10_000_000); // [10M, 11M) adjacent -> merges
-    assert_eq!(tl.ranges(), &[(0i64, 11_000_000)]);
+    assert_eq!(tl.ranges(), &[(0i64, 10_999_999)]);
 }
 
 #[test]

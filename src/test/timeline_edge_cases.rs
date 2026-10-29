@@ -212,7 +212,7 @@ fn timeline_bucket_mode_many_events_same_bucket() {
         tl.add_range(10, i * 1_000, i * 1_000 + 100); // all within [0, 10M)
     }
 
-    assert_eq!(tl.ranges(), &[(0i64, 10_000_000)]);
+    assert_eq!(tl.ranges(), &[(0i64, 9_999_999)]);
 }
 
 #[test]
@@ -223,14 +223,14 @@ fn timeline_bucket_mode_many_buckets() {
     }
 
     // Adjacent buckets merge into one continuous range
-    assert_eq!(tl.ranges(), &[(0i64, 1_000_000_000)]);
+    assert_eq!(tl.ranges(), &[(0i64, 999_999_999)]);
 }
 
 #[test]
 fn timeline_bucket_mode_range_fills_start_bucket() {
     let mut tl = Timeline::default();
     tl.add_range(10, 3_000_000, 5_000_000);
-    assert_eq!(tl.ranges(), &[(0i64, 10_000_000)]);
+    assert_eq!(tl.ranges(), &[(0i64, 9_999_999)]);
 }
 
 #[test]

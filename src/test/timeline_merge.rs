@@ -14,11 +14,11 @@ fn bucketed(points_secs: &[i64]) -> Timeline {
 fn merge_preserves_an_incoming_range_spanning_multiple_buckets() {
     let mut destination = bucketed(&[50]);
     let incoming = bucketed(&[10, 20]);
-    assert_eq!(incoming.ranges(), &[(10_000_000i64, 30_000_000)]);
+    assert_eq!(incoming.ranges(), &[(10_000_000i64, 29_999_999)]);
 
     destination.merge(&incoming);
 
-    assert_eq!(destination.ranges(), &[(10_000_000i64, 30_000_000), (50_000_000, 60_000_000)]);
+    assert_eq!(destination.ranges(), &[(10_000_000i64, 29_999_999), (50_000_000, 59_999_999)]);
     assert!(destination.contains(25_000_000));
 }
 
@@ -44,7 +44,7 @@ fn merge_preserves_multiple_incoming_coalesced_ranges() {
 
     assert_eq!(
         destination.ranges(),
-        &[(10_000_000i64, 30_000_000), (50_000_000, 70_000_000), (100_000_000, 110_000_000)]
+        &[(10_000_000i64, 29_999_999), (50_000_000, 69_999_999), (100_000_000, 109_999_999)]
     );
 }
 
@@ -61,7 +61,7 @@ fn merged_bucket_coverage_survives_serialization() {
     let bytes = Row::serialize(vec![Row { coverage }]).unwrap();
     let rows = Row::deserialize(&bytes).unwrap();
 
-    assert_eq!(rows[0].coverage.ranges(), &[(10_000_000i64, 30_000_000), (50_000_000, 60_000_000)]);
+    assert_eq!(rows[0].coverage.ranges(), &[(10_000_000i64, 29_999_999), (50_000_000, 59_999_999)]);
     assert!(rows[0].coverage.contains(25_000_000));
 }
 
@@ -77,7 +77,7 @@ fn merge_into_empty_destination_preserves_all_buckets() {
 fn merge_empty_source_leaves_destination_unchanged() {
     let mut destination = bucketed(&[10, 20]);
     destination.merge(&Timeline::default());
-    assert_eq!(destination.ranges(), &[(10_000_000i64, 30_000_000)]);
+    assert_eq!(destination.ranges(), &[(10_000_000i64, 29_999_999)]);
 }
 
 #[test]
@@ -91,7 +91,9 @@ fn exact_mode_preserves_full_ranges() {
 fn single_bucket_merge_still_merges_adjacent_buckets() {
     let mut destination = bucketed(&[10]);
     destination.merge(&bucketed(&[20]));
-    assert_eq!(destination.ranges(), &[(10_000_000i64, 30_000_000)]);
+    assert_eq!(destination.ranges(), &[(10_000_000i64, 29_999_999)]);
+    assert!(destination.contains(29_999_999));
+    assert!(!destination.contains(30_000_000));
 }
 
 #[test]
@@ -104,14 +106,14 @@ fn merge_keeps_source_bucket_widths() {
     incoming.add(1, 12_000_000); // [12M, 13M)
 
     destination.merge(&incoming);
-    assert_eq!(destination.ranges(), &[(0i64, 10_000_000), (12_000_000, 13_000_000)]);
+    assert_eq!(destination.ranges(), &[(0i64, 9_999_999), (12_000_000, 12_999_999)]);
 
     let mut destination = Timeline::default();
     destination.add(1, 5_000_000); // [5M, 6M)
     let mut incoming = Timeline::default();
     incoming.add(10, 3_000_000); // [0, 10M)
     destination.merge(&incoming);
-    assert_eq!(destination.ranges(), &[(0i64, 10_000_000)]);
+    assert_eq!(destination.ranges(), &[(0i64, 9_999_999)]);
 }
 
 #[test]
@@ -121,7 +123,7 @@ fn merge_preserves_sub_second_coverage() {
     let mut incoming = Timeline::default();
     incoming.add(Duration::milliseconds(500), 10_000_000); // [10M, 10.5M), adjacent
     destination.merge(&incoming);
-    assert_eq!(destination.ranges(), &[(0i64, 10_500_000)]);
+    assert_eq!(destination.ranges(), &[(0i64, 10_499_999)]);
 }
 
 #[test]
@@ -130,17 +132,21 @@ fn resolution_spellings_agree() {
     assert_eq!(Resolution::seconds(10), Resolution::from(Duration::seconds(10)));
     assert_eq!(Resolution::exact(), Resolution::from(0u32));
     assert_eq!(Resolution::exact(), Resolution::from(Duration::zero()));
+
+    let mut tl = Timeline::default();
+    tl.add(Resolution::seconds(10), 3_000_000);
+    assert_eq!(tl.ranges(), &[(0i64, 9_999_999)]);
 }
 
 #[test]
 fn constructors_bucket_and_keep_exact() {
     let tl = Timeline::new(10, 3_000_000);
-    assert_eq!(tl.ranges(), &[(0i64, 10_000_000)]);
+    assert_eq!(tl.ranges(), &[(0i64, 9_999_999)]);
 
     let dt = DateTime::<Utc>::from_timestamp(1_767_225_600, 500_000_000).unwrap();
     let exact = Timeline::new_time(Resolution::exact(), dt);
     assert_eq!(exact.ranges(), &[(1_767_225_600_500_000i64, 1_767_225_600_500_000)]);
 
     let bucketed = Timeline::new_time(10, dt);
-    assert_eq!(bucketed.ranges(), &[(1_767_225_600_000_000i64, 1_767_225_610_000_000)]);
+    assert_eq!(bucketed.ranges(), &[(1_767_225_600_000_000i64, 1_767_225_609_999_999)]);
 }
