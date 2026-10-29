@@ -135,7 +135,7 @@ pub fn bench() {
 #[derive(Clone, PartialEq, PcoPack)]
 #[pco_pack(timestamp = seen_at)]
 struct TimelineRecord {
-    seen_at: Timeline<1_000_000>,
+    seen_at: Timeline,
     sensor_id: u32,
     temperature: f32,
     humidity: f32,
@@ -198,13 +198,13 @@ fn generate_scenario(total_seconds: usize, uniqueness_pct: usize) -> (Vec<DateTi
                 sensor.status = random_status(id as u32, change_count);
             }
             let row = sensor.timeline_row.get_or_insert_with(|| TimelineRecord {
-                seen_at: Timeline::<1_000_000>::new(),
+                seen_at: Timeline::default(),
                 sensor_id: id as u32,
                 temperature: sensor.temperature,
                 humidity: sensor.humidity,
                 status: sensor.status,
             });
-            row.seen_at.add(seen_at.timestamp_micros(), seen_at.timestamp_micros());
+            row.seen_at.add(1, seen_at);
             dt_data.push(DateTimeRecord {
                 seen_at,
                 sensor_id: id as u32,

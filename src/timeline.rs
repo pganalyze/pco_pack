@@ -1,73 +1,146 @@
 use super::*;
+use chrono::{DateTime, Utc};
 
-/// Represents a series of non-overlapping, sorted time ranges.
+/// Bucket width for [`Timeline`], specified in whatever unit suits the call site.
 ///
-/// Ranges are `(start, end)` pairs (inclusive, microseconds since epoch).
-/// The const generic `RESOLUTION` controls how timestamps are bucketed.
+/// - `Resolution::exact()` or the integer `0`: timestamps are stored as-is.
+/// - `u32`/`i32` integers, or [`Resolution::seconds`]: whole-second bucket widths,
+///   the natural unit for collection cadences (10 for a 10-second heartbeat).
+/// - `chrono::Duration`: finer than whole seconds, truncated to microseconds. A
+///   width shorter than a microsecond becomes exact, which stores finer than asked.
 ///
-/// - `RESOLUTION = 0` (default): exact mode. Store ranges as-is, merging overlaps.
-/// - `RESOLUTION > 0`: bucket mode. Each added range is floored to the nearest bucket
-///   boundary, and recorded as the full bucket window `[bucket_start, bucket_start + RESOLUTION)`.
-///   Adjacent or overlapping buckets are merged. Original timestamps within a bucket are discarded.
+/// Resolution is microseconds-based internally; a bare integer means whole seconds.
+/// Passing a microsecond-width integer (for example `add(10_000_000, ts)`) buckets
+/// at roughly 115 days, not 10 seconds.
 ///
-/// Bucket mode is useful for de-noising timestamps or aggregating events into time windows.
+/// There is deliberately no `From<i64>`: i64 is the timestamp unit, and accepting it
+/// here would let the old `add(ts, ts)` shape keep compiling after migration while
+/// silently bucketing at absurd widths.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Resolution(i64);
+
+impl Resolution {
+    /// Exact mode: every stored timestamp is preserved as given.
+    pub const fn exact() -> Self {
+        Resolution(0)
+    }
+
+    /// Whole-second bucket width. Panics if `s` is negative or the width would
+    /// overflow microseconds.
+    pub const fn seconds(s: i64) -> Self {
+        assert!(s >= 0 && s <= i64::MAX / 1_000_000, "Resolution must be non-negative and fit in microseconds");
+        Resolution(s * 1_000_000)
+    }
+}
+
+impl From<u32> for Resolution {
+    fn from(seconds: u32) -> Self {
+        Resolution(seconds as i64 * 1_000_000)
+    }
+}
+
+impl From<i32> for Resolution {
+    fn from(seconds: i32) -> Self {
+        assert!(seconds >= 0, "Resolution must be non-negative");
+        Resolution(seconds as i64 * 1_000_000)
+    }
+}
+
+impl From<chrono::Duration> for Resolution {
+    /// Sub-microsecond widths truncate to zero, which means exact mode. Panics on
+    /// negative widths and on widths that overflow microseconds.
+    fn from(d: chrono::Duration) -> Self {
+        let us = d.num_microseconds().expect("Resolution overflows microseconds");
+        assert!(us >= 0, "Resolution must be non-negative");
+        Resolution(us)
+    }
+}
+
+/// Represents a series of non-overlapping, sorted, inclusive `(start, end)` ranges in
+/// microseconds since the epoch.
+///
+/// Unit convention: instants come in as `chrono::DateTime<Utc>` (any chrono zone is
+/// accepted and converted to UTC). The ranges exposed by `ranges()`, `start()`, and
+/// `end()` are microseconds since the epoch. The resolution argument is specified in a
+/// friendlier unit via [`Resolution`]: a bare integer means whole seconds, a
+/// `chrono::Duration` allows sub-second widths, and zero (in any spelling) means exact mode.
+///
+/// - Exact mode: ranges are stored as-is, merging overlaps.
+/// - Bucket mode: each added timestamp or range is floored to bucket boundaries and recorded
+///   as inclusive windows `[bucket_start, bucket_start + resolution - 1]` covering every
+///   overlapped bucket. Adjacent or overlapping buckets are merged.
+///
+/// Incoming ranges merged via [`merge`](Self::merge) are never re-bucketed; they keep the
+/// coverage their source recorded. Bucket mode is useful for de-noising timestamps or
+/// aggregating events into time windows.
+///
+/// Ranges arriving through `Deserialize` or the column reader are sanitized: inverted pairs
+/// are dropped, bounds are sorted, and overlapping or adjacent ranges are coalesced, so
+/// malformed input cannot break the sorted invariant.
 ///
 /// # Example (exact mode)
 /// ```
-/// use pco_pack::Timeline;
+/// use chrono::DateTime;
+/// use pco_pack::{Resolution, Timeline};
 ///
-/// let mut tl = Timeline::<0>::new();
-/// tl.add(1000, 5000);
-/// tl.add(4000, 8000); // overlaps -> merges
+/// let dt = |us| DateTime::from_timestamp_micros(us).unwrap();
+/// let mut tl = Timeline::default();
+/// tl.add_range(Resolution::exact(), dt(1000), dt(5000));
+/// tl.add_range(Resolution::exact(), dt(4000), dt(8000)); // overlaps -> merges
 /// assert_eq!(tl.ranges(), &[(1000i64, 8000i64)]);
 /// ```
 ///
 /// # Example (bucket mode, 10-second resolution)
 /// ```
+/// use chrono::DateTime;
 /// use pco_pack::Timeline;
 ///
-/// let mut tl = Timeline::<10_000_000>::new(); // 10 seconds (in microseconds)
-/// tl.add(3_000_000, 5_000_000);   // 3-5 seconds -> bucket [0, 10M)
-/// tl.add(7_000_000, 9_000_000);   // 7-9 seconds -> same bucket -> no new range
-/// tl.add(15_000_000, 18_000_000); // 15-18 seconds -> bucket [10M, 20M), adjacent -> merges
-/// assert_eq!(tl.ranges(), &[(0i64, 20_000_000i64)]);
+/// let dt = |us| DateTime::from_timestamp_micros(us).unwrap();
+/// let mut tl = Timeline::default();
+/// tl.add(10, dt(3_000_000)); // 3s -> bucket [0, 10s), stored [0, 9_999_999]
+/// tl.add(10, dt(7_000_000)); // same bucket -> no new range
+/// tl.add(10, dt(15_000_000)); // bucket [10s, 20s) -> adjacent, merges
+/// assert_eq!(tl.ranges(), &[(0i64, 19_999_999)]);
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Timeline<const RESOLUTION: i64 = 0> {
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Timeline {
     ranges: Vec<(i64, i64)>,
 }
 
-impl<const RESOLUTION: i64> Timeline<RESOLUTION> {
-    pub fn new() -> Self {
-        Self { ranges: Vec::new() }
-    }
-
-    /// Create a Timeline from a single range, applying the type's resolution.
-    pub fn from_range(start: i64, end: i64) -> Self {
-        let mut tl = Self::new();
-        tl.add(start, end);
+impl Timeline {
+    /// Create a Timeline with a single observation, bucketed to `resolution`.
+    pub fn new(resolution: impl Into<Resolution>, when: impl Into<DateTime<Utc>>) -> Self {
+        let mut tl = Self::default();
+        tl.add(resolution, when);
         tl
     }
 
+    /// Create a Timeline from a single exact-mode range between two instants, stored as-is.
+    pub fn from_range(start: impl Into<DateTime<Utc>>, end: impl Into<DateTime<Utc>>) -> Self {
+        let mut tl = Self::default();
+        tl.add_range(Resolution::exact(), start, end);
+        tl
+    }
+
+    /// The stored ranges as inclusive `(start, end)` microseconds since the epoch.
     pub fn ranges(&self) -> &[(i64, i64)] {
         &self.ranges
     }
 
+    /// First stored range start, in microseconds since the epoch.
     pub fn start(&self) -> Option<i64> {
         self.ranges.first().map(|r| r.0)
     }
 
+    /// Last stored range end, in microseconds since the epoch.
     pub fn end(&self) -> Option<i64> {
         self.ranges.last().map(|r| r.1)
     }
 
     pub fn span(&self) -> i64 {
-        match self.ranges.first() {
-            Some(first_start) => match self.ranges.last() {
-                Some(last_end) => last_end.1.saturating_sub(first_start.0),
-                None => 0,
-            },
-            None => 0,
+        match (self.ranges.first(), self.ranges.last()) {
+            (Some(first), Some(last)) => last.1.saturating_sub(first.0).saturating_add(1),
+            _ => 0,
         }
     }
 
@@ -79,57 +152,113 @@ impl<const RESOLUTION: i64> Timeline<RESOLUTION> {
         self.ranges.is_empty()
     }
 
-    pub fn contains(&self, ts: i64) -> bool {
-        self.ranges.iter().any(|&(s, e)| s <= ts && ts <= e)
+    /// Whether `when` falls inside any stored range.
+    pub fn contains(&self, when: impl Into<DateTime<Utc>>) -> bool {
+        let ts_us = when.into().timestamp_micros();
+        self.ranges.iter().any(|&(s, e)| s <= ts_us && ts_us <= e)
     }
 
-    pub fn overlaps(&self, start: i64, end: i64) -> bool {
-        self.ranges.iter().any(|&(s, e)| s <= end && start <= e)
+    /// Whether `[start, end]` overlaps any stored range. An inverted window
+    /// (`start > end`) covers no instant and never matches, mirroring `add_range`.
+    pub fn overlaps(&self, start: impl Into<DateTime<Utc>>, end: impl Into<DateTime<Utc>>) -> bool {
+        let start_us = start.into().timestamp_micros();
+        let end_us = end.into().timestamp_micros();
+        start_us <= end_us && self.ranges.iter().any(|&(s, e)| s <= end_us && start_us <= e)
     }
 
-    /// Add a time range, applying the type's resolution.
-    ///
-    /// In bucket mode (`RESOLUTION > 0`), the start is floored to the bucket boundary
-    /// and the range becomes `[bucket_start, bucket_start + RESOLUTION)`.
-    /// Adjacent and overlapping buckets are merged automatically.
-    ///
-    /// If `start > end`, the call is a no-op.
-    pub fn add(&mut self, start: i64, end: i64) {
-        if start > end {
+    /// Add a single observation. Exact resolutions store the instant as-is; bucket
+    /// resolutions record the inclusive window `[bucket_start, bucket_start + resolution - 1]`.
+    pub fn add(&mut self, resolution: impl Into<Resolution>, when: impl Into<DateTime<Utc>>) {
+        let ts_us = when.into().timestamp_micros();
+        let Resolution(res_us) = resolution.into();
+        if res_us == 0 {
+            self.merge_range(ts_us, ts_us);
+        } else {
+            let b = Self::bucket_start(ts_us, res_us);
+            self.merge_range(b, b.saturating_add(res_us - 1));
+        }
+    }
+
+    /// Add an observation window `[start, end]`. Exact resolutions store the range as-is;
+    /// bucket resolutions fill every bucket the window overlaps, storing the union
+    /// inclusive. `start > end` is a no-op.
+    pub fn add_range(
+        &mut self, resolution: impl Into<Resolution>, start: impl Into<DateTime<Utc>>, end: impl Into<DateTime<Utc>>,
+    ) {
+        let start_us = start.into().timestamp_micros();
+        let end_us = end.into().timestamp_micros();
+        if start_us > end_us {
             return;
         }
-
-        let (bucket_start, bucket_end) = if RESOLUTION > 0 {
-            let b = Self::bucket_start(start, RESOLUTION);
-            (b, b + RESOLUTION)
+        let Resolution(res_us) = resolution.into();
+        if res_us == 0 {
+            self.merge_range(start_us, end_us);
         } else {
-            (start, end)
-        };
-
-        self.merge_range(bucket_start, bucket_end);
+            let s = Self::bucket_start(start_us, res_us);
+            let e = Self::bucket_start(end_us, res_us);
+            self.merge_range(s, e.saturating_add(res_us - 1));
+        }
     }
 
-    /// Extend this Timeline with ranges that are already bucket-aligned.
+    /// Merge another Timeline's ranges into this one.
     ///
-    /// This skips the bucketing step and is used internally when merging
-    /// already-processed Timeline ranges (e.g., during serialization grouping).
-    /// For user code, prefer `add()` which applies resolution automatically.
-    pub fn extend_ranges(&mut self, ranges: &[(i64, i64)]) {
-        for &(s, e) in ranges {
-            if s <= e {
-                self.merge_range(s, e);
+    /// Incoming ranges are already bucket-aligned by the timeline that recorded them, so
+    /// they are merged as-is and never re-bucketed.
+    pub fn merge(&mut self, input: &Self) {
+        if self.ranges.is_empty() {
+            // Fast path; the guard mirrors the slow path so both agree on malformed input.
+            self.ranges.extend(input.ranges.iter().copied().filter(|&(s, e)| s <= e));
+        } else {
+            for &(start, end) in &input.ranges {
+                if start <= end {
+                    self.merge_range(start, end);
+                }
             }
         }
     }
 
+    /// Build a Timeline from raw decoded bounds, enforcing the stored invariant.
+    /// Malformed data cannot break the sorted invariant that `merge` relies on.
+    fn coalesced(mut ranges: Vec<(i64, i64)>) -> Self {
+        ranges.retain(|&(s, e)| s <= e);
+        if !Self::is_clean(&ranges) {
+            ranges = Self::sorted_folded(ranges);
+        }
+        Self { ranges }
+    }
+
+    /// True when ranges are sorted and pairwise disjoint (adjacent touches are fine).
+    fn is_clean(ranges: &[(i64, i64)]) -> bool {
+        ranges.windows(2).all(|w| w[0].1 < w[1].0)
+    }
+
+    /// Sort bounds and coalesce overlaps and adjacencies into a canonical Vec.
+    fn sorted_folded(mut ranges: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
+        ranges.sort_unstable_by_key(|&(s, _)| s);
+        let mut merged: Vec<(i64, i64)> = Vec::with_capacity(ranges.len());
+        for (s, e) in ranges {
+            let append = match merged.last_mut() {
+                Some(last) if s <= last.1.saturating_add(1) => {
+                    last.1 = last.1.max(e);
+                    false
+                }
+                _ => true,
+            };
+            if append {
+                merged.push((s, e));
+            }
+        }
+        merged
+    }
+
     /// Floor a timestamp to the nearest bucket boundary.
     /// Uses floor division so negative timestamps are handled correctly.
-    fn bucket_start(ts: i64, resolution: i64) -> i64 {
-        if ts >= 0 {
-            (ts / resolution) * resolution
+    fn bucket_start(ts_us: i64, resolution_us: i64) -> i64 {
+        if ts_us >= 0 {
+            (ts_us / resolution_us) * resolution_us
         } else {
             // Floor division for negative numbers
-            ((ts - resolution + 1) / resolution) * resolution
+            ((ts_us - resolution_us + 1) / resolution_us) * resolution_us
         }
     }
 
@@ -137,12 +266,15 @@ impl<const RESOLUTION: i64> Timeline<RESOLUTION> {
     fn merge_range(&mut self, mut start: i64, mut end: i64) {
         // Find first range that could overlap or be adjacent.
         // A range (s, e) overlaps/adjacent with (start, end) when s <= end + 1 && start <= e + 1.
-        let idx = self.ranges.binary_search_by(|&(_, r_end)| r_end.cmp(&(start - 1)));
+        // Saturating keeps i64::MIN/i64::MAX bounds surviving deserialization from
+        // overflowing in debug or silently wrapping in release.
+        let key = start.saturating_sub(1);
+        let idx = self.ranges.binary_search_by(|&(_, r_end)| r_end.cmp(&key));
         let i = idx.unwrap_or_else(|e| e);
 
         // Merge all overlapping/adjacent ranges.
         let mut j = i;
-        while j < self.ranges.len() && self.ranges[j].0 <= end + 1 {
+        while j < self.ranges.len() && self.ranges[j].0 <= end.saturating_add(1) {
             start = start.min(self.ranges[j].0);
             end = end.max(self.ranges[j].1);
             j += 1;
@@ -151,17 +283,9 @@ impl<const RESOLUTION: i64> Timeline<RESOLUTION> {
         self.ranges.drain(i..j);
         self.ranges.insert(i, (start, end));
     }
-
-    pub fn merge(&mut self, input: &Self) {
-        if self.ranges.is_empty() {
-            self.ranges.extend_from_slice(&input.ranges);
-        } else {
-            self.extend_ranges(&input.ranges);
-        }
-    }
 }
 
-impl<const RESOLUTION: i64> PcoSerde for Timeline<RESOLUTION> {
+impl PcoSerde for Timeline {
     type Writer = vec_number::VecNumberWriter<(i64, i64)>;
     type Reader = vec_number::VecNumberReader<(i64, i64)>;
 
@@ -186,16 +310,72 @@ impl<const RESOLUTION: i64> PcoSerde for Timeline<RESOLUTION> {
         }
         reader.cached_offset = offset + target_len;
         reader.length_idx = index + 1;
+        // Validate inline while decoding: a separate retain+scan pass over
+        // multi-range rows cost ~5% on the reduce and filter benches.
         let mut ranges = Vec::with_capacity(target_len);
+        let mut clean = true;
         for i in 0..target_len {
             let (s, e) = <(i64, i64)>::get(&mut reader.inner_reader, offset + i)?.context("inner missing")?;
-            ranges.push((s, e));
+            if s <= e {
+                if clean && ranges.last().is_some_and(|&(_, prev_end)| prev_end >= s) {
+                    clean = false;
+                }
+                ranges.push((s, e));
+            }
+        }
+        if !clean {
+            ranges = Self::sorted_folded(ranges);
         }
         Ok(Some(Timeline { ranges }))
     }
 }
 
-impl<const RESOLUTION: i64> PcoFilter for Timeline<RESOLUTION> {
+impl<'de> serde::Deserialize<'de> for Timeline {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct TimelineVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for TimelineVisitor {
+            type Value = Timeline;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a list of inclusive (start, end) microsecond ranges")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let ranges: Vec<(i64, i64)> = match serde::de::SeqAccess::next_element(&mut seq)? {
+                    Some(ranges) => ranges,
+                    None => return Err(serde::de::Error::invalid_length(0, &"struct Timeline with 1 field")),
+                };
+                Ok(Timeline::coalesced(ranges))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut ranges: Option<Vec<(i64, i64)>> = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    if key == "ranges" {
+                        ranges = Some(map.next_value()?);
+                    } else {
+                        map.next_value::<serde::de::IgnoredAny>()?;
+                    }
+                }
+                Ok(Timeline::coalesced(ranges.unwrap_or_default()))
+            }
+        }
+
+        deserializer.deserialize_struct("Timeline", &["ranges"], TimelineVisitor)
+    }
+}
+
+impl PcoFilter for Timeline {
     fn filter_bulk(reader: &mut Self::Reader, _field: usize, filter: &Filter, matches: &mut FilterMask) -> Result<()> {
         let num_rows = reader.lengths.len();
         let mut elem_de = reader.inner_reader.clone();
@@ -207,11 +387,13 @@ impl<const RESOLUTION: i64> PcoFilter for Timeline<RESOLUTION> {
             for i in 0..row_len {
                 if let Ok(Some((s, e))) = <(i64, i64)>::get(&mut elem_de, offset + i) {
                     matched = match filter {
-                        Filter::Range(range) => s <= *range.end() && *range.start() <= e,
+                        Filter::Range(range) => {
+                            range.start() <= range.end() && s <= *range.end() && *range.start() <= e
+                        }
                         Filter::FloatRange(range) => {
                             let start = *range.start() as i64;
                             let end = *range.end() as i64;
-                            s <= end && start <= e
+                            start <= end && s <= end && start <= e
                         }
                         Filter::I64(target) => s <= *target && *target <= e,
                         Filter::InclusionI64(values) => values.iter().any(|v| s <= *v && *v <= e),
@@ -231,11 +413,14 @@ impl<const RESOLUTION: i64> PcoFilter for Timeline<RESOLUTION> {
 
     fn filter_match(value: &Self, filter: &Filter) -> bool {
         match filter {
-            Filter::Range(range) => value.ranges.iter().any(|&(s, e)| s <= *range.end() && *range.start() <= e),
+            Filter::Range(range) => {
+                range.start() <= range.end()
+                    && value.ranges.iter().any(|&(s, e)| s <= *range.end() && *range.start() <= e)
+            }
             Filter::FloatRange(range) => {
                 let start = *range.start() as i64;
                 let end = *range.end() as i64;
-                value.ranges.iter().any(|&(s, e)| s <= end && start <= e)
+                start <= end && value.ranges.iter().any(|&(s, e)| s <= end && start <= e)
             }
             Filter::I64(target) => value.ranges.iter().any(|&(s, e)| s <= *target && *target <= e),
             Filter::InclusionI64(values) => {

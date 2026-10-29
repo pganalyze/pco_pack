@@ -1,5 +1,3 @@
-use quote::quote;
-
 /// Match the last segment of a type path and check its identifier.
 /// Returns `Some(true)` when the ident matches, `Some(false)` otherwise,
 /// or `None` if the type is not a `TypePath`.
@@ -66,21 +64,4 @@ pub fn is_json_move_type(ty: &syn::Type) -> bool {
         }
     }
     false
-}
-
-/// Extract the const generic parameter (RESOLUTION) from a Timeline<N> type.
-/// Returns the literal value as a TokenStream, or `0` if not found.
-pub fn extract_timeline_const_generic(ty: &syn::Type) -> proc_macro2::TokenStream {
-    if let syn::Type::Path(tp) = ty {
-        if let Some(seg) = tp.path.segments.last() {
-            if seg.ident == "Timeline" {
-                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                    if let Some(syn::GenericArgument::Const(const_arg)) = args.args.first() {
-                        return quote! { #const_arg };
-                    }
-                }
-            }
-        }
-    }
-    quote! { 0 }
 }

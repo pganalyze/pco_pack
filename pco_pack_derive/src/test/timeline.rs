@@ -4,6 +4,6 @@ use pco_pack::Timeline;
 #[pco_pack(timestamp = collected_at, index = [database_id])]
 pub struct TimeSeriesCompact {
     database_id: i64,
-    collected_at: Timeline<11_000_000>,
+    collected_at: Timeline,
     value: f64,
 }
