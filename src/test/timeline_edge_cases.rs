@@ -1,5 +1,10 @@
 use crate as pco_pack;
 use crate::{PcoPack, Resolution, Timeline};
+use chrono::{DateTime, Utc};
+
+fn dt(us: i64) -> DateTime<Utc> {
+    DateTime::from_timestamp_micros(us).unwrap()
+}
 
 #[derive(Debug, Clone, PartialEq, PcoPack)]
 struct TimelineRow {
@@ -9,7 +14,7 @@ struct TimelineRow {
 
 #[test]
 fn timeline_degenerate_range_roundtrip() {
-    let tl = Timeline::from_range(1_000_000, 1_000_000); // start == end
+    let tl = Timeline::from_range(dt(1_000_000), dt(1_000_000)); // start == end
 
     let data = vec![TimelineRow { seen_at: tl.clone(), value: 42 }];
     let bytes = TimelineRow::serialize(data.clone()).unwrap();
@@ -21,7 +26,7 @@ fn timeline_degenerate_range_roundtrip() {
 
 #[test]
 fn timeline_degenerate_range_filter_exact() {
-    let tl = Timeline::from_range(5_000_000, 5_000_000);
+    let tl = Timeline::from_range(dt(5_000_000), dt(5_000_000));
 
     let data = vec![TimelineRow { seen_at: tl.clone(), value: 1 }];
     let bytes = TimelineRow::serialize(data).unwrap();
@@ -32,7 +37,7 @@ fn timeline_degenerate_range_filter_exact() {
 
 #[test]
 fn timeline_degenerate_range_filter_in_range() {
-    let tl = Timeline::from_range(5_000_000, 5_000_000);
+    let tl = Timeline::from_range(dt(5_000_000), dt(5_000_000));
 
     let data = vec![TimelineRow { seen_at: tl.clone(), value: 1 }];
     let bytes = TimelineRow::serialize(data).unwrap();
@@ -45,7 +50,7 @@ fn timeline_degenerate_range_filter_in_range() {
 
 #[test]
 fn timeline_degenerate_range_filter_outside() {
-    let tl = Timeline::from_range(5_000_000, 5_000_000);
+    let tl = Timeline::from_range(dt(5_000_000), dt(5_000_000));
 
     let data = vec![TimelineRow { seen_at: tl.clone(), value: 1 }];
     let bytes = TimelineRow::serialize(data).unwrap();
@@ -58,9 +63,9 @@ fn timeline_degenerate_range_filter_outside() {
 
 #[test]
 fn timeline_multiple_overlapping_ranges_merge() {
-    let mut tl = Timeline::from_range(1_000, 5_000);
-    tl.add_range(Resolution::exact(), 3_000, 7_000); // overlaps first -> [1k, 7k]
-    tl.add_range(Resolution::exact(), 6_000, 9_000); // overlaps merged -> [1k, 9k]
+    let mut tl = Timeline::from_range(dt(1_000), dt(5_000));
+    tl.add_range(Resolution::exact(), dt(3_000), dt(7_000)); // overlaps first -> [1k, 7k]
+    tl.add_range(Resolution::exact(), dt(6_000), dt(9_000)); // overlaps merged -> [1k, 9k]
 
     let data = vec![TimelineRow { seen_at: tl.clone(), value: 1 }];
     let bytes = TimelineRow::serialize(data).unwrap();
@@ -72,8 +77,8 @@ fn timeline_multiple_overlapping_ranges_merge() {
 
 #[test]
 fn timeline_non_overlapping_ranges_stay_separate() {
-    let mut tl = Timeline::from_range(1_000, 2_000);
-    tl.add_range(Resolution::exact(), 5_000, 6_000);
+    let mut tl = Timeline::from_range(dt(1_000), dt(2_000));
+    tl.add_range(Resolution::exact(), dt(5_000), dt(6_000));
 
     let data = vec![TimelineRow { seen_at: tl.clone(), value: 1 }];
     let bytes = TimelineRow::serialize(data).unwrap();
@@ -85,8 +90,8 @@ fn timeline_non_overlapping_ranges_stay_separate() {
 
 #[test]
 fn timeline_containing_range_merge() {
-    let mut tl = Timeline::from_range(1_000, 10_000); // wide range
-    tl.add_range(Resolution::exact(), 3_000, 5_000); // fully inside first
+    let mut tl = Timeline::from_range(dt(1_000), dt(10_000)); // wide range
+    tl.add_range(Resolution::exact(), dt(3_000), dt(5_000)); // fully inside first
 
     let data = vec![TimelineRow { seen_at: tl.clone(), value: 1 }];
     let bytes = TimelineRow::serialize(data).unwrap();
@@ -98,8 +103,8 @@ fn timeline_containing_range_merge() {
 
 #[test]
 fn timeline_adjacent_ranges_merge() {
-    let mut tl = Timeline::from_range(1_000, 5_000);
-    tl.add_range(Resolution::exact(), 5_000, 9_000); // starts exactly where first ends -> adjacent -> merges
+    let mut tl = Timeline::from_range(dt(1_000), dt(5_000));
+    tl.add_range(Resolution::exact(), dt(5_000), dt(9_000)); // starts exactly where first ends -> adjacent -> merges
 
     let data = vec![TimelineRow { seen_at: tl.clone(), value: 1 }];
     let bytes = TimelineRow::serialize(data).unwrap();
@@ -121,7 +126,7 @@ fn timeline_many_rows_chunk_boundary() {
     let n = 50;
     let data: Vec<ChunkedTimelineRow> = (0..n)
         .map(|i| {
-            let tl = Timeline::from_range((i * 1_000) as i64, ((i + 1) * 1_000 - 1) as i64);
+            let tl = Timeline::from_range(dt((i * 1_000) as i64), dt(((i + 1) * 1_000 - 1) as i64));
             ChunkedTimelineRow { seen_at: tl, value: i as i32 }
         })
         .collect();
@@ -146,7 +151,7 @@ fn timeline_many_ranges_per_row_chunk_boundary() {
             let mut tl = Timeline::default();
             for j in 0..ranges_per_row {
                 let base = ((i * ranges_per_row + j) * 1_000) as i64;
-                tl.add_range(Resolution::exact(), base, base + 500);
+                tl.add_range(Resolution::exact(), dt(base), dt(base + 500));
             }
             ChunkedTimelineRow { seen_at: tl, value: i as i32 }
         })
@@ -167,7 +172,7 @@ fn timeline_filter_across_chunks_many_ranges() {
     let n_rows = 30;
     let data: Vec<ChunkedTimelineRow> = (0..n_rows)
         .map(|i| {
-            let tl = Timeline::from_range((i * 1_000_000) as i64, ((i + 1) * 1_000_000 - 1) as i64);
+            let tl = Timeline::from_range(dt((i * 1_000_000) as i64), dt(((i + 1) * 1_000_000 - 1) as i64));
             ChunkedTimelineRow { seen_at: tl, value: i as i32 }
         })
         .collect();
@@ -192,7 +197,7 @@ fn timeline_thousands_of_ranges_single_row() {
     let mut tl = Timeline::default();
     for i in 0..5_000 {
         let base = (i * 1_000) as i64;
-        tl.add_range(Resolution::exact(), base, base + 100);
+        tl.add_range(Resolution::exact(), dt(base), dt(base + 100));
     }
 
     let data = vec![TimelineRow { seen_at: tl.clone(), value: 42 }];
@@ -209,7 +214,7 @@ fn timeline_thousands_of_ranges_single_row() {
 fn timeline_bucket_mode_many_events_same_bucket() {
     let mut tl = Timeline::default();
     for i in 0..1_000 {
-        tl.add_range(10, i * 1_000, i * 1_000 + 100); // all within [0, 10M)
+        tl.add_range(10, dt(i * 1_000), dt(i * 1_000 + 100)); // all within [0, 10M)
     }
 
     assert_eq!(tl.ranges(), &[(0i64, 9_999_999)]);
@@ -219,7 +224,7 @@ fn timeline_bucket_mode_many_events_same_bucket() {
 fn timeline_bucket_mode_many_buckets() {
     let mut tl = Timeline::default(); // 1-second buckets
     for i in 0..1_000 {
-        tl.add_range(1, (i * 1_000_000) as i64 + 500_000, (i * 1_000_000) as i64 + 600_000);
+        tl.add_range(1, dt((i * 1_000_000) as i64 + 500_000), dt((i * 1_000_000) as i64 + 600_000));
     }
 
     // Adjacent buckets merge into one continuous range
@@ -229,21 +234,21 @@ fn timeline_bucket_mode_many_buckets() {
 #[test]
 fn timeline_bucket_mode_range_fills_start_bucket() {
     let mut tl = Timeline::default();
-    tl.add_range(10, 3_000_000, 5_000_000);
+    tl.add_range(10, dt(3_000_000), dt(5_000_000));
     assert_eq!(tl.ranges(), &[(0i64, 9_999_999)]);
 }
 
 #[test]
 fn timeline_bucket_mode_inverted_range_is_noop() {
     let mut tl = Timeline::default();
-    tl.add_range(10, 5_000_000, 3_000_000);
+    tl.add_range(10, dt(5_000_000), dt(3_000_000));
     assert!(tl.is_empty());
 }
 
 #[test]
 fn timeline_from_range_is_exact() {
-    let tl = Timeline::from_range(3_000_000, 5_000_000);
+    let tl = Timeline::from_range(dt(3_000_000), dt(5_000_000));
     assert_eq!(tl.ranges(), &[(3_000_000i64, 5_000_000)]);
-    let inverted = Timeline::from_range(5_000_000, 3_000_000);
+    let inverted = Timeline::from_range(dt(5_000_000), dt(3_000_000));
     assert!(inverted.is_empty());
 }

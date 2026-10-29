@@ -204,7 +204,7 @@ fn generate_scenario(total_seconds: usize, uniqueness_pct: usize) -> (Vec<DateTi
                 humidity: sensor.humidity,
                 status: sensor.status,
             });
-            row.seen_at.add(1, seen_at.timestamp_micros());
+            row.seen_at.add(1, seen_at);
             dt_data.push(DateTimeRecord {
                 seen_at,
                 sensor_id: id as u32,

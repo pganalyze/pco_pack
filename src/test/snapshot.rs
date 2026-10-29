@@ -2,6 +2,10 @@ use crate as pco_pack;
 use crate::{PcoPack, Resolution, Timeline};
 use std::collections::{BTreeMap, HashMap};
 
+fn dt_us(us: i64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::from_timestamp_micros(us).unwrap()
+}
+
 /// A struct exercising every field type supported by PcoPack.
 #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
 struct SnapshotStruct {
@@ -99,8 +103,8 @@ fn make_struct_data() -> Vec<SnapshotStruct> {
             json_val: serde_json::json!({"key": "value", "num": 42}),
             datetime_val: chrono::DateTime::<chrono::Utc>::from_timestamp(1_700_000_000, 0).unwrap(),
             timeline_val: {
-                let mut tl = Timeline::from_range(1_000_000, 5_000_000);
-                tl.add_range(Resolution::exact(), 10_000_000, 20_000_000);
+                let mut tl = Timeline::from_range(dt_us(1_000_000), dt_us(5_000_000));
+                tl.add_range(Resolution::exact(), dt_us(10_000_000), dt_us(20_000_000));
                 tl
             },
             opt_i64: Some(-99),
@@ -146,7 +150,7 @@ fn make_struct_data() -> Vec<SnapshotStruct> {
             uuid_val: uuid::Uuid::nil(),
             json_val: serde_json::json!(null),
             datetime_val: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
-            timeline_val: Timeline::from_range(100, 200),
+            timeline_val: Timeline::from_range(dt_us(100), dt_us(200)),
             opt_i64: None,
             opt_string: Some("present".into()),
             opt_bool: None,

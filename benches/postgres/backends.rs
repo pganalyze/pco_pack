@@ -270,7 +270,12 @@ impl Bk {
     /// tick falls in it (inclusive).
     fn matches_timeline(&self, r: &BackendSnapshotTimeline) -> bool {
         match self {
-            Bk::Time(a, b) => r.collected_at.overlaps(*a, *b),
+            Bk::Time(a, b) => {
+                match (DateTime::<Utc>::from_timestamp_micros(*a), DateTime::<Utc>::from_timestamp_micros(*b)) {
+                    (Some(a), Some(b)) => r.collected_at.overlaps(a, b),
+                    _ => false,
+                }
+            }
             Bk::Active => matches!(r.backend_state, 1 | 2),
             Bk::Waits => r.wait_event >= 1,
         }
@@ -281,7 +286,12 @@ impl Bk {
     /// bucket overlap with the window.
     fn matches_timeline10s(&self, r: &BackendSnapshotTimeline10s) -> bool {
         match self {
-            Bk::Time(a, b) => r.collected_at.overlaps(*a, *b),
+            Bk::Time(a, b) => {
+                match (DateTime::<Utc>::from_timestamp_micros(*a), DateTime::<Utc>::from_timestamp_micros(*b)) {
+                    (Some(a), Some(b)) => r.collected_at.overlaps(a, b),
+                    _ => false,
+                }
+            }
             Bk::Active => matches!(r.backend_state, 1 | 2),
             Bk::Waits => r.wait_event >= 1,
         }
@@ -479,8 +489,7 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     // fractions of the two row sets.
     let mut groups: HashMap<BackendSnapshotKey, Timeline> = HashMap::new();
     for r in &rows {
-        let ts = r.collected_at.timestamp_micros();
-        groups.entry(BackendSnapshotKey::from(r)).or_default().add(0, ts);
+        groups.entry(BackendSnapshotKey::from(r)).or_default().add(0, r.collected_at);
     }
     let mut tl_rows: Vec<BackendSnapshotTimeline> = groups.iter().map(BackendSnapshotTimeline::from).collect();
     drop(groups);
@@ -520,8 +529,7 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     // seconds.
     let mut groups10: HashMap<BackendSnapshotKey, Timeline> = HashMap::new();
     for r in &rows {
-        let ts = r.collected_at.timestamp_micros();
-        groups10.entry(BackendSnapshotKey::from(r)).or_default().add(10, ts);
+        groups10.entry(BackendSnapshotKey::from(r)).or_default().add(10, r.collected_at);
     }
     let mut tl_rows10: Vec<BackendSnapshotTimeline10s> =
         groups10.iter().map(BackendSnapshotTimeline10s::from).collect();

@@ -1,11 +1,17 @@
 use super::*;
+use chrono::{DateTime, Utc};
 
 /// Bucket width for [`Timeline`], specified in whatever unit suits the call site.
 ///
 /// - `Resolution::exact()` or the integer `0`: timestamps are stored as-is.
-/// - `u32`/`i32`: whole seconds, the natural unit for collection cadences (10 for
-///   a 10-second heartbeat).
-/// - `chrono::Duration`: finer than whole seconds, truncated to microseconds.
+/// - `u32`/`i32` integers, or [`Resolution::seconds`]: whole-second bucket widths,
+///   the natural unit for collection cadences (10 for a 10-second heartbeat).
+/// - `chrono::Duration`: finer than whole seconds, truncated to microseconds. A
+///   width shorter than a microsecond becomes exact, which stores finer than asked.
+///
+/// Resolution is microseconds-based internally; a bare integer means whole seconds.
+/// Passing a microsecond-width integer (for example `add(10_000_000, ts)`) buckets
+/// at roughly 115 days, not 10 seconds.
 ///
 /// There is deliberately no `From<i64>`: i64 is the timestamp unit, and accepting it
 /// here would let the old `add(ts, ts)` shape keep compiling after migration while
@@ -19,9 +25,10 @@ impl Resolution {
         Resolution(0)
     }
 
-    /// Whole-second bucket width. Panics on negative seconds.
+    /// Whole-second bucket width. Panics if `s` is negative or the width would
+    /// overflow microseconds.
     pub const fn seconds(s: i64) -> Self {
-        assert!(s >= 0, "Resolution must be non-negative");
+        assert!(s >= 0 && s <= i64::MAX / 1_000_000, "Resolution must be non-negative and fit in microseconds");
         Resolution(s * 1_000_000)
     }
 }
@@ -40,6 +47,8 @@ impl From<i32> for Resolution {
 }
 
 impl From<chrono::Duration> for Resolution {
+    /// Sub-microsecond widths truncate to zero, which means exact mode. Panics on
+    /// negative widths and on widths that overflow microseconds.
     fn from(d: chrono::Duration) -> Self {
         let us = d.num_microseconds().expect("Resolution overflows microseconds");
         assert!(us >= 0, "Resolution must be non-negative");
@@ -50,10 +59,11 @@ impl From<chrono::Duration> for Resolution {
 /// Represents a series of non-overlapping, sorted, inclusive `(start, end)` ranges in
 /// microseconds since the epoch.
 ///
-/// Unit convention: timestamps passed in and ranges stored are microseconds since the epoch.
-/// The resolution argument is specified in a friendlier unit via [`Resolution`]: a bare
-/// integer means whole seconds, a `chrono::Duration` allows sub-second widths, and zero
-/// (in any spelling) means exact mode.
+/// Unit convention: instants come in as `chrono::DateTime<Utc>` (any chrono zone is
+/// accepted and converted to UTC). The ranges exposed by `ranges()`, `start()`, and
+/// `end()` are microseconds since the epoch. The resolution argument is specified in a
+/// friendlier unit via [`Resolution`]: a bare integer means whole seconds, a
+/// `chrono::Duration` allows sub-second widths, and zero (in any spelling) means exact mode.
 ///
 /// - Exact mode: ranges are stored as-is, merging overlaps.
 /// - Bucket mode: each added timestamp or range is floored to bucket boundaries and recorded
@@ -66,22 +76,26 @@ impl From<chrono::Duration> for Resolution {
 ///
 /// # Example (exact mode)
 /// ```
+/// use chrono::DateTime;
 /// use pco_pack::{Resolution, Timeline};
 ///
+/// let dt = |us| DateTime::from_timestamp_micros(us).unwrap();
 /// let mut tl = Timeline::default();
-/// tl.add_range(Resolution::exact(), 1000, 5000);
-/// tl.add_range(Resolution::exact(), 4000, 8000); // overlaps -> merges
+/// tl.add_range(Resolution::exact(), dt(1000), dt(5000));
+/// tl.add_range(Resolution::exact(), dt(4000), dt(8000)); // overlaps -> merges
 /// assert_eq!(tl.ranges(), &[(1000i64, 8000i64)]);
 /// ```
 ///
 /// # Example (bucket mode, 10-second resolution)
 /// ```
+/// use chrono::DateTime;
 /// use pco_pack::Timeline;
 ///
+/// let dt = |us| DateTime::from_timestamp_micros(us).unwrap();
 /// let mut tl = Timeline::default();
-/// tl.add(10, 3_000_000); // 3s -> bucket [0, 10M)
-/// tl.add(10, 7_000_000); // same bucket -> no new range
-/// tl.add(10, 15_000_000); // bucket [10M, 20M), adjacent -> merges
+/// tl.add(10, dt(3_000_000)); // 3s -> bucket [0, 10s), stored [0, 9_999_999]
+/// tl.add(10, dt(7_000_000)); // same bucket -> no new range
+/// tl.add(10, dt(15_000_000)); // bucket [10s, 20s) -> adjacent, merges
 /// assert_eq!(tl.ranges(), &[(0i64, 19_999_999)]);
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -90,33 +104,31 @@ pub struct Timeline {
 }
 
 impl Timeline {
-    /// Create a Timeline with a single observation at `ts_us`, bucketed to `resolution`.
-    pub fn new(resolution: impl Into<Resolution>, ts_us: i64) -> Self {
+    /// Create a Timeline with a single observation, bucketed to `resolution`.
+    pub fn new(resolution: impl Into<Resolution>, when: impl Into<DateTime<Utc>>) -> Self {
         let mut tl = Self::default();
-        tl.add(resolution, ts_us);
+        tl.add(resolution, when);
         tl
     }
 
-    /// Create a Timeline with a single observation from a DateTime, bucketed to `resolution`.
-    pub fn new_time(resolution: impl Into<Resolution>, dt: chrono::DateTime<chrono::Utc>) -> Self {
-        Self::new(resolution, dt.timestamp_micros())
-    }
-
-    /// Create a Timeline from a single exact-mode range, stored as-is.
-    pub fn from_range(start_us: i64, end_us: i64) -> Self {
+    /// Create a Timeline from a single exact-mode range between two instants, stored as-is.
+    pub fn from_range(start: impl Into<DateTime<Utc>>, end: impl Into<DateTime<Utc>>) -> Self {
         let mut tl = Self::default();
-        tl.add_range(Resolution::exact(), start_us, end_us);
+        tl.add_range(Resolution::exact(), start, end);
         tl
     }
 
+    /// The stored ranges as inclusive `(start, end)` microseconds since the epoch.
     pub fn ranges(&self) -> &[(i64, i64)] {
         &self.ranges
     }
 
+    /// First stored range start, in microseconds since the epoch.
     pub fn start(&self) -> Option<i64> {
         self.ranges.first().map(|r| r.0)
     }
 
+    /// Last stored range end, in microseconds since the epoch.
     pub fn end(&self) -> Option<i64> {
         self.ranges.last().map(|r| r.1)
     }
@@ -136,36 +148,40 @@ impl Timeline {
         self.ranges.is_empty()
     }
 
-    pub fn contains(&self, ts_us: i64) -> bool {
+    /// Whether `when` falls inside any stored range.
+    pub fn contains(&self, when: impl Into<DateTime<Utc>>) -> bool {
+        let ts_us = when.into().timestamp_micros();
         self.ranges.iter().any(|&(s, e)| s <= ts_us && ts_us <= e)
     }
 
-    pub fn overlaps(&self, start_us: i64, end_us: i64) -> bool {
+    /// Whether `[start, end]` overlaps any stored range.
+    pub fn overlaps(&self, start: impl Into<DateTime<Utc>>, end: impl Into<DateTime<Utc>>) -> bool {
+        let start_us = start.into().timestamp_micros();
+        let end_us = end.into().timestamp_micros();
         self.ranges.iter().any(|&(s, e)| s <= end_us && start_us <= e)
     }
 
-    /// Add a single observation at `ts_us`, bucketed to `resolution`. Exact resolutions
-    /// store the instant as-is; bucket resolutions record the inclusive window
-    /// `[bucket_start, bucket_start + resolution - 1]`.
-    pub fn add(&mut self, resolution: impl Into<Resolution>, ts_us: i64) {
+    /// Add a single observation. Exact resolutions store the instant as-is; bucket
+    /// resolutions record the inclusive window `[bucket_start, bucket_start + resolution - 1]`.
+    pub fn add(&mut self, resolution: impl Into<Resolution>, when: impl Into<DateTime<Utc>>) {
+        let ts_us = when.into().timestamp_micros();
         let Resolution(res_us) = resolution.into();
         if res_us == 0 {
             self.merge_range(ts_us, ts_us);
         } else {
             let b = Self::bucket_start(ts_us, res_us);
-            self.merge_range(b, b + res_us - 1);
+            self.merge_range(b, b.saturating_add(res_us - 1));
         }
     }
 
-    /// Add a single observation from a DateTime, bucketed to `resolution`.
-    pub fn add_datetime(&mut self, resolution: impl Into<Resolution>, dt: chrono::DateTime<chrono::Utc>) {
-        self.add(resolution, dt.timestamp_micros());
-    }
-
-    /// Add an observation window `[start_us, end_us]`. Exact resolutions store the range
-    /// as-is; bucket resolutions fill every bucket the window overlaps, storing the union
+    /// Add an observation window `[start, end]`. Exact resolutions store the range as-is;
+    /// bucket resolutions fill every bucket the window overlaps, storing the union
     /// inclusive. `start > end` is a no-op.
-    pub fn add_range(&mut self, resolution: impl Into<Resolution>, start_us: i64, end_us: i64) {
+    pub fn add_range(
+        &mut self, resolution: impl Into<Resolution>, start: impl Into<DateTime<Utc>>, end: impl Into<DateTime<Utc>>,
+    ) {
+        let start_us = start.into().timestamp_micros();
+        let end_us = end.into().timestamp_micros();
         if start_us > end_us {
             return;
         }
@@ -175,7 +191,7 @@ impl Timeline {
         } else {
             let s = Self::bucket_start(start_us, res_us);
             let e = Self::bucket_start(end_us, res_us);
-            self.merge_range(s, e + res_us - 1);
+            self.merge_range(s, e.saturating_add(res_us - 1));
         }
     }
 
@@ -185,7 +201,8 @@ impl Timeline {
     /// they are merged as-is and never re-bucketed.
     pub fn merge(&mut self, input: &Self) {
         if self.ranges.is_empty() {
-            self.ranges.extend_from_slice(&input.ranges);
+            // Fast path; the guard mirrors the slow path so both agree on malformed input.
+            self.ranges.extend(input.ranges.iter().copied().filter(|&(s, e)| s <= e));
         } else {
             for &(start, end) in &input.ranges {
                 if start <= end {

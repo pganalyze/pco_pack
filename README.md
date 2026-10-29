@@ -294,9 +294,9 @@ assert_eq!(results[0].score, 0.0);
 
 ## Timeline
 
-`Timeline` is a non-contiguous time range type storing microsecond timestamps since the epoch. It allows PcoPack to store a single row when all other fields in the struct are identical, significantly reducing serialization time and compressed size when data has >50% duplicates.
+`Timeline` is a non-contiguous time range type. Instants enter as `chrono::DateTime<Utc>` (any zone converts to UTC) and the ranges exposed by `ranges()` are inclusive microsecond bounds since the epoch. It allows PcoPack to store a single row when all other fields in the struct are identical, significantly reducing serialization time and compressed size when data has >50% duplicates.
 
-Resolution is specified per call: a bare integer means whole seconds, a `chrono::Duration` allows finer widths, and zero (or `Resolution::exact()`) stores timestamps as-is. In bucket mode, each added timestamp or range is floored to its bucket boundary and recorded as the inclusive window `[bucket_start, bucket_start + resolution - 1]` covering every overlapped bucket. Adjacent and overlapping buckets are merged. Original timestamps within a bucket are discarded. Recorded ranges are never re-bucketed; `merge` keeps coverage as-is.
+Resolution is specified per call: a bare integer means whole seconds, a `chrono::Duration` allows finer widths, and zero (or `Resolution::exact()`) stores timestamps as-is. Because instants take a `DateTime`, a bare integer can only ever be a resolution, which rules out seconds-versus-microseconds confusion at the call site. In bucket mode, each added timestamp or range is floored to its bucket boundary and recorded as the inclusive window `[bucket_start, bucket_start + resolution - 1]` covering every overlapped bucket. Adjacent and overlapping buckets are merged. Original timestamps within a bucket are discarded. Recorded ranges are never re-bucketed; `merge` keeps coverage as-is.
 
 This is useful for de-noising timestamps or aggregating events into time windows. For example, at 10-second resolution:
 - Events added at 3s and 7s both map to bucket `[0, 10s)`
@@ -306,6 +306,7 @@ This is useful for de-noising timestamps or aggregating events into time windows
 Note: `time_round` on the struct does not affect Timeline fields. Resolution is passed to each `add`/`add_range` call.
 
 ```rust
+use chrono::{DateTime, Utc};
 use pco_pack::{PcoPack, Timeline};
 
 #[derive(PcoPack)]
@@ -319,7 +320,8 @@ struct DeviceReading {
 
 // Ticks bucket into 10-second windows as they are added:
 let mut seen_at = Timeline::default();
-seen_at.add(10, 3_000_000);
+let tick = DateTime::<Utc>::from_timestamp_micros(3_000_000).unwrap();
+seen_at.add(10, tick);
 assert_eq!(seen_at.ranges(), &[(0i64, 9_999_999)]);
 ```
 
