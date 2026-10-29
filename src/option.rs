@@ -107,13 +107,13 @@ where
             }
         }
         // Now check if the current presence entry matches this index.
-        if let Some(&presence) = reader.presence_indices.get(reader.presence_idx) {
-            if presence == index as u32 {
-                let inner_value = T::get(&mut reader.inner_reader, reader.presence_idx)?;
-                reader.presence_idx += 1;
-                reader.current_idx = index + 1;
-                return Ok(Some(inner_value));
-            }
+        if let Some(&presence) = reader.presence_indices.get(reader.presence_idx)
+            && presence == index as u32
+        {
+            let inner_value = T::get(&mut reader.inner_reader, reader.presence_idx)?;
+            reader.presence_idx += 1;
+            reader.current_idx = index + 1;
+            return Ok(Some(inner_value));
         }
         // This row is None.
         reader.current_idx = index + 1;
@@ -135,7 +135,7 @@ where
         // Map inner results back to original row positions
         let mut matches_vec = vec![false; total_rows];
         for (pi, &orig_idx) in reader.presence_indices.iter().enumerate() {
-            if inner_matches.as_bitslice()[pi as usize] {
+            if inner_matches.as_bitslice()[pi] {
                 matches_vec[orig_idx as usize] = true;
             }
         }
@@ -160,7 +160,7 @@ where
         // Map inner results back to original row positions
         let mut matches_vec = vec![false; total_rows];
         for (pi, &orig_idx) in reader.presence_indices.iter().enumerate() {
-            if inner_matches.as_bitslice()[pi as usize] {
+            if inner_matches.as_bitslice()[pi] {
                 matches_vec[orig_idx as usize] = true;
             }
         }

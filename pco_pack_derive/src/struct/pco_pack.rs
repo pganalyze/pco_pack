@@ -119,7 +119,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
         };
         let logic = quote! {
             let ts_field = #ts_name;
-            let timestamp_requested = fields.iter().any(|&f| f == ts_field)
+            let timestamp_requested = fields.contains(&ts_field)
                 || query_fields.iter().any(|q| q.as_str() == ts_field);
             // Include start_at/end_at when timestamp is requested, or when all fields are requested.
             if timestamp_requested || fields.is_empty() {

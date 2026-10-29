@@ -39,9 +39,9 @@ fn index_single_group() {
     let result = DeviceTelemetry::filter_bytes(&bytes, serde_json::json!({}), &[]).unwrap();
 
     assert_eq!(result.len(), 3);
-    for i in 0..3 {
-        assert_eq!(result[i].device_id, 1);
-        assert_eq!(result[i].temperature, 20 + i as i64);
+    for (i, row) in result.iter().enumerate() {
+        assert_eq!(row.device_id, 1);
+        assert_eq!(row.temperature, 20 + i as i64);
     }
 }
 

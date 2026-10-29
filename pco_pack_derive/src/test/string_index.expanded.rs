@@ -21,17 +21,10 @@ const _: () = {
         pub device_id: String,
         pub temperature: pco_pack::LazyReader<i64>,
     }
+    #[derive(Default)]
     pub struct Writer {
         pub device_id: Vec<String>,
         pub temperature: Vec<i64>,
-    }
-    impl Default for Writer {
-        fn default() -> Self {
-            Self {
-                device_id: Default::default(),
-                temperature: Default::default(),
-            }
-        }
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -116,11 +109,11 @@ const _: () = {
                 let mut col_temperature: Vec<i64> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_temperature.push(rec.temperature.clone());
+                    col_temperature.push(rec.temperature);
                 }
                 let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
                     col_temperature,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 records
@@ -155,9 +148,7 @@ const _: () = {
             }
             let bl = {
                 let mut bl_buf = [0u8; 8];
-                for i in 0..8 {
-                    bl_buf[i] = buf[pos + i];
-                }
+                bl_buf.copy_from_slice(&buf[pos..pos + 8]);
                 u64::from_le_bytes(bl_buf) as usize
             };
             src.set_position(pos as u64 + 8);
@@ -262,11 +253,9 @@ const _: () = {
                             )
                         }
                     }
-                    return Ok(());
+                    Ok(())
                 }
-                1usize => {
-                    return reader.temperature.filter_nested(&path[1..], filter, matches);
-                }
+                1usize => reader.temperature.filter_nested(&path[1..], filter, matches),
                 _ => unreachable!("filter_nested called with invalid path {:?}", path),
             }
         }
@@ -355,11 +344,11 @@ const _: () = {
                     let mut col_temperature: Vec<i64> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_temperature.push(rec.temperature.clone());
+                        col_temperature.push(rec.temperature);
                     }
                     let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
                         col_temperature,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let rec = Chunk {
@@ -551,7 +540,7 @@ const _: () = {
             let mut results = Vec::with_capacity(matches.count_ones());
             let raw_chunks = matches.as_raw_slice();
             let mut base_row_index: usize = 0;
-            let total_chunks = (row_count + 63) / 64;
+            let total_chunks = row_count.div_ceil(64);
             for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
                 if chunk_idx >= total_chunks {
                     break;
@@ -597,17 +586,10 @@ const _: () = {
         pub device_id: SmolStr,
         pub temperature: pco_pack::LazyReader<i64>,
     }
+    #[derive(Default)]
     pub struct Writer {
         pub device_id: Vec<SmolStr>,
         pub temperature: Vec<i64>,
-    }
-    impl Default for Writer {
-        fn default() -> Self {
-            Self {
-                device_id: Default::default(),
-                temperature: Default::default(),
-            }
-        }
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -692,11 +674,11 @@ const _: () = {
                 let mut col_temperature: Vec<i64> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_temperature.push(rec.temperature.clone());
+                    col_temperature.push(rec.temperature);
                 }
                 let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
                     col_temperature,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 records
@@ -731,9 +713,7 @@ const _: () = {
             }
             let bl = {
                 let mut bl_buf = [0u8; 8];
-                for i in 0..8 {
-                    bl_buf[i] = buf[pos + i];
-                }
+                bl_buf.copy_from_slice(&buf[pos..pos + 8]);
                 u64::from_le_bytes(bl_buf) as usize
             };
             src.set_position(pos as u64 + 8);
@@ -838,11 +818,9 @@ const _: () = {
                             )
                         }
                     }
-                    return Ok(());
+                    Ok(())
                 }
-                1usize => {
-                    return reader.temperature.filter_nested(&path[1..], filter, matches);
-                }
+                1usize => reader.temperature.filter_nested(&path[1..], filter, matches),
                 _ => unreachable!("filter_nested called with invalid path {:?}", path),
             }
         }
@@ -931,11 +909,11 @@ const _: () = {
                     let mut col_temperature: Vec<i64> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_temperature.push(rec.temperature.clone());
+                        col_temperature.push(rec.temperature);
                     }
                     let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
                         col_temperature,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let rec = Chunk {
@@ -1127,7 +1105,7 @@ const _: () = {
             let mut results = Vec::with_capacity(matches.count_ones());
             let raw_chunks = matches.as_raw_slice();
             let mut base_row_index: usize = 0;
-            let total_chunks = (row_count + 63) / 64;
+            let total_chunks = row_count.div_ceil(64);
             for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
                 if chunk_idx >= total_chunks {
                     break;

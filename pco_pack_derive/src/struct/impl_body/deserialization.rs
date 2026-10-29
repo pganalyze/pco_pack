@@ -1,6 +1,7 @@
 // Deserialization helpers for reconstructing a Reader from a Chunk.
 
 use super::super::parse::StructGen;
+use super::super::type_helpers::is_copy_scalar;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -11,7 +12,11 @@ impl StructGen {
         let mut fields: Vec<TokenStream2> = Vec::new();
         for fi in &self.index_fields() {
             let ident = &fi.ident;
-            fields.push(quote! { #ident: rec.#ident.clone(), });
+            if is_copy_scalar(&fi.ty) {
+                fields.push(quote! { #ident: rec.#ident, });
+            } else {
+                fields.push(quote! { #ident: rec.#ident.clone(), });
+            }
         }
         if self.has_timestamp {
             fields.push(quote! { start_at: rec.start_at, });

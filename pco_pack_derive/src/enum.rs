@@ -62,8 +62,7 @@ pub fn generate_enum_tokens(
                             variant.ident, discriminant
                         ),
                     )
-                    .to_compile_error()
-                    .into();
+                    .to_compile_error();
                 }
                 let payload_ty = fields.unnamed.first().unwrap().ty.clone();
                 variant_infos.push(EnumVariantInfo {
@@ -81,8 +80,7 @@ pub fn generate_enum_tokens(
                         variant.ident, discriminant
                     ),
                 )
-                .to_compile_error()
-                .into();
+                .to_compile_error();
             }
         }
     }
@@ -91,13 +89,6 @@ pub fn generate_enum_tokens(
         .iter()
         .filter(|v| !v.is_unit)
         .map(|v| syn::Ident::new(&format!("variant_{}", v.discriminant), v.ident.span()))
-        .collect();
-
-    let default_field_values: proc_macro2::TokenStream = payload_field_ids
-        .iter()
-        .map(|field_name| {
-            quote! { #field_name: Vec::new(), }
-        })
         .collect();
 
     // Payload types as TokenStreams for struct field declarations
@@ -150,7 +141,7 @@ pub fn generate_enum_tokens(
             if v.is_unit {
                 quote! {
                     Self::#variant_ident => {
-                        writer.row_variant.values.push(#discriminant as i64);
+                        writer.row_variant.values.push(#discriminant);
                     }
                 }
             } else {
@@ -158,7 +149,7 @@ pub fn generate_enum_tokens(
                 _ = v.payload_ty.as_ref();
                 quote! {
                     Self::#variant_ident(inner) => {
-                        writer.row_variant.values.push(#discriminant as i64);
+                        writer.row_variant.values.push(#discriminant);
                         writer.#payload_field.push(inner);
                     }
                 }
@@ -183,7 +174,7 @@ pub fn generate_enum_tokens(
                     Some(#discriminant) => {{
                         let idx = reader.#index_name;
                         reader.#index_name += 1;
-                        return Ok(Some(Self::#variant_ident(reader.#payload_field.pop_inner(idx)?)));
+                        Ok(Some(Self::#variant_ident(reader.#payload_field.pop_inner(idx)?)))
                     }},
                 }
             }
@@ -235,16 +226,24 @@ pub fn generate_enum_tokens(
         .collect();
 
     let non_unit_variants: Vec<_> = variant_infos.iter().filter(|v| !v.is_unit).collect();
+    // The variant count gates blocks past the first so older schemas with fewer
+    // variants still parse. A single block is always readable, and read_exact has
+    // already consumed the count, so only multi-block readers name it.
+    let multi_block = non_unit_variants.len() > 1;
+    let block_count_decl: proc_macro2::TokenStream = if multi_block {
+        quote! { let mut block_count = u64::from_le_bytes(len_buf) as usize; }
+    } else {
+        quote! {}
+    };
     let variant_deserialize_blocks: proc_macro2::TokenStream = if non_unit_variants.is_empty() {
         quote! {}
     } else {
-        // Schema evolution: first variant block always present; later blocks conditional
-        // to support older schemas with fewer variants.
         let mut blocks = Vec::new();
         for (i, v) in non_unit_variants.iter().enumerate() {
             let field_id = syn::Ident::new(&format!("variant_{}", v.discriminant), v.ident.span());
 
             if i == 0 {
+                let count_tick = multi_block.then(|| quote! { block_count -= 1; });
                 blocks.push(quote! {
                     let #field_id = {
                         let mut block_buf = [0u8; 8];
@@ -254,16 +253,16 @@ pub fn generate_enum_tokens(
                             let current_pos = src.position() as usize;
                             let compressed = src.get_ref()[current_pos..current_pos + block_len].to_vec();
                             src.set_position((current_pos + block_len) as u64);
-                            pco_pack::LazyReader::new(compressed, _float_round, _time_round.clone())
+                            pco_pack::LazyReader::new(compressed, float_round, time_round)
                         } else {
-                            pco_pack::LazyReader::new(Vec::new(), _float_round, _time_round.clone())
+                            pco_pack::LazyReader::new(Vec::new(), float_round, time_round)
                         }
                     };
-                    _block_count -= 1;
+                    #count_tick
                 });
             } else {
                 blocks.push(quote! {
-                    let #field_id = if _block_count > 0 {
+                    let #field_id = if block_count > 0 {
                         {
                             let mut block_buf = [0u8; 8];
                             <std::io::Cursor<&[u8]> as std::io::Read>::read_exact(src, &mut block_buf)?;
@@ -272,19 +271,19 @@ pub fn generate_enum_tokens(
                                 let current_pos = src.position() as usize;
                                 let compressed = src.get_ref()[current_pos..current_pos + block_len].to_vec();
                                 src.set_position((current_pos + block_len) as u64);
-                                pco_pack::LazyReader::new(compressed, _float_round, _time_round.clone())
+                                pco_pack::LazyReader::new(compressed, float_round, time_round)
                             } else {
-                                pco_pack::LazyReader::new(Vec::new(), _float_round, _time_round.clone())
+                                pco_pack::LazyReader::new(Vec::new(), float_round, time_round)
                             }
                         }
                     } else {
-                        pco_pack::LazyReader::new(Vec::new(), _float_round, _time_round.clone())
+                        pco_pack::LazyReader::new(Vec::new(), float_round, time_round)
                     };
                 });
             }
         }
         quote! {
-            let mut _block_count = _num_variants;
+            #block_count_decl
             #(#blocks)*
         }
     };
@@ -299,18 +298,10 @@ pub fn generate_enum_tokens(
             use pco_pack::serde::Serialize;
 
             #[doc = concat!("Writer container for accumulating ", stringify!(#name), " rows.")]
+            #[derive(Default)]
             pub struct Writer {
                 row_variant: pco_pack::NumberWriter<i64>,
                 #struct_field_decls
-            }
-
-            impl Default for Writer {
-                fn default() -> Self {
-                    Self {
-                        row_variant: pco_pack::NumberWriter::default(),
-                        #default_field_values
-                    }
-                }
             }
 
             #[doc = concat!("Reader state for ", stringify!(#name), " data.")]
@@ -341,12 +332,11 @@ pub fn generate_enum_tokens(
                 }
 
                 fn read(
-                    src: &mut std::io::Cursor<&[u8]>, _float_round: u32, _time_round: pco_pack::chrono::Duration,
+                    src: &mut std::io::Cursor<&[u8]>, float_round: u32, time_round: pco_pack::chrono::Duration,
                 ) -> pco_pack::anyhow::Result<Self::Reader> {
                     let row_variant = <i64 as pco_pack::PcoSerde>::read(src, 0, Default::default())?;
                     let mut len_buf = [0u8; 8];
                     <std::io::Cursor<&[u8]> as std::io::Read>::read_exact(src, &mut len_buf)?;
-                    let _num_variants = u64::from_le_bytes(len_buf) as usize;
                     #variant_deserialize_blocks
                     Ok(Reader { row_variant, #field_names_only })
                 }
@@ -398,30 +388,27 @@ pub fn generate_enum_tokens(
                 ) -> pco_pack::anyhow::Result<pco_pack::ResolvedFilter> {
                     if path.is_empty() {
                         // Handle range syntax: {"start": min, "end": max}
-                        if let pco_pack::serde_json::Value::Object(obj) = json {
-                            if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                                let start = start_val.as_i64()
-                                    .with_context(|| format!("Range start must be an integer, got {}", pco_pack::json_type_name(start_val)))?;
-                                let end = end_val.as_i64()
-                                    .with_context(|| format!("Range end must be an integer, got {}", pco_pack::json_type_name(end_val)))?;
-                                return Ok(pco_pack::ResolvedFilter {
-                                    path: vec![0],
-                                    filter: pco_pack::Filter::Range(start..=end),
-                                });
-                            }
+                        // (get() on a non-object yields None, so this matches objects only)
+                        if let Some((start_val, end_val)) = json.get("start").zip(json.get("end")) {
+                            let start = start_val.as_i64()
+                                .with_context(|| format!("Range start must be an integer, got {}", pco_pack::json_type_name(start_val)))?;
+                            let end = end_val.as_i64()
+                                .with_context(|| format!("Range end must be an integer, got {}", pco_pack::json_type_name(end_val)))?;
+                            return Ok(pco_pack::ResolvedFilter {
+                                path: vec![0],
+                                filter: pco_pack::Filter::Range(start..=end),
+                            });
                         }
                         // Handle inclusion syntax: [1, 2, 3]
-                        if let pco_pack::serde_json::Value::Array(arr) = json {
-                            if !arr.is_empty() {
-                                let ints: Vec<i64> = arr.iter()
-                                    .filter_map(|v| v.as_i64())
-                                    .collect();
-                                if ints.len() == arr.len() {
-                                    return Ok(pco_pack::ResolvedFilter {
-                                        path: vec![0],
-                                        filter: pco_pack::Filter::InclusionI64(ints.into_iter().collect()),
-                                    });
-                                }
+                        if let Some(arr) = json.as_array().filter(|a| !a.is_empty()) {
+                            let ints: Vec<i64> = arr.iter()
+                                .filter_map(|v| v.as_i64())
+                                .collect();
+                            if ints.len() == arr.len() {
+                                return Ok(pco_pack::ResolvedFilter {
+                                    path: vec![0],
+                                    filter: pco_pack::Filter::InclusionI64(ints.into_iter().collect()),
+                                });
                             }
                         }
                         let discriminant: Option<i64> = json.as_i64().or_else(|| json.as_f64().map(|f| f as i64));
@@ -509,7 +496,7 @@ pub fn generate_enum_tokens(
                     {
                         let raw_chunks = matches.as_raw_slice();
                         let mut base_row_index: usize = 0;
-                        let total_chunks = (row_count + 63) / 64;
+                        let total_chunks = row_count.div_ceil(64);
                         for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
                             if chunk_idx >= total_chunks {
                                 break;

@@ -329,7 +329,7 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     // Counts fold over the rounded collected_at values the write stores.
     let time_round_rows: Vec<BackendSnapshotTimeRound> = rows.iter().map(BackendSnapshotTimeRound::from).collect();
     let kf_time_round: Vec<(Bk, usize)> =
-        keys.iter().map(|k| (k.clone(), rows.iter().filter(|r| k.matches_time_round(r)).count())).collect();
+        keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches_time_round(r)).count())).collect();
     let time_round_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_time_round.iter()).map(|(q, (_, e))| (q, *e)).collect();
 
@@ -498,7 +498,7 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     tl_rows.sort_by_key(|r| (r.server_id, r.backend_pid, r.collected_at.start().unwrap_or(0)));
     let nd = tl_rows.len();
     let kf_tl: Vec<(Bk, usize)> =
-        keys.iter().map(|k| (k.clone(), tl_rows.iter().filter(|r| k.matches_timeline(r)).count())).collect();
+        keys.iter().map(|k| (*k, tl_rows.iter().filter(|r| k.matches_timeline(r)).count())).collect();
     // The fold truth over folded rows: each surviving row contributes one
     // count per fingerprint, standing in for its whole collapsed tick run.
     // The Reduce label's percent stays the per-tick selectivity; this fold
@@ -537,7 +537,7 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     tl_rows10.sort_by_key(|r| (r.server_id, r.backend_pid, r.collected_at.start().unwrap_or(0)));
     assert_eq!(tl_rows10.len(), nd, "backend_snapshots (Timeline 10s) row count");
     let kf_tl10: Vec<(Bk, usize)> =
-        keys.iter().map(|k| (k.clone(), tl_rows10.iter().filter(|r| k.matches_timeline10s(r)).count())).collect();
+        keys.iter().map(|k| (*k, tl_rows10.iter().filter(|r| k.matches_timeline10s(r)).count())).collect();
     let tl_truth10 =
         fold_fp_counts(tl_rows10.iter().filter(|r| keys[0].matches_timeline10s(r)).filter_map(|r| r.query_fingerprint));
     let tl10_filters: Vec<(&serde_json::Value, usize)> =

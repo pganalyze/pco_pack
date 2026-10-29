@@ -16,7 +16,7 @@ impl FallbackReader for ByteBufReader {
             .map_err(|e| anyhow::anyhow!("fallback deserialization failed: {e}"))?;
         let mut buf = Vec::with_capacity(2 + raw.len());
         buf.push(self::FORMAT_VERSION_CHUNKED);
-        rmp_serde::encode::write(&mut buf, &vec![value.clone()] as &[serde_bytes::ByteBuf])?;
+        rmp_serde::encode::write(&mut buf, std::slice::from_ref(&value) as &[serde_bytes::ByteBuf])?;
         Ok(ByteBufReader {
             msgpack_bytes: buf.into(),
             total_rows: 1,

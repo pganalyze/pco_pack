@@ -1,7 +1,7 @@
 // Timestamp-related helpers for the generated impl body.
 
 use super::super::parse::{FieldRole, StructGen};
-use super::super::type_helpers::is_timeline_type;
+use super::super::type_helpers::{is_copy_scalar, is_timeline_type};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -55,7 +55,11 @@ impl StructGen {
                 .filter(|fi| !matches!(fi.role, FieldRole::Timestamp))
                 .map(|fi| {
                     let ident = &fi.ident;
-                    quote! { #ident: data[idx].#ident.clone(), }
+                    if is_copy_scalar(&fi.ty) {
+                        quote! { #ident: data[idx].#ident, }
+                    } else {
+                        quote! { #ident: data[idx].#ident.clone(), }
+                    }
                 })
                 .collect();
 
@@ -131,9 +135,9 @@ impl StructGen {
                     };
                 }
             } else {
-                let bounds = if self.time_round.is_some() && super::super::type_helpers::is_datetime_type(&ts_field.ty)
+                let bounds = if let Some(time_round) = &self.time_round
+                    && super::super::type_helpers::is_datetime_type(&ts_field.ty)
                 {
-                    let time_round = self.time_round.as_ref().unwrap();
                     quote! {
                         pco_pack::round_bounds_us(
                             timestamp_to_i64(&data[#iv[0]].#rf_ident),
@@ -196,9 +200,9 @@ impl StructGen {
                     };
                 }
             } else {
-                let bounds = if self.time_round.is_some() && super::super::type_helpers::is_datetime_type(&ts_field.ty)
+                let bounds = if let Some(time_round) = &self.time_round
+                    && super::super::type_helpers::is_datetime_type(&ts_field.ty)
                 {
-                    let time_round = self.time_round.as_ref().unwrap();
                     quote! {
                         pco_pack::round_bounds_us(
                             timestamp_to_i64(&group_rows[0].#rf_ident),
@@ -297,7 +301,11 @@ impl StructGen {
             .map(|fi| {
                 let ident = &fi.ident;
                 let value = if fi.role == FieldRole::Index {
-                    quote! { g.#ident.clone() }
+                    if is_copy_scalar(&fi.ty) {
+                        quote! { g.#ident }
+                    } else {
+                        quote! { g.#ident.clone() }
+                    }
                 } else {
                     quote! { g.#ident.pop_inner(row)? }
                 };

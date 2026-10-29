@@ -187,7 +187,6 @@ struct Stats {
     // Plan trees.
     nodes_total: u64,
     depth_hist: HashMap<u64, u64>,
-    nodes_count_hist: HashMap<u64, u64>,
     keys: HashMap<String, KeyStat>,
     // node_insights payloads.
     insights_rows: u64,
@@ -250,19 +249,17 @@ fn dump(stats: &HashMap<String, KeyStat>, total: u64) {
         print!("{name}\tn={}\t{}\t", s.n, tys.join(" "));
         print!("\t{}", pct(s.n, total));
         if s.i_min.is_some() || s.f_min.is_some() {
-            match (s.i_min, s.i_max) {
-                (Some(a), Some(b)) => print!("\tint=[{a},{b}]"),
-                _ => {}
+            if let (Some(a), Some(b)) = (s.i_min, s.i_max) {
+                print!("\tint=[{a},{b}]")
             }
-            match (s.f_min, s.f_max) {
-                (Some(a), Some(b)) => print!("\tfloat=[{a},{b}] frac={}", pct(s.frac, s.n)),
-                _ => {}
+            if let (Some(a), Some(b)) = (s.f_min, s.f_max) {
+                print!("\tfloat=[{a},{b}] frac={}", pct(s.frac, s.n))
             }
         }
-        if s.n - s.bool_true > 0 || s.bool_true > 0 {
-            if let Some(&nbool) = s.ty.get("bool") {
-                print!("\tbool_true={}", pct(s.bool_true, nbool));
-            }
+        if (s.n - s.bool_true > 0 || s.bool_true > 0)
+            && let Some(&nbool) = s.ty.get("bool")
+        {
+            print!("\tbool_true={}", pct(s.bool_true, nbool));
         }
         if s.dict_capped {
             print!(
@@ -306,8 +303,7 @@ fn main() -> anyhow::Result<()> {
     let rows: Vec<ExplainRow> = rmp_serde::decode::from_read(decoder)?;
     println!("# profile of {} rows", rows.len());
 
-    let mut st = Stats::default();
-    st.rows_total = rows.len() as u64;
+    let mut st = Stats { rows_total: rows.len() as u64, ..Default::default() };
     let mut row_counts: Vec<u64> = Vec::with_capacity(rows.len());
     for r in &rows {
         let Some(doc0) = r.output_json.as_ref().and_then(|j| j.get(0)) else {
@@ -316,7 +312,7 @@ fn main() -> anyhow::Result<()> {
             continue;
         };
         *st.envelope_len
-            .entry(r.output_json.as_ref().map(Value::as_array).flatten().map_or(0, |a| a.len() as u64))
+            .entry(r.output_json.as_ref().and_then(Value::as_array).map_or(0, |a| a.len() as u64))
             .or_insert(0) += 1;
         for (k, v) in doc0.as_object().into_iter().flatten() {
             st.envelope.entry(k.clone()).or_default().record(v);
@@ -324,7 +320,7 @@ fn main() -> anyhow::Result<()> {
         if doc0.get("Triggers").and_then(Value::as_array).is_some_and(|a| !a.is_empty()) {
             st.triggers_nonempty += 1;
         }
-        let mut n_before = st.nodes_total;
+        let n_before = st.nodes_total;
         if let Some(plan) = doc0.get("Plan") {
             walk(plan, 0, &mut st.nodes_total, &mut st.depth_hist, &mut st.keys);
         }

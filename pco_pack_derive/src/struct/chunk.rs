@@ -1,4 +1,5 @@
 use super::parse::{FieldRole, StructGen};
+use super::type_helpers::is_copy_scalar;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -15,7 +16,11 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
         .iter()
         .map(|fi| {
             let ident = &fi.ident;
-            quote! { #ident: self.#ident.clone(), }
+            if is_copy_scalar(&fi.ty) {
+                quote! { #ident: self.#ident, }
+            } else {
+                quote! { #ident: self.#ident.clone(), }
+            }
         })
         .collect();
     let payload_wraps: Vec<TokenStream2> = sg
@@ -205,7 +210,7 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
                 let mut results = Vec::with_capacity(matches.count_ones());
                 let raw_chunks = matches.as_raw_slice();
                 let mut base_row_index: usize = 0;
-                let total_chunks = (row_count + 63) / 64;
+                let total_chunks = row_count.div_ceil(64);
                 for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
                     if chunk_idx >= total_chunks {
                         break;

@@ -173,7 +173,7 @@ fn timeline_filter_across_chunks_many_ranges() {
     let data: Vec<ChunkedTimelineRow> = (0..n_rows)
         .map(|i| {
             let tl = Timeline::from_range(dt((i * 1_000_000) as i64), dt(((i + 1) * 1_000_000 - 1) as i64));
-            ChunkedTimelineRow { seen_at: tl, value: i as i32 }
+            ChunkedTimelineRow { seen_at: tl, value: i }
         })
         .collect();
 

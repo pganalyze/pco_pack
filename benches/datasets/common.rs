@@ -308,9 +308,9 @@ where
     }
 }
 
-/// columnar runner. Serialize: push the whole capture into one `Container`
-/// + indexed encode + zstd L3 (row building runs once, outside the timer),
-/// one blob. Deserialize/filter: decode + `Index::get` walk.
+/// columnar runner. Serialize: push the whole capture into one `Container`,
+/// indexed encode, zstd L3 (row building runs once, outside the timer),
+/// one blob. Deserialize/filter: decode plus `Index::get` walk.
 pub fn bench_columnar<R, B, K, F>(
     n_rows: usize, build_rows: B, filters: &[(K, usize)], count_matches: F,
 ) -> (CodecMetrics, Vec<u8>)
@@ -696,7 +696,7 @@ fn file_ok(path: &Path, ds: &Ds) -> bool {
     let Ok(meta) = std::fs::metadata(path) else {
         return false;
     };
-    meta.len() == ds.size && ds.md5.map_or(true, |pinned| file_md5(path) == pinned)
+    meta.len() == ds.size && ds.md5.is_none_or(|pinned| file_md5(path) == pinned)
 }
 
 fn file_md5(path: &Path) -> String {

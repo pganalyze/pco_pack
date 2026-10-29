@@ -326,7 +326,7 @@ fn booleans_table() {
 
 /// bool -> u8 is a 1:1 value mapping (a pco u8 column), not a decomposition.
 /// 8-bit enabled: the fair raw-pco config.
-fn pco_bool(d: &Vec<bool>) -> (f64, usize) {
+fn pco_bool(d: &[bool]) -> (f64, usize) {
     let v: Vec<u8> = d.iter().map(|b| *b as u8).collect();
     bench_pco_col_8bit(&v)
 }
@@ -822,7 +822,7 @@ fn recurrence_i64(n: usize, local: bool) -> Vec<i64> {
 // --- Right-skew counters -------------------------------------------------------
 
 fn skew_i64(n: usize) -> Vec<i64> {
-    (0..n).map(|i| skew_small(i)).collect()
+    (0..n).map(skew_small).collect()
 }
 
 fn skew_sparse_i64(n: usize) -> Vec<i64> {
@@ -930,9 +930,7 @@ fn zero_option_parts(n: usize, frac: f64, scattered: bool) -> (Vec<bool>, Vec<i3
             is_zero[i] = true;
         }
     } else {
-        for i in 0..num_zero {
-            is_zero[i] = true;
-        }
+        is_zero[..num_zero].fill(true);
     }
     let values: Vec<i32> = (0..n).map(|i| skew_small(i) as i32).collect();
     (is_zero, values)
@@ -1139,9 +1137,9 @@ fn generate_walkmap_data(n: usize) -> Vec<HashMap<smol_str::SmolStr, i32>> {
     }
     let mut rows = Vec::with_capacity(n);
     for i in 0..n {
-        for j in 0..8 {
+        for (j, c) in cur.iter_mut().enumerate() {
             if unit64(i.wrapping_mul(7919).wrapping_add(j * 131)) < 0.05 {
-                cur[j] = (cur[j] + (splitmix64(i.wrapping_mul(31).wrapping_add(j)) % 9) as i32 - 4).max(0);
+                *c = (*c + (splitmix64(i.wrapping_mul(31).wrapping_add(j)) % 9) as i32 - 4).max(0);
             }
         }
         let mut row = HashMap::with_capacity(8);
@@ -1163,9 +1161,9 @@ fn generate_walkmap_sparse_data(n: usize) -> Vec<HashMap<smol_str::SmolStr, Opti
     }
     let mut rows = Vec::with_capacity(n);
     for i in 0..n {
-        for j in 0..8 {
+        for (j, c) in cur.iter_mut().enumerate() {
             if unit64(i.wrapping_mul(7919).wrapping_add(j * 131)) < 0.05 {
-                cur[j] = (cur[j] + (splitmix64(i.wrapping_mul(31).wrapping_add(j)) % 9) as i32 - 4).max(0);
+                *c = (*c + (splitmix64(i.wrapping_mul(31).wrapping_add(j)) % 9) as i32 - 4).max(0);
             }
         }
         let mut row = HashMap::with_capacity(8);

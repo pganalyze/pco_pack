@@ -632,10 +632,12 @@ fn filter_default_and_field_assignment() {
 #[test]
 fn filter_debug_includes_typed_filters() {
     let now = to_micros(Utc::now());
-    let mut filter = SensorFilter::default();
-    filter.device_id = Some(1.into());
-    filter.collected_at = Some(now.into());
-    filter.temperature = Some(F64Filter::Equal(42.0));
+    let filter = SensorFilter {
+        device_id: Some(1.into()),
+        collected_at: Some(now.into()),
+        temperature: Some(F64Filter::Equal(42.0)),
+        ..Default::default()
+    };
 
     let debug = format!("{filter:?}");
     assert!(debug.contains("device_id: Some(Equal(1))"), "{debug}");
@@ -645,8 +647,7 @@ fn filter_debug_includes_typed_filters() {
 
 #[test]
 fn string_filter_default_and_assignment() {
-    let mut filter = NamedItemFilter::default();
-    filter.name = Some(("alice").into()); // Equal via From<&str>
+    let mut filter = NamedItemFilter { name: Some(("alice").into()), ..Default::default() }; // Equal via From<&str>
     assert_eq!(filter.name, Some(StringFilter::Equal("alice".into())));
 
     filter.name = Some((["alice", "bob"]).into()); // Inclusion via From<[&str; N]>
@@ -659,16 +660,14 @@ fn string_filter_default_and_assignment() {
 #[test]
 fn timestamp_filter_equal() {
     let now = to_micros(Utc::now());
-    let mut filter = SensorFilter::default();
-    filter.collected_at = Some((now).into());
+    let filter = SensorFilter { collected_at: Some((now).into()), ..Default::default() };
     assert_eq!(filter.collected_at, Some(TimeFilter::Equal(now)));
 }
 
 #[test]
 fn timestamp_filter_range() {
     let now = to_micros(Utc::now());
-    let mut filter = SensorFilter::default();
-    filter.collected_at = Some(((now - Duration::hours(1))..=now).into());
+    let filter = SensorFilter { collected_at: Some(((now - Duration::hours(1))..=now).into()), ..Default::default() };
     match &filter.collected_at {
         Some(TimeFilter::Range { start, end }) => {
             assert_eq!(start.to_rfc3339(), (now - Duration::hours(1)).to_rfc3339());
@@ -682,8 +681,7 @@ fn timestamp_filter_range() {
 fn timestamp_filter_inclusion() {
     let t1 = Utc::now();
     let t2 = t1 + Duration::hours(1);
-    let mut filter = SensorFilter::default();
-    filter.collected_at = Some(([t1, t2]).into());
+    let filter = SensorFilter { collected_at: Some(([t1, t2]).into()), ..Default::default() };
     match &filter.collected_at {
         Some(TimeFilter::Inclusion(v)) => assert_eq!(v.len(), 2),
         _ => panic!("Expected Inclusion"),
@@ -702,8 +700,8 @@ fn timestamp_filter_integration() {
     let bytes = Sensor::serialize(data).unwrap();
 
     // Filter by timestamp range only (no index constraint)
-    let mut filter = SensorFilter::default();
-    filter.collected_at = Some(((now - Duration::minutes(10))..=now).into());
+    let filter =
+        SensorFilter { collected_at: Some(((now - Duration::minutes(10))..=now).into()), ..Default::default() };
 
     let results = Sensor::filter_bytes(&bytes, filter, &[]).unwrap();
     assert_eq!(results.len(), 1);
@@ -818,8 +816,7 @@ fn range_helpers_no_timestamp_field() {
 #[test]
 fn typed_plain_field_assignment() {
     // temperature is a plain f64 field; it now has a typed filter accessor.
-    let mut filter = SensorFilter::default();
-    filter.temperature = Some((20.0..=30.0).into());
+    let filter = SensorFilter { temperature: Some((20.0..=30.0).into()), ..Default::default() };
 
     if let Some(F64Filter::Range { start, end }) = &filter.temperature {
         assert_eq!(*start, 20.0);
@@ -831,15 +828,13 @@ fn typed_plain_field_assignment() {
 
 #[test]
 fn typed_plain_field_equal() {
-    let mut filter = SensorFilter::default();
-    filter.temperature = Some((25.0).into());
+    let filter = SensorFilter { temperature: Some((25.0).into()), ..Default::default() };
     assert_eq!(filter.temperature, Some(F64Filter::Equal(25.0)));
 }
 
 #[test]
 fn typed_plain_field_inclusion() {
-    let mut filter = SensorFilter::default();
-    filter.temperature = Some(([20.0, 25.0, 30.0]).into());
+    let filter = SensorFilter { temperature: Some(([20.0, 25.0, 30.0]).into()), ..Default::default() };
     match &filter.temperature {
         Some(F64Filter::Inclusion(v)) => assert_eq!(v.len(), 3),
         _ => panic!("Expected Inclusion"),
@@ -907,10 +902,12 @@ fn typed_index_field_assignment_integration() {
 
     let bytes = Sensor::serialize(data).unwrap();
 
-    // Build filter using Default + field assignment instead of new()
-    let mut filter = SensorFilter::default();
-    filter.device_id = Some([1, 2].into());
-    filter.collected_at = Some(((now - Duration::minutes(10))..=now).into());
+    // Build filter without going through new()
+    let filter = SensorFilter {
+        device_id: Some([1, 2].into()),
+        collected_at: Some(((now - Duration::minutes(10))..=now).into()),
+        ..Default::default()
+    };
 
     let results = Sensor::filter_bytes(&bytes, filter, &[]).unwrap();
     assert_eq!(results.len(), 2);
@@ -927,9 +924,11 @@ fn typed_index_field_assignment_integration_exact() {
 
     let bytes = Sensor::serialize(data).unwrap();
 
-    let mut filter = SensorFilter::default();
-    filter.device_id = Some(1.into());
-    filter.collected_at = Some(((now - Duration::minutes(10))..=now).into());
+    let filter = SensorFilter {
+        device_id: Some(1.into()),
+        collected_at: Some(((now - Duration::minutes(10))..=now).into()),
+        ..Default::default()
+    };
 
     let results = Sensor::filter_bytes(&bytes, filter, &[]).unwrap();
     assert_eq!(results.len(), 1);
@@ -1154,7 +1153,7 @@ fn resolve_fields_can_be_called_multiple_times_with_start_at_end_at() {
 
     // Second call: pass back the fields from the first call (which includes start_at/end_at).
     // This should not error with "Unknown field: start_at".
-    let fields2 = Sensor::resolve_fields(&query, &fields1.iter().copied().collect::<Vec<_>>()).unwrap();
+    let fields2 = Sensor::resolve_fields(&query, &fields1.to_vec()).unwrap();
     assert!(fields2.contains(&"collected_at"));
     assert!(fields2.contains(&"start_at"));
     assert!(fields2.contains(&"end_at"));

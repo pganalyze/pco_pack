@@ -28,11 +28,11 @@ impl PcoSerde for bool {
         if pos >= buf.len() || buf[pos..].is_empty() {
             return Ok(BoolReader::default());
         }
-        if let Ok(msgpack_bytes) = zstd::decode_all(&buf[pos..]) {
-            if let Ok(values) = rmp_serde::from_slice::<Vec<bool>>(&msgpack_bytes) {
-                src.set_position(buf.len() as u64);
-                return Ok(BoolReader { values: values.into(), current_idx: 0 });
-            }
+        if let Ok(msgpack_bytes) = zstd::decode_all(&buf[pos..])
+            && let Ok(values) = rmp_serde::from_slice::<Vec<bool>>(&msgpack_bytes)
+        {
+            src.set_position(buf.len() as u64);
+            return Ok(BoolReader { values: values.into(), current_idx: 0 });
         }
         // Legacy Pcodec-compressed bool format for backwards compatibility
         if let Ok(reader) = <BoolReader as FallbackReader>::read_fallback(&buf[pos..]) {

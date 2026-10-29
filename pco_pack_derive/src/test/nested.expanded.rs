@@ -21,17 +21,10 @@ const _: () = {
         pub name: pco_pack::LazyReader<String>,
         pub inner: pco_pack::LazyReader<Inner>,
     }
+    #[derive(Default)]
     pub struct Writer {
         pub name: Vec<String>,
         pub inner: Vec<Inner>,
-    }
-    impl Default for Writer {
-        fn default() -> Self {
-            Self {
-                name: Default::default(),
-                inner: Default::default(),
-            }
-        }
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -111,12 +104,12 @@ const _: () = {
                 }
                 let cb_name = <String as pco_pack::PcoSerde>::write(
                     col_name,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 let cb_inner = <Inner as pco_pack::PcoSerde>::write(
                     col_inner,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 records
@@ -151,9 +144,7 @@ const _: () = {
             }
             let bl = {
                 let mut bl_buf = [0u8; 8];
-                for i in 0..8 {
-                    bl_buf[i] = buf[pos + i];
-                }
+                bl_buf.copy_from_slice(&buf[pos..pos + 8]);
                 u64::from_le_bytes(bl_buf) as usize
             };
             src.set_position(pos as u64 + 8);
@@ -226,12 +217,8 @@ const _: () = {
             matches: &mut pco_pack::FilterMask,
         ) -> pco_pack::anyhow::Result<()> {
             match path[0] {
-                0usize => {
-                    return reader.name.filter_nested(&path[1..], filter, matches);
-                }
-                1usize => {
-                    return reader.inner.filter_nested(&path[1..], filter, matches);
-                }
+                0usize => reader.name.filter_nested(&path[1..], filter, matches),
+                1usize => reader.inner.filter_nested(&path[1..], filter, matches),
                 _ => unreachable!("filter_nested called with invalid path {:?}", path),
             }
         }
@@ -325,12 +312,12 @@ const _: () = {
                     }
                     let cb_name = <String as pco_pack::PcoSerde>::write(
                         col_name,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let cb_inner = <Inner as pco_pack::PcoSerde>::write(
                         col_inner,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let rec = Chunk {
@@ -553,7 +540,7 @@ const _: () = {
             let mut results = Vec::with_capacity(matches.count_ones());
             let raw_chunks = matches.as_raw_slice();
             let mut base_row_index: usize = 0;
-            let total_chunks = (row_count + 63) / 64;
+            let total_chunks = row_count.div_ceil(64);
             for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
                 if chunk_idx >= total_chunks {
                     break;
@@ -601,17 +588,10 @@ const _: () = {
         pub x: pco_pack::LazyReader<i32>,
         pub label: pco_pack::LazyReader<String>,
     }
+    #[derive(Default)]
     pub struct Writer {
         pub x: Vec<i32>,
         pub label: Vec<String>,
-    }
-    impl Default for Writer {
-        fn default() -> Self {
-            Self {
-                x: Default::default(),
-                label: Default::default(),
-            }
-        }
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -690,17 +670,17 @@ const _: () = {
                 let mut col_label: Vec<String> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_x.push(rec.x.clone());
+                    col_x.push(rec.x);
                     col_label.push(rec.label.clone());
                 }
                 let cb_x = <i32 as pco_pack::PcoSerde>::write(
                     col_x,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 let cb_label = <String as pco_pack::PcoSerde>::write(
                     col_label,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 records
@@ -735,9 +715,7 @@ const _: () = {
             }
             let bl = {
                 let mut bl_buf = [0u8; 8];
-                for i in 0..8 {
-                    bl_buf[i] = buf[pos + i];
-                }
+                bl_buf.copy_from_slice(&buf[pos..pos + 8]);
                 u64::from_le_bytes(bl_buf) as usize
             };
             src.set_position(pos as u64 + 8);
@@ -806,12 +784,8 @@ const _: () = {
             matches: &mut pco_pack::FilterMask,
         ) -> pco_pack::anyhow::Result<()> {
             match path[0] {
-                0usize => {
-                    return reader.x.filter_nested(&path[1..], filter, matches);
-                }
-                1usize => {
-                    return reader.label.filter_nested(&path[1..], filter, matches);
-                }
+                0usize => reader.x.filter_nested(&path[1..], filter, matches),
+                1usize => reader.label.filter_nested(&path[1..], filter, matches),
                 _ => unreachable!("filter_nested called with invalid path {:?}", path),
             }
         }
@@ -900,17 +874,17 @@ const _: () = {
                     let mut col_label: Vec<String> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_x.push(rec.x.clone());
+                        col_x.push(rec.x);
                         col_label.push(rec.label.clone());
                     }
                     let cb_x = <i32 as pco_pack::PcoSerde>::write(
                         col_x,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let cb_label = <String as pco_pack::PcoSerde>::write(
                         col_label,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let rec = Chunk {
@@ -1133,7 +1107,7 @@ const _: () = {
             let mut results = Vec::with_capacity(matches.count_ones());
             let raw_chunks = matches.as_raw_slice();
             let mut base_row_index: usize = 0;
-            let total_chunks = (row_count + 63) / 64;
+            let total_chunks = row_count.div_ceil(64);
             for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
                 if chunk_idx >= total_chunks {
                     break;

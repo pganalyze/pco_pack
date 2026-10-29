@@ -29,21 +29,12 @@ const _: () = {
         pub label: pco_pack::LazyReader<String>,
         pub state: pco_pack::LazyReader<State>,
     }
+    #[derive(Default)]
     pub struct Writer {
         pub id: Vec<i64>,
         pub value: Vec<f64>,
         pub label: Vec<String>,
         pub state: Vec<State>,
-    }
-    impl Default for Writer {
-        fn default() -> Self {
-            Self {
-                id: Default::default(),
-                value: Default::default(),
-                label: Default::default(),
-                state: Default::default(),
-            }
-        }
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -128,29 +119,29 @@ const _: () = {
                 let mut col_state: Vec<State> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_id.push(rec.id.clone());
-                    col_value.push(rec.value.clone());
+                    col_id.push(rec.id);
+                    col_value.push(rec.value);
                     col_label.push(rec.label.clone());
                     col_state.push(rec.state.clone());
                 }
                 let cb_id = <i64 as pco_pack::PcoSerde>::write(
                     col_id,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 let cb_value = <f64 as pco_pack::PcoSerde>::write(
                     col_value,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 let cb_label = <String as pco_pack::PcoSerde>::write(
                     col_label,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 let cb_state = <State as pco_pack::PcoSerde>::write(
                     col_state,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 records
@@ -187,9 +178,7 @@ const _: () = {
             }
             let bl = {
                 let mut bl_buf = [0u8; 8];
-                for i in 0..8 {
-                    bl_buf[i] = buf[pos + i];
-                }
+                bl_buf.copy_from_slice(&buf[pos..pos + 8]);
                 u64::from_le_bytes(bl_buf) as usize
             };
             src.set_position(pos as u64 + 8);
@@ -278,18 +267,10 @@ const _: () = {
             matches: &mut pco_pack::FilterMask,
         ) -> pco_pack::anyhow::Result<()> {
             match path[0] {
-                0usize => {
-                    return reader.id.filter_nested(&path[1..], filter, matches);
-                }
-                1usize => {
-                    return reader.value.filter_nested(&path[1..], filter, matches);
-                }
-                2usize => {
-                    return reader.label.filter_nested(&path[1..], filter, matches);
-                }
-                3usize => {
-                    return reader.state.filter_nested(&path[1..], filter, matches);
-                }
+                0usize => reader.id.filter_nested(&path[1..], filter, matches),
+                1usize => reader.value.filter_nested(&path[1..], filter, matches),
+                2usize => reader.label.filter_nested(&path[1..], filter, matches),
+                3usize => reader.state.filter_nested(&path[1..], filter, matches),
                 _ => unreachable!("filter_nested called with invalid path {:?}", path),
             }
         }
@@ -406,29 +387,29 @@ const _: () = {
                     let mut col_state: Vec<State> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_id.push(rec.id.clone());
-                        col_value.push(rec.value.clone());
+                        col_id.push(rec.id);
+                        col_value.push(rec.value);
                         col_label.push(rec.label.clone());
                         col_state.push(rec.state.clone());
                     }
                     let cb_id = <i64 as pco_pack::PcoSerde>::write(
                         col_id,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let cb_value = <f64 as pco_pack::PcoSerde>::write(
                         col_value,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let cb_label = <String as pco_pack::PcoSerde>::write(
                         col_label,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let cb_state = <State as pco_pack::PcoSerde>::write(
                         col_state,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let rec = Chunk {
@@ -718,7 +699,7 @@ const _: () = {
             let mut results = Vec::with_capacity(matches.count_ones());
             let raw_chunks = matches.as_raw_slice();
             let mut base_row_index: usize = 0;
-            let total_chunks = (row_count + 63) / 64;
+            let total_chunks = row_count.div_ceil(64);
             for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
                 if chunk_idx >= total_chunks {
                     break;
@@ -754,17 +735,10 @@ const _: () = {
     use pco_pack::anyhow::Context;
     use pco_pack::serde::Serialize;
     #[doc = concat!("Writer container for accumulating ", stringify!(State), " rows.")]
+    #[derive(Default)]
     pub struct Writer {
         row_variant: pco_pack::NumberWriter<i64>,
         variant_1: Vec<i32>,
-    }
-    impl Default for Writer {
-        fn default() -> Self {
-            Self {
-                row_variant: pco_pack::NumberWriter::default(),
-                variant_1: Vec::new(),
-            }
-        }
     }
     #[doc = concat!("Reader state for ", stringify!(State), " data.")]
     #[derive(Clone, Default)]
@@ -785,14 +759,14 @@ const _: () = {
             for item in data {
                 match item {
                     Self::Idle => {
-                        writer.row_variant.values.push(0i64 as i64);
+                        writer.row_variant.values.push(0i64);
                     }
                     Self::Running(inner) => {
-                        writer.row_variant.values.push(1i64 as i64);
+                        writer.row_variant.values.push(1i64);
                         writer.variant_1.push(inner);
                     }
                     Self::Paused => {
-                        writer.row_variant.values.push(2i64 as i64);
+                        writer.row_variant.values.push(2i64);
                     }
                 }
             }
@@ -821,8 +795,8 @@ const _: () = {
         }
         fn read(
             src: &mut std::io::Cursor<&[u8]>,
-            _float_round: u32,
-            _time_round: pco_pack::chrono::Duration,
+            float_round: u32,
+            time_round: pco_pack::chrono::Duration,
         ) -> pco_pack::anyhow::Result<Self::Reader> {
             let row_variant = <i64 as pco_pack::PcoSerde>::read(
                 src,
@@ -831,8 +805,6 @@ const _: () = {
             )?;
             let mut len_buf = [0u8; 8];
             <std::io::Cursor<&[u8]> as std::io::Read>::read_exact(src, &mut len_buf)?;
-            let _num_variants = u64::from_le_bytes(len_buf) as usize;
-            let mut _block_count = _num_variants;
             let variant_1 = {
                 let mut block_buf = [0u8; 8];
                 <std::io::Cursor<
@@ -845,20 +817,11 @@ const _: () = {
                         .get_ref()[current_pos..current_pos + block_len]
                         .to_vec();
                     src.set_position((current_pos + block_len) as u64);
-                    pco_pack::LazyReader::new(
-                        compressed,
-                        _float_round,
-                        _time_round.clone(),
-                    )
+                    pco_pack::LazyReader::new(compressed, float_round, time_round)
                 } else {
-                    pco_pack::LazyReader::new(
-                        Vec::new(),
-                        _float_round,
-                        _time_round.clone(),
-                    )
+                    pco_pack::LazyReader::new(Vec::new(), float_round, time_round)
                 }
             };
-            _block_count -= 1;
             Ok(Reader {
                 row_variant,
                 variant_1,
@@ -883,7 +846,7 @@ const _: () = {
                 Some(1i64) => {
                     let idx = reader.variant_1_index;
                     reader.variant_1_index += 1;
-                    return Ok(Some(Self::Running(reader.variant_1.pop_inner(idx)?)));
+                    Ok(Some(Self::Running(reader.variant_1.pop_inner(idx)?)))
                 }
                 Some(2i64) => Ok(Some(Self::Paused)),
                 None | Some(_) => Ok(Some(Self::default())),
@@ -943,47 +906,40 @@ const _: () = {
             json: &pco_pack::serde_json::Value,
         ) -> pco_pack::anyhow::Result<pco_pack::ResolvedFilter> {
             if path.is_empty() {
-                if let pco_pack::serde_json::Value::Object(obj) = json {
-                    if let (Some(start_val), Some(end_val)) = (
-                        obj.get("start"),
-                        obj.get("end"),
-                    ) {
-                        let start = start_val
-                            .as_i64()
-                            .with_context(|| {
-                                format!(
-                                    "Range start must be an integer, got {}",
-                                    pco_pack::json_type_name(start_val)
-                                )
-                            })?;
-                        let end = end_val
-                            .as_i64()
-                            .with_context(|| {
-                                format!(
-                                    "Range end must be an integer, got {}",
-                                    pco_pack::json_type_name(end_val)
-                                )
-                            })?;
+                if let Some((start_val, end_val)) = json
+                    .get("start")
+                    .zip(json.get("end"))
+                {
+                    let start = start_val
+                        .as_i64()
+                        .with_context(|| {
+                            format!(
+                                "Range start must be an integer, got {}",
+                                pco_pack::json_type_name(start_val)
+                            )
+                        })?;
+                    let end = end_val
+                        .as_i64()
+                        .with_context(|| {
+                            format!(
+                                "Range end must be an integer, got {}",
+                                pco_pack::json_type_name(end_val)
+                            )
+                        })?;
+                    return Ok(pco_pack::ResolvedFilter {
+                        path: vec![0],
+                        filter: pco_pack::Filter::Range(start..=end),
+                    });
+                }
+                if let Some(arr) = json.as_array().filter(|a| !a.is_empty()) {
+                    let ints: Vec<i64> = arr.iter().filter_map(|v| v.as_i64()).collect();
+                    if ints.len() == arr.len() {
                         return Ok(pco_pack::ResolvedFilter {
                             path: vec![0],
-                            filter: pco_pack::Filter::Range(start..=end),
+                            filter: pco_pack::Filter::InclusionI64(
+                                ints.into_iter().collect(),
+                            ),
                         });
-                    }
-                }
-                if let pco_pack::serde_json::Value::Array(arr) = json {
-                    if !arr.is_empty() {
-                        let ints: Vec<i64> = arr
-                            .iter()
-                            .filter_map(|v| v.as_i64())
-                            .collect();
-                        if ints.len() == arr.len() {
-                            return Ok(pco_pack::ResolvedFilter {
-                                path: vec![0],
-                                filter: pco_pack::Filter::InclusionI64(
-                                    ints.into_iter().collect(),
-                                ),
-                            });
-                        }
                     }
                 }
                 let discriminant: Option<i64> = json
@@ -1097,7 +1053,7 @@ const _: () = {
             {
                 let raw_chunks = matches.as_raw_slice();
                 let mut base_row_index: usize = 0;
-                let total_chunks = (row_count + 63) / 64;
+                let total_chunks = row_count.div_ceil(64);
                 for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
                     if chunk_idx >= total_chunks {
                         break;

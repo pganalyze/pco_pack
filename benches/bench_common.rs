@@ -57,7 +57,7 @@ static CRATE_FILTER: std::sync::OnceLock<Option<std::collections::HashSet<String
 pub fn init_crate_filter() -> Vec<String> {
     let mut names: Option<Vec<String>> = None;
     let mut positional = Vec::new();
-    let mut argv = std::env::args().skip(1).into_iter();
+    let mut argv = std::env::args().skip(1);
     while let Some(arg) = argv.next() {
         if let Some(v) = arg.strip_prefix("--crates=") {
             names = Some(split_crates(v));
@@ -272,8 +272,8 @@ pub fn bench_write<T: pco_pack::PcoSerde + Clone + PartialEq + std::fmt::Debug, 
     let (ms, buf) = min_ms_pair(|| T::write(data.clone(), 0, Default::default()).unwrap());
     let mut cursor = Cursor::new(&buf[..]);
     let mut reader = T::read(&mut cursor, 0, Default::default()).unwrap();
-    for idx in 0..n_rows {
-        assert_eq!(T::get(&mut reader, idx).unwrap(), Some(data[idx].clone()), "roundtrip mismatch at row {idx}");
+    for (idx, row) in data.iter().enumerate() {
+        assert_eq!(T::get(&mut reader, idx).unwrap(), Some(row.clone()), "roundtrip mismatch at row {idx}");
     }
     (label.to_string(), ms, buf.len())
 }
@@ -291,8 +291,8 @@ pub fn bench_write_round<
     let (ms, buf) = min_ms_pair(|| T::write(data.clone(), float_round, time_round).unwrap());
     let mut cursor = Cursor::new(&buf[..]);
     let mut reader = T::read(&mut cursor, float_round, time_round).unwrap();
-    for idx in 0..n_rows {
-        assert_eq!(T::get(&mut reader, idx).unwrap(), Some(expect(&data[idx])), "roundtrip mismatch at row {idx}");
+    for (idx, row) in data.iter().enumerate() {
+        assert_eq!(T::get(&mut reader, idx).unwrap(), Some(expect(row)), "roundtrip mismatch at row {idx}");
     }
     (label.to_string(), ms, buf.len())
 }

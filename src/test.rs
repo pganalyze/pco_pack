@@ -1,3 +1,7 @@
+// Test fixtures use decimal literals like 3.14159265358979 to exercise float rounding
+// and schema evolution, not to write std constants.
+#![allow(clippy::approx_constant)]
+
 mod bool;
 mod bool_range_filter;
 mod bytes;

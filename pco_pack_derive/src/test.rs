@@ -8,7 +8,7 @@ use std::path::Path;
 fn expand() {
     let mut files: Vec<_> = fs::read_dir(Path::new("src/test")).unwrap().filter_map(|e| e.ok()).collect();
     files.retain(|e| {
-        e.path().extension().map_or(false, |ext| ext == "rs")
+        e.path().extension().is_some_and(|ext| ext == "rs")
             && !e.file_name().to_string_lossy().ends_with(".expanded.rs")
     });
     files.sort_by_key(|e| e.file_name());
@@ -27,7 +27,7 @@ fn expand() {
                 Err(_) => continue,
             };
             let expanded = expand_tokens(input_tokens);
-            let parsed: syn::File = syn::parse2(expanded).expect(&format!("{input_path:?}"));
+            let parsed: syn::File = syn::parse2(expanded).unwrap_or_else(|_| panic!("{input_path:?}"));
             let output = prettyplease::unparse(&parsed);
             let output_path = input_path.with_extension("expanded.rs");
             fs::write(&output_path, &output).unwrap();
@@ -83,7 +83,7 @@ fn strip_pco_pack_attrs(attrs: &mut Vec<syn::Attribute>) {
 
     // Remove empty #[derive()] attributes left after stripping PcoPack
     attrs.retain(|attr| {
-        !(attr.path().is_ident("derive") && attr.meta.require_list().ok().map_or(false, |list| list.tokens.is_empty()))
+        !(attr.path().is_ident("derive") && attr.meta.require_list().ok().is_some_and(|list| list.tokens.is_empty()))
     });
 }
 

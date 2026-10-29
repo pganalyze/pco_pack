@@ -239,7 +239,7 @@ impl Filter {
                 *self = Filter::F64(*r.start());
             }
             Filter::InclusionI64(v) if v.len() == 1 => {
-                let x = v.iter().next().unwrap().clone();
+                let x = *v.iter().next().unwrap();
                 *self = Filter::I64(x);
             }
             Filter::InclusionF64(v) if v.len() == 1 => {
@@ -251,11 +251,11 @@ impl Filter {
                 *self = Filter::String(x);
             }
             Filter::InclusionUuid(v) if v.len() == 1 => {
-                let u = v.iter().next().unwrap().clone();
+                let u = *v.iter().next().unwrap();
                 *self = Filter::Uuid(u);
             }
             Filter::InclusionBool(v) if v.len() == 1 => {
-                let b = v.iter().next().unwrap().clone();
+                let b = *v.iter().next().unwrap();
                 *self = Filter::Bool(b);
             }
             _ => {}

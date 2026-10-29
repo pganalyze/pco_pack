@@ -498,10 +498,10 @@ fn add_new_field_single() {
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].id, users_v1[0].id);
     assert_eq!(result[0].name, "Alice");
-    assert_eq!(result[0].active, false);
+    assert!(!result[0].active);
     assert_eq!(result[1].id, users_v1[1].id);
     assert_eq!(result[1].name, "Bob");
-    assert_eq!(result[1].active, false);
+    assert!(!result[1].active);
 }
 
 #[test]
@@ -596,7 +596,7 @@ fn add_new_fields_multiple() {
     assert_eq!(result[0].name, "Widget");
     assert_eq!(result[0].description, "");
     assert_eq!(result[0].price_cents, 2999);
-    assert_eq!(result[0].in_stock, false);
+    assert!(!result[0].in_stock);
     assert_eq!(result[0].category_id, None);
 }
 
@@ -651,10 +651,10 @@ fn add_new_bool_field_filter_on_old_data() {
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].id, users_v1[0].id);
     assert_eq!(result[0].name, "Alice");
-    assert_eq!(result[0].active, false);
+    assert!(!result[0].active);
     assert_eq!(result[1].id, users_v1[1].id);
     assert_eq!(result[1].name, "Bob");
-    assert_eq!(result[1].active, false);
+    assert!(!result[1].active);
 }
 
 #[test]

@@ -24,19 +24,11 @@ const _: () = {
         pub temperature: pco_pack::LazyReader<i64>,
         pub humidity: pco_pack::LazyReader<i64>,
     }
+    #[derive(Default)]
     pub struct Writer {
         pub device_id: Vec<i64>,
         pub temperature: Vec<i64>,
         pub humidity: Vec<i64>,
-    }
-    impl Default for Writer {
-        fn default() -> Self {
-            Self {
-                device_id: Default::default(),
-                temperature: Default::default(),
-                humidity: Default::default(),
-            }
-        }
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -117,7 +109,7 @@ const _: () = {
         ) -> pco_pack::anyhow::Result<Vec<u8>> {
             let mut groups: pco_pack::ahash::HashMap<(i64,), Vec<usize>> = Default::default();
             for (i, rec) in data.iter().enumerate() {
-                let key = (rec.device_id.clone(),);
+                let key = (rec.device_id,);
                 groups.entry(key).or_default().push(i);
             }
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
@@ -126,22 +118,22 @@ const _: () = {
                 let mut col_humidity: Vec<i64> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_temperature.push(rec.temperature.clone());
-                    col_humidity.push(rec.humidity.clone());
+                    col_temperature.push(rec.temperature);
+                    col_humidity.push(rec.humidity);
                 }
                 let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
                     col_temperature,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 let cb_humidity = <i64 as pco_pack::PcoSerde>::write(
                     col_humidity,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 records
                     .push(Chunk {
-                        device_id: key.0.clone(),
+                        device_id: key.0,
                         temperature: cb_temperature.into(),
                         humidity: cb_humidity.into(),
                     });
@@ -172,9 +164,7 @@ const _: () = {
             }
             let bl = {
                 let mut bl_buf = [0u8; 8];
-                for i in 0..8 {
-                    bl_buf[i] = buf[pos + i];
-                }
+                bl_buf.copy_from_slice(&buf[pos..pos + 8]);
                 u64::from_le_bytes(bl_buf) as usize
             };
             src.set_position(pos as u64 + 8);
@@ -196,7 +186,7 @@ const _: () = {
                 }
             };
             Ok(Reader {
-                device_id: rec.device_id.clone(),
+                device_id: rec.device_id,
                 temperature: pco_pack::LazyReader::new(
                     rec.temperature.into_vec(),
                     0u32,
@@ -236,15 +226,15 @@ const _: () = {
             if field == 0usize {
                 match filter {
                     pco_pack::Filter::I64(v) => {
-                        (reader.device_id != (*v as i64)).then(|| matches.fill(false));
+                        (reader.device_id != *v).then(|| matches.fill(false));
                     }
                     pco_pack::Filter::Range(range) => {
-                        let val = reader.device_id as i64;
+                        let val = reader.device_id;
                         (!(*range.start() <= val && val <= *range.end()))
                             .then(|| matches.fill(false));
                     }
                     pco_pack::Filter::InclusionI64(values) => {
-                        (!values.contains(&(reader.device_id as i64)))
+                        (!values.contains(&(reader.device_id)))
                             .then(|| matches.fill(false));
                     }
                     _ => {
@@ -277,16 +267,15 @@ const _: () = {
                     }
                     match filter {
                         pco_pack::Filter::I64(v) => {
-                            (reader.device_id != (*v as i64))
-                                .then(|| matches.fill(false));
+                            (reader.device_id != *v).then(|| matches.fill(false));
                         }
                         pco_pack::Filter::Range(range) => {
-                            let val = reader.device_id as i64;
+                            let val = reader.device_id;
                             (!(*range.start() <= val && val <= *range.end()))
                                 .then(|| matches.fill(false));
                         }
                         pco_pack::Filter::InclusionI64(values) => {
-                            (!values.contains(&(reader.device_id as i64)))
+                            (!values.contains(&(reader.device_id)))
                                 .then(|| matches.fill(false));
                         }
                         _ => {
@@ -296,14 +285,10 @@ const _: () = {
                             )
                         }
                     }
-                    return Ok(());
+                    Ok(())
                 }
-                1usize => {
-                    return reader.temperature.filter_nested(&path[1..], filter, matches);
-                }
-                2usize => {
-                    return reader.humidity.filter_nested(&path[1..], filter, matches);
-                }
+                1usize => reader.temperature.filter_nested(&path[1..], filter, matches),
+                2usize => reader.humidity.filter_nested(&path[1..], filter, matches),
                 _ => unreachable!("filter_nested called with invalid path {:?}", path),
             }
         }
@@ -396,7 +381,7 @@ const _: () = {
         fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
             let mut groups: pco_pack::ahash::HashMap<(i64,), Vec<usize>> = Default::default();
             for (i, rec) in data.iter().enumerate() {
-                let key = (rec.device_id.clone(),);
+                let key = (rec.device_id,);
                 groups.entry(key).or_default().push(i);
             }
             let mut result: Vec<Chunk> = Vec::new();
@@ -406,21 +391,21 @@ const _: () = {
                     let mut col_humidity: Vec<i64> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_temperature.push(rec.temperature.clone());
-                        col_humidity.push(rec.humidity.clone());
+                        col_temperature.push(rec.temperature);
+                        col_humidity.push(rec.humidity);
                     }
                     let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
                         col_temperature,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let cb_humidity = <i64 as pco_pack::PcoSerde>::write(
                         col_humidity,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let rec = Chunk {
-                        device_id: key.0.clone(),
+                        device_id: key.0,
                         temperature: cb_temperature.into(),
                         humidity: cb_humidity.into(),
                     };
@@ -533,7 +518,7 @@ const _: () = {
         row: usize,
     ) -> pco_pack::anyhow::Result<DeviceTelemetry> {
         Ok(DeviceTelemetry {
-            device_id: g.device_id.clone(),
+            device_id: g.device_id,
             temperature: g.temperature.pop_inner(row)?,
             humidity: g.humidity.pop_inner(row)?,
         })
@@ -578,7 +563,7 @@ const _: () = {
         /// Decompresses all payload columns and reconstructs the original rows.
         pub fn expand(self) -> pco_pack::anyhow::Result<Vec<DeviceTelemetry>> {
             let mut reader = Reader {
-                device_id: self.device_id.clone(),
+                device_id: self.device_id,
                 temperature: <pco_pack::LazyReader<
                     i64,
                 >>::new(self.temperature.into_vec(), 0u32, Default::default()),
@@ -608,7 +593,7 @@ const _: () = {
                 query,
             )?;
             let mut reader = Reader {
-                device_id: self.device_id.clone(),
+                device_id: self.device_id,
                 temperature: <pco_pack::LazyReader<
                     i64,
                 >>::new(
@@ -651,7 +636,7 @@ const _: () = {
             let mut results = Vec::with_capacity(matches.count_ones());
             let raw_chunks = matches.as_raw_slice();
             let mut base_row_index: usize = 0;
-            let total_chunks = (row_count + 63) / 64;
+            let total_chunks = row_count.div_ceil(64);
             for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
                 if chunk_idx >= total_chunks {
                     break;

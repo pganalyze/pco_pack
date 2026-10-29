@@ -84,16 +84,6 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
         })
         .collect();
 
-    // Column field names (for Default/Clone impls)
-    let cols_field_names: Vec<proc_macro2::TokenStream> = sg
-        .field_infos
-        .iter()
-        .map(|fi| {
-            let ident = &fi.ident;
-            quote! { #ident }
-        })
-        .collect();
-
     // Group::with_fields: keep index and timestamp fields (always required), replace payload
     // fields with empty LazyReader if not in `fields`.
     let decimals = sg.float_round.unwrap_or(0);
@@ -139,9 +129,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
         pub struct Chunk { #(#chunk_fields)* }
         #[derive(Clone, Default)]
         pub struct Reader { #(#reader_fields)* }
+        #[derive(Default)]
         pub struct Writer { #(#writer_fields)* }
-        impl Default for Writer {
-            fn default() -> Self { Self { #(#cols_field_names: Default::default(),)* } }
-        }
     }
 }

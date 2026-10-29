@@ -138,9 +138,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
                 if pos + 8 > buf.len() { return Err(pco_pack::anyhow::anyhow!("invalid data: expected length prefix")); }
                 let bl = {
                     let mut bl_buf = [0u8; 8];
-                    for i in 0..8 {
-                        bl_buf[i] = buf[pos + i];
-                    }
+                    bl_buf.copy_from_slice(&buf[pos..pos + 8]);
                     u64::from_le_bytes(bl_buf) as usize
                 };
                 src.set_position(pos as u64 + 8);

@@ -94,7 +94,7 @@ where
         let mut elem_rd = reader.inner_reader.clone();
         let mut offset: usize = 0;
         let mut matches_vec: Vec<bool> = Vec::with_capacity(lengths.len());
-        for (_, &len) in lengths.iter().enumerate() {
+        for &len in lengths.iter() {
             let row_len = len as usize;
             let mut matched = false;
             for i in 0..row_len {
@@ -126,7 +126,7 @@ where
         // Aggregate per-element matches into per-row (row matches if any element matched)
         let mut offset: usize = 0;
         let mut matches_vec: Vec<bool> = Vec::with_capacity(lengths.len());
-        for (_, &len) in lengths.iter().enumerate() {
+        for &len in lengths.iter() {
             let row_len = len as usize;
             let slice = flat_mb.get_range(offset..offset + row_len);
             matches_vec.push(slice.any());

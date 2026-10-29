@@ -1,6 +1,7 @@
 // Payload compression and Chunk wrapper construction.
 
 use super::super::parse::StructGen;
+use super::super::type_helpers::is_copy_scalar;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -17,7 +18,7 @@ impl StructGen {
                 let ty = &fi.ty;
                 let ci = syn::Ident::new(&format!("col_{}", ident), ident.span());
                 let cb = syn::Ident::new(&format!("cb_{}", ident), ident.span());
-                quote! { let #cb = <#ty as pco_pack::PcoSerde>::write(#ci, #decimals as u32, #time_round)?; }
+                quote! { let #cb = <#ty as pco_pack::PcoSerde>::write(#ci, #decimals, #time_round)?; }
             })
             .collect()
     }
@@ -29,7 +30,11 @@ impl StructGen {
         for (i, fi) in self.index_fields().iter().enumerate() {
             let ident = &fi.ident;
             let idx = proc_macro2::TokenTree::from(proc_macro2::Literal::usize_unsuffixed(i));
-            assigns.push(quote! { #ident: key.#idx.clone(), });
+            if is_copy_scalar(&fi.ty) {
+                assigns.push(quote! { #ident: key.#idx, });
+            } else {
+                assigns.push(quote! { #ident: key.#idx.clone(), });
+            }
         }
 
         if self.has_timestamp {

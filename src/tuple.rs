@@ -68,8 +68,8 @@ where
             _ => {}
         }
         if max_rows.is_none() {
-            let has_any = matches!(T1::validate_bounds(&mut reader.0)?, Some(_))
-                || matches!(T2::validate_bounds(&mut reader.1)?, Some(_));
+            let has_any =
+                T1::validate_bounds(&mut reader.0)?.is_some() || T2::validate_bounds(&mut reader.1)?.is_some();
             if has_any {
                 return Ok(Some(0));
             }
@@ -203,9 +203,9 @@ where
             _ => {}
         }
         if max_rows.is_none() {
-            let has_any = matches!(T1::validate_bounds(&mut reader.0)?, Some(_))
-                || matches!(T2::validate_bounds(&mut reader.1)?, Some(_))
-                || matches!(T3::validate_bounds(&mut reader.2)?, Some(_));
+            let has_any = T1::validate_bounds(&mut reader.0)?.is_some()
+                || T2::validate_bounds(&mut reader.1)?.is_some()
+                || T3::validate_bounds(&mut reader.2)?.is_some();
             if has_any {
                 return Ok(Some(0));
             }
@@ -367,10 +367,10 @@ where
             _ => {}
         }
         if max_rows.is_none() {
-            let has_any = matches!(T1::validate_bounds(&mut reader.0)?, Some(_))
-                || matches!(T2::validate_bounds(&mut reader.1)?, Some(_))
-                || matches!(T3::validate_bounds(&mut reader.2)?, Some(_))
-                || matches!(T4::validate_bounds(&mut reader.3)?, Some(_));
+            let has_any = T1::validate_bounds(&mut reader.0)?.is_some()
+                || T2::validate_bounds(&mut reader.1)?.is_some()
+                || T3::validate_bounds(&mut reader.2)?.is_some()
+                || T4::validate_bounds(&mut reader.3)?.is_some();
             if has_any {
                 return Ok(Some(0));
             }
@@ -572,11 +572,11 @@ where
             _ => {}
         }
         if max_rows.is_none() {
-            let has_any = matches!(T1::validate_bounds(&mut reader.0)?, Some(_))
-                || matches!(T2::validate_bounds(&mut reader.1)?, Some(_))
-                || matches!(T3::validate_bounds(&mut reader.2)?, Some(_))
-                || matches!(T4::validate_bounds(&mut reader.3)?, Some(_))
-                || matches!(T5::validate_bounds(&mut reader.4)?, Some(_));
+            let has_any = T1::validate_bounds(&mut reader.0)?.is_some()
+                || T2::validate_bounds(&mut reader.1)?.is_some()
+                || T3::validate_bounds(&mut reader.2)?.is_some()
+                || T4::validate_bounds(&mut reader.3)?.is_some()
+                || T5::validate_bounds(&mut reader.4)?.is_some();
             if has_any {
                 return Ok(Some(0));
             }
@@ -807,12 +807,12 @@ where
             _ => {}
         }
         if max_rows.is_none() {
-            let has_any = matches!(T1::validate_bounds(&mut reader.0)?, Some(_))
-                || matches!(T2::validate_bounds(&mut reader.1)?, Some(_))
-                || matches!(T3::validate_bounds(&mut reader.2)?, Some(_))
-                || matches!(T4::validate_bounds(&mut reader.3)?, Some(_))
-                || matches!(T5::validate_bounds(&mut reader.4)?, Some(_))
-                || matches!(T6::validate_bounds(&mut reader.5)?, Some(_));
+            let has_any = T1::validate_bounds(&mut reader.0)?.is_some()
+                || T2::validate_bounds(&mut reader.1)?.is_some()
+                || T3::validate_bounds(&mut reader.2)?.is_some()
+                || T4::validate_bounds(&mut reader.3)?.is_some()
+                || T5::validate_bounds(&mut reader.4)?.is_some()
+                || T6::validate_bounds(&mut reader.5)?.is_some();
             if has_any {
                 return Ok(Some(0));
             }

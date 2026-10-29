@@ -138,10 +138,10 @@ numeric_roundtrip!(
     ]
 );
 
-fn coerce_roundtrip<S: PcoPack, T: PcoPack>(data: Vec<S>, expected: Vec<T>)
+fn coerce_roundtrip<S, T>(data: Vec<S>, expected: Vec<T>)
 where
-    S: std::fmt::Debug + PartialEq,
-    T: std::fmt::Debug + PartialEq,
+    S: PcoPack + std::fmt::Debug + PartialEq,
+    T: PcoPack + std::fmt::Debug + PartialEq,
 {
     let buf = S::serialize(data).unwrap();
     let result = T::deserialize(&buf).unwrap();
