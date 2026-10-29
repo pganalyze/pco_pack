@@ -252,3 +252,58 @@ fn timeline_from_range_is_exact() {
     let inverted = Timeline::from_range(dt(5_000_000), dt(3_000_000));
     assert!(inverted.is_empty());
 }
+
+// Untrusted-input hardening: the stored invariant survives Deserialize, the
+// column reader, and inverted query windows.
+
+#[test]
+fn timeline_overlaps_inverted_window_is_false() {
+    let tl = Timeline::from_range(dt(0), dt(300));
+    assert!(tl.overlaps(dt(100), dt(200)));
+    assert!(!tl.overlaps(dt(200), dt(50)));
+}
+
+#[test]
+fn timeline_inverted_json_range_filter_matches_nothing() {
+    let data = vec![TimelineRow { seen_at: Timeline::from_range(dt(0), dt(300)), value: 1 }];
+    let bytes = TimelineRow::serialize(data).unwrap();
+    let result =
+        TimelineRow::filter_bytes(&bytes, serde_json::json!({"seen_at": {"start": 200, "end": 50}}), &[]).unwrap();
+    assert!(result.is_empty());
+}
+
+#[test]
+fn deserialize_drops_inverted_and_coalesces_garbage() {
+    let tl: Timeline = serde_json::from_str(r#"{"ranges":[[9,7],[5,6],[0,1],[4,8]]}"#).unwrap();
+    assert_eq!(tl.ranges(), &[(0i64, 1), (4, 8)]);
+    assert!(!tl.contains(dt(9)));
+}
+
+#[test]
+fn deserialize_roundtrip_preserves_clean_timeline() {
+    let mut tl = Timeline::default();
+    tl.add_range(Resolution::exact(), dt(1_000), dt(2_000));
+    tl.add_range(Resolution::exact(), dt(5_000), dt(6_000));
+    let json = serde_json::to_string(&tl).unwrap();
+    let back: Timeline = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, tl);
+}
+
+#[test]
+fn merge_survives_extreme_i64_bounds() {
+    let mut dst = Timeline::from_range(dt(0), dt(100));
+    dst.add_range(Resolution::exact(), dt(500), dt(600));
+    let span_all: Timeline = serde_json::from_str(&format!(r#"{{"ranges":[[{},{}]]}}"#, i64::MIN, i64::MAX)).unwrap();
+    dst.merge(&span_all);
+    assert_eq!(dst.ranges(), &[(i64::MIN, i64::MAX)]);
+
+    let mut dst = Timeline::from_range(dt(0), dt(100));
+    let tail: Timeline = serde_json::from_str(&format!(r#"{{"ranges":[[200,{}]]}}"#, i64::MAX)).unwrap();
+    dst.merge(&tail);
+    assert_eq!(dst.ranges(), &[(0, 100), (200, i64::MAX)]);
+
+    let mut dst = Timeline::from_range(dt(0), dt(100));
+    let head: Timeline = serde_json::from_str(&format!(r#"{{"ranges":[[{},-500]]}}"#, i64::MIN)).unwrap();
+    dst.merge(&head);
+    assert_eq!(dst.ranges(), &[(i64::MIN, -500), (0, 100)]);
+}
