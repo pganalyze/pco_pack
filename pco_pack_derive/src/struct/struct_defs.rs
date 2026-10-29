@@ -1,5 +1,5 @@
 use super::parse::{FieldRole, StructGen};
-use super::type_helpers::{extract_timeline_const_generic, is_timeline_type};
+use super::type_helpers::is_timeline_type;
 use quote::quote;
 
 /// Generate the struct definitions: wrapper (Chunk), group (Group), reader (Reader), and writer (Writer).
@@ -72,8 +72,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
             let ident = &fi.ident;
             let ct = if fi.role == FieldRole::Timestamp {
                 if is_timeline_type(&fi.ty) {
-                    let const_generic = extract_timeline_const_generic(&fi.ty);
-                    quote! { pco_pack::Timeline<#const_generic> }
+                    quote! { pco_pack::Timeline }
                 } else {
                     quote! { i64 }
                 }

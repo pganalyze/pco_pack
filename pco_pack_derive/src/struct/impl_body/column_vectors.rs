@@ -1,7 +1,7 @@
 // Column vector helpers used in the generated write() loop.
 
 use super::super::parse::{FieldRole, StructGen};
-use super::super::type_helpers::{extract_timeline_const_generic, is_json_move_type, is_timeline_type};
+use super::super::type_helpers::{is_json_move_type, is_timeline_type};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -14,8 +14,7 @@ impl StructGen {
                 let ident = &fi.ident;
                 let ci = syn::Ident::new(&format!("col_{}", ident), ident.span());
                 if fi.role == FieldRole::Timestamp && is_timeline_type(&fi.ty) {
-                    let const_generic = extract_timeline_const_generic(&fi.ty);
-                    quote! { let mut #ci: Vec<pco_pack::Timeline<#const_generic>> = Vec::new(); }
+                    quote! { let mut #ci: Vec<pco_pack::Timeline> = Vec::new(); }
                 } else {
                     let ty = &fi.ty;
                     quote! { let mut #ci: Vec<#ty> = Vec::new(); }

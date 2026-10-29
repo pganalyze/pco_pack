@@ -7,7 +7,7 @@
 //!
 //! Adds two `PcoPack Timeline` columns, the shape from `benches/timeline.rs`:
 //! snapshots whose non-timestamp payload is unchanged between ticks collapse
-//! into one row whose `Timeline<0>` holds every tick observed at, a lossless
+//! into one row whose exact `Timeline` holds every tick observed at, a lossless
 //! fold at exact us. The `Timeline 10s` column folds the same runs at the
 //! capture cadence: ticks land on whole seconds up to 10 s apart, so
 //! bucket-aligned ranges collapse each run to a single range, trading exact
@@ -145,7 +145,7 @@ impl From<&BackendSnapshot> for BackendSnapshotKey {
 pub struct BackendSnapshotTimeline {
     pub server_id: i64,
     pub granularity: i32,
-    pub collected_at: Timeline<0>,
+    pub collected_at: Timeline,
     pub database_id: Option<i64>,
     pub backend_pid: i32,
     pub backend_start: DateTime<Utc>,
@@ -161,8 +161,8 @@ pub struct BackendSnapshotTimeline {
     pub client_addr: SmolStr,
 }
 
-impl From<(&BackendSnapshotKey, &Timeline<0>)> for BackendSnapshotTimeline {
-    fn from((k, seen_at): (&BackendSnapshotKey, &Timeline<0>)) -> Self {
+impl From<(&BackendSnapshotKey, &Timeline)> for BackendSnapshotTimeline {
+    fn from((k, seen_at): (&BackendSnapshotKey, &Timeline)) -> Self {
         BackendSnapshotTimeline {
             server_id: k.server_id,
             granularity: k.granularity,
@@ -194,7 +194,7 @@ impl From<(&BackendSnapshotKey, &Timeline<0>)> for BackendSnapshotTimeline {
 pub struct BackendSnapshotTimeline10s {
     pub server_id: i64,
     pub granularity: i32,
-    pub collected_at: Timeline<10_000_000>,
+    pub collected_at: Timeline,
     pub database_id: Option<i64>,
     pub backend_pid: i32,
     pub backend_start: DateTime<Utc>,
@@ -210,8 +210,8 @@ pub struct BackendSnapshotTimeline10s {
     pub client_addr: SmolStr,
 }
 
-impl From<(&BackendSnapshotKey, &Timeline<10_000_000>)> for BackendSnapshotTimeline10s {
-    fn from((k, seen_at): (&BackendSnapshotKey, &Timeline<10_000_000>)) -> Self {
+impl From<(&BackendSnapshotKey, &Timeline)> for BackendSnapshotTimeline10s {
+    fn from((k, seen_at): (&BackendSnapshotKey, &Timeline)) -> Self {
         BackendSnapshotTimeline10s {
             server_id: k.server_id,
             granularity: k.granularity,
@@ -477,10 +477,10 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     // Timeline filters use range-overlap semantics and verify counts over
     // the deduped rows themselves: the same queries cover different
     // fractions of the two row sets.
-    let mut groups: HashMap<BackendSnapshotKey, Timeline<0>> = HashMap::new();
+    let mut groups: HashMap<BackendSnapshotKey, Timeline> = HashMap::new();
     for r in &rows {
         let ts = r.collected_at.timestamp_micros();
-        groups.entry(BackendSnapshotKey::from(r)).or_default().add(ts, ts);
+        groups.entry(BackendSnapshotKey::from(r)).or_default().add(0, ts);
     }
     let mut tl_rows: Vec<BackendSnapshotTimeline> = groups.iter().map(BackendSnapshotTimeline::from).collect();
     drop(groups);
@@ -518,10 +518,10 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     // ~3.5 singleton ranges into one aligned range. Counts verify over the
     // bucketed rows themselves, where edge buckets can reach tick-free
     // seconds.
-    let mut groups10: HashMap<BackendSnapshotKey, Timeline<10_000_000>> = HashMap::new();
+    let mut groups10: HashMap<BackendSnapshotKey, Timeline> = HashMap::new();
     for r in &rows {
         let ts = r.collected_at.timestamp_micros();
-        groups10.entry(BackendSnapshotKey::from(r)).or_default().add(ts, ts);
+        groups10.entry(BackendSnapshotKey::from(r)).or_default().add(10, ts);
     }
     let mut tl_rows10: Vec<BackendSnapshotTimeline10s> =
         groups10.iter().map(BackendSnapshotTimeline10s::from).collect();

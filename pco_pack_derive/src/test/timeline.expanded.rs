@@ -1,7 +1,7 @@
 use pco_pack::Timeline;
 pub struct TimeSeriesCompact {
     database_id: i64,
-    collected_at: Timeline<11_000_000>,
+    collected_at: Timeline,
     value: f64,
 }
 const _: () = {
@@ -26,14 +26,14 @@ const _: () = {
     #[derive(Clone, Default)]
     pub struct Reader {
         pub database_id: i64,
-        pub collected_at: pco_pack::LazyReader<Timeline<11_000_000>>,
+        pub collected_at: pco_pack::LazyReader<Timeline>,
         pub value: pco_pack::LazyReader<f64>,
         pub start_at: pco_pack::chrono::DateTime<pco_pack::chrono::Utc>,
         pub end_at: pco_pack::chrono::DateTime<pco_pack::chrono::Utc>,
     }
     pub struct Writer {
         pub database_id: Vec<i64>,
-        pub collected_at: Vec<pco_pack::Timeline<11_000_000>>,
+        pub collected_at: Vec<pco_pack::Timeline>,
         pub value: Vec<f64>,
     }
     impl Default for Writer {
@@ -180,13 +180,12 @@ const _: () = {
                     if let Some(last) = group_rows.last_mut() {
                         let same = last.value == data[idx].value;
                         if same {
-                            last.collected_at
-                                .extend_ranges(data[idx].collected_at.ranges());
+                            last.collected_at.merge(&data[idx].collected_at);
                             continue;
                         }
                     }
-                    let mut ts_timeline = pco_pack::Timeline::<11_000_000>::new();
-                    ts_timeline.extend_ranges(data[idx].collected_at.ranges());
+                    let mut ts_timeline = pco_pack::Timeline::default();
+                    ts_timeline.merge(&data[idx].collected_at);
                     group_rows
                         .push(Self {
                             collected_at: ts_timeline,
@@ -194,15 +193,13 @@ const _: () = {
                             value: data[idx].value.clone(),
                         });
                 }
-                let mut col_collected_at: Vec<pco_pack::Timeline<11_000_000>> = Vec::new();
+                let mut col_collected_at: Vec<pco_pack::Timeline> = Vec::new();
                 let mut col_value: Vec<f64> = Vec::new();
                 for rec in &group_rows {
                     col_collected_at.push(rec.collected_at.clone());
                     col_value.push(rec.value.clone());
                 }
-                let cb_collected_at = <Timeline<
-                    11_000_000,
-                > as pco_pack::PcoSerde>::write(
+                let cb_collected_at = <Timeline as pco_pack::PcoSerde>::write(
                     col_collected_at,
                     0u32 as u32,
                     Default::default(),
@@ -480,9 +477,10 @@ const _: () = {
                 }
                 "collected_at" => {
                     let sub_path = remainder.unwrap_or("");
-                    let mut filter = <Timeline<
-                        11_000_000,
-                    > as pco_pack::PcoFilter>::resolve_filter(sub_path, json)?;
+                    let mut filter = <Timeline as pco_pack::PcoFilter>::resolve_filter(
+                        sub_path,
+                        json,
+                    )?;
                     if sub_path.is_empty() {
                         filter.path[0] = 1usize;
                     } else {
@@ -536,13 +534,12 @@ const _: () = {
                     if let Some(last) = group_rows.last_mut() {
                         let same = last.value == data[idx].value;
                         if same {
-                            last.collected_at
-                                .extend_ranges(data[idx].collected_at.ranges());
+                            last.collected_at.merge(&data[idx].collected_at);
                             continue;
                         }
                     }
-                    let mut ts_timeline = pco_pack::Timeline::<11_000_000>::new();
-                    ts_timeline.extend_ranges(data[idx].collected_at.ranges());
+                    let mut ts_timeline = pco_pack::Timeline::default();
+                    ts_timeline.merge(&data[idx].collected_at);
                     group_rows
                         .push(Self {
                             collected_at: ts_timeline,
@@ -551,15 +548,13 @@ const _: () = {
                         });
                 }
                 for group_rows in group_rows.chunks(TimeSeriesCompact::CHUNK_SIZE) {
-                    let mut col_collected_at: Vec<pco_pack::Timeline<11_000_000>> = Vec::new();
+                    let mut col_collected_at: Vec<pco_pack::Timeline> = Vec::new();
                     let mut col_value: Vec<f64> = Vec::new();
                     for rec in group_rows {
                         col_collected_at.push(rec.collected_at.clone());
                         col_value.push(rec.value.clone());
                     }
-                    let cb_collected_at = <Timeline<
-                        11_000_000,
-                    > as pco_pack::PcoSerde>::write(
+                    let cb_collected_at = <Timeline as pco_pack::PcoSerde>::write(
                         col_collected_at,
                         0u32 as u32,
                         Default::default(),
@@ -705,7 +700,7 @@ const _: () = {
         }
     }
     #[inline]
-    fn timestamp_to_i64(v: &Timeline<11_000_000>) -> i64 {
+    fn timestamp_to_i64(v: &Timeline) -> i64 {
         v.start().unwrap_or(0)
     }
     #[inline]
@@ -767,7 +762,7 @@ const _: () = {
                 start_at: self.start_at,
                 end_at: self.end_at,
                 collected_at: <pco_pack::LazyReader<
-                    Timeline<11_000_000>,
+                    Timeline,
                 >>::new(self.collected_at.into_vec(), 0u32, Default::default()),
                 value: <pco_pack::LazyReader<
                     f64,
@@ -799,7 +794,7 @@ const _: () = {
                 start_at: self.start_at,
                 end_at: self.end_at,
                 collected_at: <pco_pack::LazyReader<
-                    Timeline<11_000_000>,
+                    Timeline,
                 >>::new(
                     if fields.is_empty() || fields.contains(&"collected_at") {
                         self.collected_at.to_vec()

@@ -1,7 +1,7 @@
 // Timestamp-related helpers for the generated impl body.
 
 use super::super::parse::{FieldRole, StructGen};
-use super::super::type_helpers::{extract_timeline_const_generic, is_timeline_type};
+use super::super::type_helpers::is_timeline_type;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -37,8 +37,6 @@ impl StructGen {
                 return quote! {};
             }
 
-            let const_generic = extract_timeline_const_generic(&timestamp_field.ty);
-
             // Only plain (payload) fields determine merge equality; index fields are constant within a group.
             let plain_fields: Vec<&super::super::parse::FieldInfo> =
                 self.field_infos.iter().filter(|fi| matches!(fi.role, FieldRole::Plain)).collect();
@@ -68,11 +66,11 @@ impl StructGen {
                     if !indices.is_empty() {
                         let first_idx = indices[0];
                         let mut current = Self {
-                            #rf_ident: pco_pack::Timeline::<#const_generic>::new(),
+                            #rf_ident: pco_pack::Timeline::default(),
                             #(#field_inits_from_idx)*
                         };
                         for &idx in indices.iter() {
-                            current.#rf_ident.extend_ranges(data[idx].#rf_ident.ranges());
+                            current.#rf_ident.merge(&data[idx].#rf_ident);
                         }
                         group_rows.push(current);
                     }
@@ -85,12 +83,12 @@ impl StructGen {
                         if let Some(last) = group_rows.last_mut() {
                             let same = #(#eq_exprs)&&*;
                             if same {
-                                last.#rf_ident.extend_ranges(data[idx].#rf_ident.ranges());
+                                last.#rf_ident.merge(&data[idx].#rf_ident);
                                 continue;
                             }
                         }
-                        let mut ts_timeline = pco_pack::Timeline::<#const_generic>::new();
-                        ts_timeline.extend_ranges(data[idx].#rf_ident.ranges());
+                        let mut ts_timeline = pco_pack::Timeline::default();
+                        ts_timeline.merge(&data[idx].#rf_ident);
                         group_rows.push(Self {
                             #rf_ident: ts_timeline,
                             #(#field_inits_from_idx)*
