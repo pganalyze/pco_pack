@@ -51,7 +51,7 @@ impl StructGen {
         if let Some(rf) = self.timestamp_field() {
             all_payload.push(rf);
         }
-        all_payload.extend(self.payload_fields().into_iter());
+        all_payload.extend(self.payload_fields());
         all_payload
     }
 

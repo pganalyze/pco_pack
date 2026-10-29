@@ -27,7 +27,8 @@ impl StructGen {
                                     let chunk_start = reader.start_at.timestamp_micros();
                                     let chunk_end = reader.end_at.timestamp_micros();
                                     if chunk_start > end || chunk_end < start {
-                                        return Ok(matches.fill(false)); // No match
+                                        matches.fill(false);
+                                        return Ok(()); // No match
                                     } else if chunk_start >= start && chunk_end <= end {
                                         return Ok(()); // Full match
                                     } else {
@@ -66,15 +67,13 @@ impl StructGen {
                                 return Ok(());
                             }
                             #inner
-                            return Ok(());
+                            Ok(())
                         }
                     });
                 }
                 FieldRole::Timestamp | FieldRole::Plain => {
                     result.push(quote! {
-                        #field_idx => {
-                            return reader.#ident.filter_nested(&path[1..], filter, matches);
-                        }
+                        #field_idx => reader.#ident.filter_nested(&path[1..], filter, matches),
                     });
                 }
             }
@@ -123,17 +122,30 @@ fn index_filter_match(fi: &FieldInfo) -> TokenStream2 {
         }
     } else {
         let ty = &fi.ty;
+        // Skipping the cast when the column is already i64 keeps the generated
+        // code free of identity casts while smaller columns still promote.
+        let ty_is_i64 = matches!(&fi.ty, syn::Type::Path(tp) if tp.path.is_ident("i64"));
+        let eq_cmp = if ty_is_i64 {
+            quote! { reader.#ident != *v }
+        } else {
+            quote! { reader.#ident != (*v as #ty) }
+        };
+        let range_val = if ty_is_i64 {
+            quote! { reader.#ident }
+        } else {
+            quote! { reader.#ident as i64 }
+        };
         quote! {
             match filter {
                 pco_pack::Filter::I64(v) => {
-                    (reader.#ident != (*v as #ty)).then(|| matches.fill(false));
+                    (#eq_cmp).then(|| matches.fill(false));
                 }
                 pco_pack::Filter::Range(range) => {
-                    let val = reader.#ident as i64;
+                    let val = #range_val;
                     (!(*range.start() <= val && val <= *range.end())).then(|| matches.fill(false));
                 }
                 pco_pack::Filter::InclusionI64(values) => {
-                    (!values.contains(&(reader.#ident as i64)))
+                    (!values.contains(&(#range_val)))
                         .then(|| matches.fill(false));
                 }
                 _ => unreachable!("unexpected filter type {:?} for field {}", filter, stringify!(#ident)),

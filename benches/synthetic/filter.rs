@@ -168,7 +168,7 @@ pub fn bench() {
     bench_filter(&mut rows, &bytes, "vec contains (vec_val has 5000)", 1_000, |b| {
         AllTypes::filter_bytes(b, json!({"vec_val": 5000}), &[]).unwrap().len()
     });
-    let vec_inclusion_values: Vec<_> = (0..10).map(|i| json!(i as i32 * 100)).collect();
+    let vec_inclusion_values: Vec<_> = (0..10).map(|i| json!(i * 100)).collect();
     let vec_inclusion_query = json!({"vec_val": vec_inclusion_values});
     bench_filter(&mut rows, &bytes, "vec contains inclusion (any of 10 values)", 10_000, |b| {
         AllTypes::filter_bytes(b, vec_inclusion_query.clone(), &[]).unwrap().len()

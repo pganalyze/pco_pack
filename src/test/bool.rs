@@ -34,11 +34,9 @@ fn bool_backward_compat_roundtrip() {
     let mut de_columns = bool::read(&mut cursor, 0, chrono::Duration::zero()).unwrap();
     let row_count = bool::validate_bounds(&mut de_columns).unwrap().unwrap();
     assert_eq!(row_count, data.len());
-    let mut row_idx: usize = 0;
-    for expected in &data {
+    for (row_idx, &expected) in data.iter().enumerate() {
         let val = bool::get(&mut de_columns, row_idx).unwrap().unwrap();
-        row_idx += 1;
-        assert_eq!(val, *expected);
+        assert_eq!(val, expected);
     }
 }
 
@@ -48,11 +46,9 @@ fn bool_backward_compat_pop_values() {
     let pco_buf = serialize_bool_pco_u16(data.clone());
     let mut cursor = std::io::Cursor::new(&pco_buf[..]);
     let mut de_columns = bool::read(&mut cursor, 0, chrono::Duration::zero()).unwrap();
-    let mut row_idx: usize = 0;
-    for expected in &data {
+    for (row_idx, &expected) in data.iter().enumerate() {
         let val = bool::get(&mut de_columns, row_idx).unwrap().unwrap();
-        row_idx += 1;
-        assert_eq!(val, *expected);
+        assert_eq!(val, expected);
     }
 }
 

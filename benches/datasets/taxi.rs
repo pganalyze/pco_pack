@@ -666,9 +666,9 @@ fn load() -> Vec<Trip> {
     let path = DS.ensure_downloaded();
     let file = std::fs::File::open(&path).unwrap();
     let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
-    let mut reader = builder.build().unwrap();
+    let reader = builder.build().unwrap();
     let mut rows = Vec::new();
-    while let Some(batch) = reader.next() {
+    for batch in reader {
         let batch = batch.unwrap();
         let license = lstr(&batch, "hvfhs_license_num");
         let dispatching = lstr(&batch, "dispatching_base_num");

@@ -1,7 +1,7 @@
 // Column vector helpers used in the generated write() loop.
 
 use super::super::parse::{FieldRole, StructGen};
-use super::super::type_helpers::{is_json_move_type, is_timeline_type};
+use super::super::type_helpers::{is_copy_scalar, is_json_move_type, is_timeline_type};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -39,6 +39,8 @@ impl StructGen {
                 let ci = syn::Ident::new(&format!("col_{}", ident), ident.span());
                 if take_json && is_json_move_type(&fi.ty) {
                     quote! { #ci.push(std::mem::take(&mut rec .#ident)); }
+                } else if is_copy_scalar(&fi.ty) {
+                    quote! { #ci.push(rec .#ident); }
                 } else {
                     quote! { #ci.push(rec .#ident.clone()); }
                 }
@@ -53,13 +55,21 @@ impl StructGen {
             quote! { () }
         } else if index_fields.len() == 1 {
             let ident = &index_fields[0].ident;
-            quote! { (rec .#ident.clone(),) }
+            if is_copy_scalar(&index_fields[0].ty) {
+                quote! { (rec .#ident, ) }
+            } else {
+                quote! { (rec .#ident.clone(),) }
+            }
         } else {
             let idents: Vec<TokenStream2> = index_fields
                 .iter()
                 .map(|fi| {
                     let ident = &fi.ident;
-                    quote! { rec .#ident.clone() }
+                    if is_copy_scalar(&fi.ty) {
+                        quote! { rec .#ident }
+                    } else {
+                        quote! { rec .#ident.clone() }
+                    }
                 })
                 .collect();
             quote! { (#(#idents),*) }

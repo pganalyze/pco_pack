@@ -174,23 +174,23 @@ impl PcoFilter for half::f16 {
         if !path.is_empty() {
             return Err(::anyhow::anyhow!("Field '{}' is a numeric leaf and cannot contain nested path", path));
         }
-        if let serde_json::Value::Object(obj) = json {
-            if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                let start = start_val
-                    .as_f64()
-                    .with_context(|| format!("Range start must be a number, got {}", json_type_name(start_val)))?;
-                let end = end_val
-                    .as_f64()
-                    .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
-                return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
-            }
+        if let serde_json::Value::Object(obj) = json
+            && let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end"))
+        {
+            let start = start_val
+                .as_f64()
+                .with_context(|| format!("Range start must be a number, got {}", json_type_name(start_val)))?;
+            let end = end_val
+                .as_f64()
+                .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
+            return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
         }
-        if let serde_json::Value::Array(arr) = json {
-            if !arr.is_empty() {
-                let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
-                if floats.len() == arr.len() {
-                    return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionF64(floats) });
-                }
+        if let serde_json::Value::Array(arr) = json
+            && !arr.is_empty()
+        {
+            let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
+            if floats.len() == arr.len() {
+                return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionF64(floats) });
             }
         }
         let value =
@@ -346,23 +346,23 @@ impl PcoFilter for f32 {
         if !path.is_empty() {
             return Err(::anyhow::anyhow!("Field '{}' is a numeric leaf and cannot contain nested path", path));
         }
-        if let serde_json::Value::Object(obj) = json {
-            if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                let start = start_val
-                    .as_f64()
-                    .with_context(|| format!("Range start must be a number, got {}", json_type_name(start_val)))?;
-                let end = end_val
-                    .as_f64()
-                    .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
-                return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
-            }
+        if let serde_json::Value::Object(obj) = json
+            && let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end"))
+        {
+            let start = start_val
+                .as_f64()
+                .with_context(|| format!("Range start must be a number, got {}", json_type_name(start_val)))?;
+            let end = end_val
+                .as_f64()
+                .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
+            return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
         }
-        if let serde_json::Value::Array(arr) = json {
-            if !arr.is_empty() {
-                let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
-                if floats.len() == arr.len() {
-                    return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionF64(floats) });
-                }
+        if let serde_json::Value::Array(arr) = json
+            && !arr.is_empty()
+        {
+            let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
+            if floats.len() == arr.len() {
+                return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionF64(floats) });
             }
         }
         let value =
@@ -509,23 +509,23 @@ impl PcoFilter for f64 {
         if !path.is_empty() && !path.chars().all(|c| c.is_ascii_digit()) {
             return Err(::anyhow::anyhow!("Field '{}' is a numeric leaf and cannot contain nested path", path));
         }
-        if let serde_json::Value::Object(obj) = json {
-            if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                let start = start_val
-                    .as_f64()
-                    .with_context(|| format!("Range start must be a number, got {}", json_type_name(start_val)))?;
-                let end = end_val
-                    .as_f64()
-                    .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
-                return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
-            }
+        if let serde_json::Value::Object(obj) = json
+            && let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end"))
+        {
+            let start = start_val
+                .as_f64()
+                .with_context(|| format!("Range start must be a number, got {}", json_type_name(start_val)))?;
+            let end = end_val
+                .as_f64()
+                .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
+            return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
         }
-        if let serde_json::Value::Array(arr) = json {
-            if !arr.is_empty() {
-                let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
-                if floats.len() == arr.len() {
-                    return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionF64(floats) });
-                }
+        if let serde_json::Value::Array(arr) = json
+            && !arr.is_empty()
+        {
+            let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
+            if floats.len() == arr.len() {
+                return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionF64(floats) });
             }
         }
         let value =

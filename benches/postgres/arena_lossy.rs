@@ -742,7 +742,7 @@ fn flatten_worker(map: &Map<String, Value>, parent_idx: u32, slot: u8) -> Option
     }
 
     let Some(Value::Number(n)) = map.get("Worker Number") else { return None };
-    let Some(number) = json_uint::<u8>(n) else { return None };
+    let number = json_uint::<u8>(n)?;
     node.worker_number = number;
     for (k, v) in map {
         match k.as_str() {

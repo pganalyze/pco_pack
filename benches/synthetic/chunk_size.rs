@@ -20,7 +20,7 @@ fn measure_peaks<T: PcoPack + Clone>(data: &[T]) -> (Vec<T::Chunk>, Vec<u8>, usi
     let buf = T::to_bytes(&chunks).unwrap();
     let (_, read_peak) = peak_bytes_of(|| {
         let c = T::from_bytes(&buf).unwrap();
-        let r = T::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+        let r = T::filter(&c, json!({}), &[] as &[&str]).unwrap();
         assert_eq!(r.len(), data.len());
     });
     (chunks, buf, write_peak, read_peak)
@@ -116,8 +116,8 @@ impl FromIndex for Small13 {
         Small13 {
             id: (i as i64 / 1000) * 1000,
             value: (i as f64) / 100.0 + ((i % 37) as f64) / 100.0,
-            active: i % 3 != 0,
-            tag: if i % 2 == 0 { Some((i % 500) as i32) } else { None },
+            active: !i.is_multiple_of(3),
+            tag: if i.is_multiple_of(2) { Some((i % 500) as i32) } else { None },
             color: (i % 4) as u8,
         }
     }
@@ -127,8 +127,8 @@ impl FromIndex for Small14 {
         Small14 {
             id: (i as i64 / 1000) * 1000,
             value: (i as f64) / 100.0 + ((i % 37) as f64) / 100.0,
-            active: i % 3 != 0,
-            tag: if i % 2 == 0 { Some((i % 500) as i32) } else { None },
+            active: !i.is_multiple_of(3),
+            tag: if i.is_multiple_of(2) { Some((i % 500) as i32) } else { None },
             color: (i % 4) as u8,
         }
     }
@@ -138,8 +138,8 @@ impl FromIndex for Small15 {
         Small15 {
             id: (i as i64 / 1000) * 1000,
             value: (i as f64) / 100.0 + ((i % 37) as f64) / 100.0,
-            active: i % 3 != 0,
-            tag: if i % 2 == 0 { Some((i % 500) as i32) } else { None },
+            active: !i.is_multiple_of(3),
+            tag: if i.is_multiple_of(2) { Some((i % 500) as i32) } else { None },
             color: (i % 4) as u8,
         }
     }
@@ -149,8 +149,8 @@ impl FromIndex for Small16 {
         Small16 {
             id: (i as i64 / 1000) * 1000,
             value: (i as f64) / 100.0 + ((i % 37) as f64) / 100.0,
-            active: i % 3 != 0,
-            tag: if i % 2 == 0 { Some((i % 500) as i32) } else { None },
+            active: !i.is_multiple_of(3),
+            tag: if i.is_multiple_of(2) { Some((i % 500) as i32) } else { None },
             color: (i % 4) as u8,
         }
     }
@@ -160,8 +160,8 @@ impl FromIndex for Small17 {
         Small17 {
             id: (i as i64 / 1000) * 1000,
             value: (i as f64) / 100.0 + ((i % 37) as f64) / 100.0,
-            active: i % 3 != 0,
-            tag: if i % 2 == 0 { Some((i % 500) as i32) } else { None },
+            active: !i.is_multiple_of(3),
+            tag: if i.is_multiple_of(2) { Some((i % 500) as i32) } else { None },
             color: (i % 4) as u8,
         }
     }
@@ -171,8 +171,8 @@ impl FromIndex for Small18 {
         Small18 {
             id: (i as i64 / 1000) * 1000,
             value: (i as f64) / 100.0 + ((i % 37) as f64) / 100.0,
-            active: i % 3 != 0,
-            tag: if i % 2 == 0 { Some((i % 500) as i32) } else { None },
+            active: !i.is_multiple_of(3),
+            tag: if i.is_multiple_of(2) { Some((i % 500) as i32) } else { None },
             color: (i % 4) as u8,
         }
     }
@@ -182,8 +182,8 @@ impl FromIndex for Small19 {
         Small19 {
             id: (i as i64 / 1000) * 1000,
             value: (i as f64) / 100.0 + ((i % 37) as f64) / 100.0,
-            active: i % 3 != 0,
-            tag: if i % 2 == 0 { Some((i % 500) as i32) } else { None },
+            active: !i.is_multiple_of(3),
+            tag: if i.is_multiple_of(2) { Some((i % 500) as i32) } else { None },
             color: (i % 4) as u8,
         }
     }
@@ -197,8 +197,8 @@ impl FromIndex for Medium13 {
             label: format!("item_{}", i % 500),
             value1: (i as f64) / 10.0 + ((i % 7) as f64) / 100.0,
             value2: ((i * 3) % 1000) as f32 / 10.0,
-            active: i % 5 != 0,
-            tag: if i % 3 == 0 { Some(i as i32 % 100) } else { None },
+            active: !i.is_multiple_of(5),
+            tag: if i.is_multiple_of(3) { Some(i as i32 % 100) } else { None },
             tags: (0..((i % 4) + 1)).map(|j| (i * 10 + j) as i32).collect(),
             color: (i % 8) as u8,
         }
@@ -211,8 +211,8 @@ impl FromIndex for Medium14 {
             label: format!("item_{}", i % 500),
             value1: (i as f64) / 10.0 + ((i % 7) as f64) / 100.0,
             value2: ((i * 3) % 1000) as f32 / 10.0,
-            active: i % 5 != 0,
-            tag: if i % 3 == 0 { Some(i as i32 % 100) } else { None },
+            active: !i.is_multiple_of(5),
+            tag: if i.is_multiple_of(3) { Some(i as i32 % 100) } else { None },
             tags: (0..((i % 4) + 1)).map(|j| (i * 10 + j) as i32).collect(),
             color: (i % 8) as u8,
         }
@@ -225,8 +225,8 @@ impl FromIndex for Medium15 {
             label: format!("item_{}", i % 500),
             value1: (i as f64) / 10.0 + ((i % 7) as f64) / 100.0,
             value2: ((i * 3) % 1000) as f32 / 10.0,
-            active: i % 5 != 0,
-            tag: if i % 3 == 0 { Some(i as i32 % 100) } else { None },
+            active: !i.is_multiple_of(5),
+            tag: if i.is_multiple_of(3) { Some(i as i32 % 100) } else { None },
             tags: (0..((i % 4) + 1)).map(|j| (i * 10 + j) as i32).collect(),
             color: (i % 8) as u8,
         }
@@ -239,8 +239,8 @@ impl FromIndex for Medium16 {
             label: format!("item_{}", i % 500),
             value1: (i as f64) / 10.0 + ((i % 7) as f64) / 100.0,
             value2: ((i * 3) % 1000) as f32 / 10.0,
-            active: i % 5 != 0,
-            tag: if i % 3 == 0 { Some(i as i32 % 100) } else { None },
+            active: !i.is_multiple_of(5),
+            tag: if i.is_multiple_of(3) { Some(i as i32 % 100) } else { None },
             tags: (0..((i % 4) + 1)).map(|j| (i * 10 + j) as i32).collect(),
             color: (i % 8) as u8,
         }
@@ -253,8 +253,8 @@ impl FromIndex for Medium17 {
             label: format!("item_{}", i % 500),
             value1: (i as f64) / 10.0 + ((i % 7) as f64) / 100.0,
             value2: ((i * 3) % 1000) as f32 / 10.0,
-            active: i % 5 != 0,
-            tag: if i % 3 == 0 { Some(i as i32 % 100) } else { None },
+            active: !i.is_multiple_of(5),
+            tag: if i.is_multiple_of(3) { Some(i as i32 % 100) } else { None },
             tags: (0..((i % 4) + 1)).map(|j| (i * 10 + j) as i32).collect(),
             color: (i % 8) as u8,
         }
@@ -267,8 +267,8 @@ impl FromIndex for Medium18 {
             label: format!("item_{}", i % 500),
             value1: (i as f64) / 10.0 + ((i % 7) as f64) / 100.0,
             value2: ((i * 3) % 1000) as f32 / 10.0,
-            active: i % 5 != 0,
-            tag: if i % 3 == 0 { Some(i as i32 % 100) } else { None },
+            active: !i.is_multiple_of(5),
+            tag: if i.is_multiple_of(3) { Some(i as i32 % 100) } else { None },
             tags: (0..((i % 4) + 1)).map(|j| (i * 10 + j) as i32).collect(),
             color: (i % 8) as u8,
         }
@@ -281,8 +281,8 @@ impl FromIndex for Medium19 {
             label: format!("item_{}", i % 500),
             value1: (i as f64) / 10.0 + ((i % 7) as f64) / 100.0,
             value2: ((i * 3) % 1000) as f32 / 10.0,
-            active: i % 5 != 0,
-            tag: if i % 3 == 0 { Some(i as i32 % 100) } else { None },
+            active: !i.is_multiple_of(5),
+            tag: if i.is_multiple_of(3) { Some(i as i32 % 100) } else { None },
             tags: (0..((i % 4) + 1)).map(|j| (i * 10 + j) as i32).collect(),
             color: (i % 8) as u8,
         }
@@ -297,14 +297,14 @@ impl FromIndex for Large13 {
             name: format!("record_{}_{}", i % 200, i % 5),
             score: (i as f64) / 50.0 + ((i % 11) as f64) / 100.0,
             weight: ((i * 7) % 1000) as f32 / 100.0,
-            active: i % 7 != 0,
+            active: !i.is_multiple_of(7),
             created_at: 1_700_000_000 + (i as i64 * 60),
-            updated_at: if i % 4 != 0 { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
+            updated_at: if !i.is_multiple_of(4) { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
             category_id: (i / 50) as i64,
-            tag: if i % 2 == 0 { Some(format!("tag_{}", i % 20)) } else { None },
+            tag: if i.is_multiple_of(2) { Some(format!("tag_{}", i % 20)) } else { None },
             tags: (0..((i % 6) + 1)).map(|j| (i * 7 + j * 3) as i32).collect(),
             scores: vec![(i as f64 / 10.0), ((i + 1) as f64 / 10.0)],
-            metadata: if i % 5 != 0 { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
+            metadata: if !i.is_multiple_of(5) { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
             color: (i % 16) as u8,
             priority: ((i % 10) + 1) as i16,
         }
@@ -317,14 +317,14 @@ impl FromIndex for Large14 {
             name: format!("record_{}_{}", i % 200, i % 5),
             score: (i as f64) / 50.0 + ((i % 11) as f64) / 100.0,
             weight: ((i * 7) % 1000) as f32 / 100.0,
-            active: i % 7 != 0,
+            active: !i.is_multiple_of(7),
             created_at: 1_700_000_000 + (i as i64 * 60),
-            updated_at: if i % 4 != 0 { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
+            updated_at: if !i.is_multiple_of(4) { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
             category_id: (i / 50) as i64,
-            tag: if i % 2 == 0 { Some(format!("tag_{}", i % 20)) } else { None },
+            tag: if i.is_multiple_of(2) { Some(format!("tag_{}", i % 20)) } else { None },
             tags: (0..((i % 6) + 1)).map(|j| (i * 7 + j * 3) as i32).collect(),
             scores: vec![(i as f64 / 10.0), ((i + 1) as f64 / 10.0)],
-            metadata: if i % 5 != 0 { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
+            metadata: if !i.is_multiple_of(5) { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
             color: (i % 16) as u8,
             priority: ((i % 10) + 1) as i16,
         }
@@ -337,14 +337,14 @@ impl FromIndex for Large15 {
             name: format!("record_{}_{}", i % 200, i % 5),
             score: (i as f64) / 50.0 + ((i % 11) as f64) / 100.0,
             weight: ((i * 7) % 1000) as f32 / 100.0,
-            active: i % 7 != 0,
+            active: !i.is_multiple_of(7),
             created_at: 1_700_000_000 + (i as i64 * 60),
-            updated_at: if i % 4 != 0 { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
+            updated_at: if !i.is_multiple_of(4) { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
             category_id: (i / 50) as i64,
-            tag: if i % 2 == 0 { Some(format!("tag_{}", i % 20)) } else { None },
+            tag: if i.is_multiple_of(2) { Some(format!("tag_{}", i % 20)) } else { None },
             tags: (0..((i % 6) + 1)).map(|j| (i * 7 + j * 3) as i32).collect(),
             scores: vec![(i as f64 / 10.0), ((i + 1) as f64 / 10.0)],
-            metadata: if i % 5 != 0 { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
+            metadata: if !i.is_multiple_of(5) { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
             color: (i % 16) as u8,
             priority: ((i % 10) + 1) as i16,
         }
@@ -357,14 +357,14 @@ impl FromIndex for Large16 {
             name: format!("record_{}_{}", i % 200, i % 5),
             score: (i as f64) / 50.0 + ((i % 11) as f64) / 100.0,
             weight: ((i * 7) % 1000) as f32 / 100.0,
-            active: i % 7 != 0,
+            active: !i.is_multiple_of(7),
             created_at: 1_700_000_000 + (i as i64 * 60),
-            updated_at: if i % 4 != 0 { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
+            updated_at: if !i.is_multiple_of(4) { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
             category_id: (i / 50) as i64,
-            tag: if i % 2 == 0 { Some(format!("tag_{}", i % 20)) } else { None },
+            tag: if i.is_multiple_of(2) { Some(format!("tag_{}", i % 20)) } else { None },
             tags: (0..((i % 6) + 1)).map(|j| (i * 7 + j * 3) as i32).collect(),
             scores: vec![(i as f64 / 10.0), ((i + 1) as f64 / 10.0)],
-            metadata: if i % 5 != 0 { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
+            metadata: if !i.is_multiple_of(5) { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
             color: (i % 16) as u8,
             priority: ((i % 10) + 1) as i16,
         }
@@ -377,14 +377,14 @@ impl FromIndex for Large17 {
             name: format!("record_{}_{}", i % 200, i % 5),
             score: (i as f64) / 50.0 + ((i % 11) as f64) / 100.0,
             weight: ((i * 7) % 1000) as f32 / 100.0,
-            active: i % 7 != 0,
+            active: !i.is_multiple_of(7),
             created_at: 1_700_000_000 + (i as i64 * 60),
-            updated_at: if i % 4 != 0 { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
+            updated_at: if !i.is_multiple_of(4) { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
             category_id: (i / 50) as i64,
-            tag: if i % 2 == 0 { Some(format!("tag_{}", i % 20)) } else { None },
+            tag: if i.is_multiple_of(2) { Some(format!("tag_{}", i % 20)) } else { None },
             tags: (0..((i % 6) + 1)).map(|j| (i * 7 + j * 3) as i32).collect(),
             scores: vec![(i as f64 / 10.0), ((i + 1) as f64 / 10.0)],
-            metadata: if i % 5 != 0 { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
+            metadata: if !i.is_multiple_of(5) { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
             color: (i % 16) as u8,
             priority: ((i % 10) + 1) as i16,
         }
@@ -397,14 +397,14 @@ impl FromIndex for Large18 {
             name: format!("record_{}_{}", i % 200, i % 5),
             score: (i as f64) / 50.0 + ((i % 11) as f64) / 100.0,
             weight: ((i * 7) % 1000) as f32 / 100.0,
-            active: i % 7 != 0,
+            active: !i.is_multiple_of(7),
             created_at: 1_700_000_000 + (i as i64 * 60),
-            updated_at: if i % 4 != 0 { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
+            updated_at: if !i.is_multiple_of(4) { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
             category_id: (i / 50) as i64,
-            tag: if i % 2 == 0 { Some(format!("tag_{}", i % 20)) } else { None },
+            tag: if i.is_multiple_of(2) { Some(format!("tag_{}", i % 20)) } else { None },
             tags: (0..((i % 6) + 1)).map(|j| (i * 7 + j * 3) as i32).collect(),
             scores: vec![(i as f64 / 10.0), ((i + 1) as f64 / 10.0)],
-            metadata: if i % 5 != 0 { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
+            metadata: if !i.is_multiple_of(5) { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
             color: (i % 16) as u8,
             priority: ((i % 10) + 1) as i16,
         }
@@ -417,14 +417,14 @@ impl FromIndex for Large19 {
             name: format!("record_{}_{}", i % 200, i % 5),
             score: (i as f64) / 50.0 + ((i % 11) as f64) / 100.0,
             weight: ((i * 7) % 1000) as f32 / 100.0,
-            active: i % 7 != 0,
+            active: !i.is_multiple_of(7),
             created_at: 1_700_000_000 + (i as i64 * 60),
-            updated_at: if i % 4 != 0 { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
+            updated_at: if !i.is_multiple_of(4) { Some(1_700_000_000 + (i as i64 * 60) + 300) } else { None },
             category_id: (i / 50) as i64,
-            tag: if i % 2 == 0 { Some(format!("tag_{}", i % 20)) } else { None },
+            tag: if i.is_multiple_of(2) { Some(format!("tag_{}", i % 20)) } else { None },
             tags: (0..((i % 6) + 1)).map(|j| (i * 7 + j * 3) as i32).collect(),
             scores: vec![(i as f64 / 10.0), ((i + 1) as f64 / 10.0)],
-            metadata: if i % 5 != 0 { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
+            metadata: if !i.is_multiple_of(5) { Some(vec![0xAB, 0xCD, (i % 256) as u8]) } else { None },
             color: (i % 16) as u8,
             priority: ((i % 10) + 1) as i16,
         }
@@ -499,7 +499,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Small13::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Small13::from_bytes(&buf).unwrap();
-            let r = Small13::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Small13::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         small_results.push(ChunkResult {
@@ -520,7 +520,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Small14::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Small14::from_bytes(&buf).unwrap();
-            let r = Small14::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Small14::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         small_results.push(ChunkResult {
@@ -541,7 +541,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Small15::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Small15::from_bytes(&buf).unwrap();
-            let r = Small15::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Small15::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         small_results.push(ChunkResult {
@@ -562,7 +562,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Small16::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Small16::from_bytes(&buf).unwrap();
-            let r = Small16::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Small16::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         small_results.push(ChunkResult {
@@ -583,7 +583,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Small17::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Small17::from_bytes(&buf).unwrap();
-            let r = Small17::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Small17::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         small_results.push(ChunkResult {
@@ -604,7 +604,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Small18::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Small18::from_bytes(&buf).unwrap();
-            let r = Small18::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Small18::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         small_results.push(ChunkResult {
@@ -625,7 +625,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Small19::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Small19::from_bytes(&buf).unwrap();
-            let r = Small19::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Small19::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         small_results.push(ChunkResult {
@@ -651,7 +651,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Medium13::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Medium13::from_bytes(&buf).unwrap();
-            let r = Medium13::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Medium13::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         medium_results.push(ChunkResult {
@@ -672,7 +672,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Medium14::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Medium14::from_bytes(&buf).unwrap();
-            let r = Medium14::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Medium14::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         medium_results.push(ChunkResult {
@@ -693,7 +693,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Medium15::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Medium15::from_bytes(&buf).unwrap();
-            let r = Medium15::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Medium15::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         medium_results.push(ChunkResult {
@@ -714,7 +714,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Medium16::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Medium16::from_bytes(&buf).unwrap();
-            let r = Medium16::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Medium16::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         medium_results.push(ChunkResult {
@@ -735,7 +735,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Medium17::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Medium17::from_bytes(&buf).unwrap();
-            let r = Medium17::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Medium17::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         medium_results.push(ChunkResult {
@@ -756,7 +756,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Medium18::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Medium18::from_bytes(&buf).unwrap();
-            let r = Medium18::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Medium18::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         medium_results.push(ChunkResult {
@@ -777,7 +777,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Medium19::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Medium19::from_bytes(&buf).unwrap();
-            let r = Medium19::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Medium19::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         medium_results.push(ChunkResult {
@@ -803,7 +803,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Large13::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Large13::from_bytes(&buf).unwrap();
-            let r = Large13::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Large13::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         large_results.push(ChunkResult {
@@ -824,7 +824,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Large14::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Large14::from_bytes(&buf).unwrap();
-            let r = Large14::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Large14::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         large_results.push(ChunkResult {
@@ -845,7 +845,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Large15::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Large15::from_bytes(&buf).unwrap();
-            let r = Large15::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Large15::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         large_results.push(ChunkResult {
@@ -866,7 +866,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Large16::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Large16::from_bytes(&buf).unwrap();
-            let r = Large16::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Large16::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         large_results.push(ChunkResult {
@@ -887,7 +887,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Large17::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Large17::from_bytes(&buf).unwrap();
-            let r = Large17::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Large17::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         large_results.push(ChunkResult {
@@ -908,7 +908,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Large18::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Large18::from_bytes(&buf).unwrap();
-            let r = Large18::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Large18::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         large_results.push(ChunkResult {
@@ -929,7 +929,7 @@ pub fn bench() {
         let serial_ms = min_ms(|| Large19::write(data.clone()));
         let deserial_ms = min_ms(|| {
             let c = Large19::from_bytes(&buf).unwrap();
-            let r = Large19::filter(&c, json!({}), &vec![] as &[&str]).unwrap();
+            let r = Large19::filter(&c, json!({}), &[] as &[&str]).unwrap();
             assert_eq!(r.len(), data.len());
         });
         large_results.push(ChunkResult {

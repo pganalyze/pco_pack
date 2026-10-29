@@ -15,11 +15,9 @@ fn round_json_value(value: &mut serde_json::Value, decimals: u32) {
     match value {
         serde_json::Value::Number(n) => {
             let integral = n.as_i64().is_some() && n.as_f64().unwrap_or(0.0).fract().abs() <= f64::EPSILON;
-            if !integral {
-                if let Some(f) = n.as_f64() {
-                    let rounded = ((f * scale).round()) / scale;
-                    *n = serde_json::Number::from_f64(rounded).unwrap_or_else(|| serde_json::Number::from(0));
-                }
+            if !integral && let Some(f) = n.as_f64() {
+                let rounded = ((f * scale).round()) / scale;
+                *n = serde_json::Number::from_f64(rounded).unwrap_or_else(|| serde_json::Number::from(0));
             }
         }
         serde_json::Value::Object(map) => {
@@ -137,20 +135,18 @@ impl super::PcoSerde for serde_json::Value {
             let compressed_start = 16usize;
             if compressed_start + block_len <= remaining.len() {
                 let compressed = &remaining[compressed_start..compressed_start + block_len];
-                match zstd::decode_all(Cursor::new(compressed)) {
-                    Ok(msgpack_bytes) => {
-                        src.set_position(saved_pos + compressed_start as u64 + block_len as u64);
-                        let fmt_ver = if msgpack_bytes.is_empty() { FORMAT_VERSION_CHUNKED } else { msgpack_bytes[0] };
-                        return Ok(JsonValueReader {
-                            msgpack_bytes: msgpack_bytes.into(),
-                            total_rows,
-                            format_version: fmt_ver,
-                            data_pos: 0,
-                            cached_chunk: None,
-                            cached_row_start: 0,
-                        });
-                    }
-                    Err(_) => {} // Decompress failed, try fallback
+                // Decompress failure falls through to the legacy fallback below.
+                if let Ok(msgpack_bytes) = zstd::decode_all(Cursor::new(compressed)) {
+                    src.set_position(saved_pos + compressed_start as u64 + block_len as u64);
+                    let fmt_ver = if msgpack_bytes.is_empty() { FORMAT_VERSION_CHUNKED } else { msgpack_bytes[0] };
+                    return Ok(JsonValueReader {
+                        msgpack_bytes: msgpack_bytes.into(),
+                        total_rows,
+                        format_version: fmt_ver,
+                        data_pos: 0,
+                        cached_chunk: None,
+                        cached_row_start: 0,
+                    });
                 }
             }
         }
@@ -211,7 +207,7 @@ impl super::PcoSerde for serde_json::Value {
                     let skipped_count = std::cmp::min(CHUNK_SIZE, reader.total_rows - current_row_offset);
                     current_row_offset += skipped_count;
                 }
-                return Ok(None);
+                Ok(None)
             }
             _ => {
                 // Flat msgpack fallback

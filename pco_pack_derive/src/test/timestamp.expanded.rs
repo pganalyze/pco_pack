@@ -31,19 +31,11 @@ const _: () = {
         pub start_at: pco_pack::chrono::DateTime<pco_pack::chrono::Utc>,
         pub end_at: pco_pack::chrono::DateTime<pco_pack::chrono::Utc>,
     }
+    #[derive(Default)]
     pub struct Writer {
         pub database_id: Vec<i64>,
         pub collected_at: Vec<i64>,
         pub value: Vec<f64>,
-    }
-    impl Default for Writer {
-        fn default() -> Self {
-            Self {
-                database_id: Default::default(),
-                collected_at: Default::default(),
-                value: Default::default(),
-            }
-        }
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -175,23 +167,23 @@ const _: () = {
                 let mut col_value: Vec<f64> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_collected_at.push(rec.collected_at.clone());
-                    col_database_id.push(rec.database_id.clone());
-                    col_value.push(rec.value.clone());
+                    col_collected_at.push(rec.collected_at);
+                    col_database_id.push(rec.database_id);
+                    col_value.push(rec.value);
                 }
                 let cb_collected_at = <i64 as pco_pack::PcoSerde>::write(
                     col_collected_at,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 let cb_database_id = <i64 as pco_pack::PcoSerde>::write(
                     col_database_id,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 let cb_value = <f64 as pco_pack::PcoSerde>::write(
                     col_value,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 let (g_start, g_end) = if !indices.is_empty() {
@@ -243,9 +235,7 @@ const _: () = {
             }
             let bl = {
                 let mut bl_buf = [0u8; 8];
-                for i in 0..8 {
-                    bl_buf[i] = buf[pos + i];
-                }
+                bl_buf.copy_from_slice(&buf[pos..pos + 8]);
                 u64::from_le_bytes(bl_buf) as usize
             };
             src.set_position(pos as u64 + 8);
@@ -320,7 +310,8 @@ const _: () = {
                         let chunk_start = reader.start_at.timestamp_micros();
                         let chunk_end = reader.end_at.timestamp_micros();
                         if chunk_start > end || chunk_end < start {
-                            return Ok(matches.fill(false));
+                            matches.fill(false);
+                            return Ok(());
                         } else if chunk_start >= start && chunk_end <= end {
                             return Ok(());
                         } else {
@@ -344,17 +335,9 @@ const _: () = {
             matches: &mut pco_pack::FilterMask,
         ) -> pco_pack::anyhow::Result<()> {
             match path[0] {
-                0usize => {
-                    return reader.database_id.filter_nested(&path[1..], filter, matches);
-                }
-                1usize => {
-                    return reader
-                        .collected_at
-                        .filter_nested(&path[1..], filter, matches);
-                }
-                2usize => {
-                    return reader.value.filter_nested(&path[1..], filter, matches);
-                }
+                0usize => reader.database_id.filter_nested(&path[1..], filter, matches),
+                1usize => reader.collected_at.filter_nested(&path[1..], filter, matches),
+                2usize => reader.value.filter_nested(&path[1..], filter, matches),
                 _ => unreachable!("filter_nested called with invalid path {:?}", path),
             }
         }
@@ -462,23 +445,23 @@ const _: () = {
                     let mut col_value: Vec<f64> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_collected_at.push(rec.collected_at.clone());
-                        col_database_id.push(rec.database_id.clone());
-                        col_value.push(rec.value.clone());
+                        col_collected_at.push(rec.collected_at);
+                        col_database_id.push(rec.database_id);
+                        col_value.push(rec.value);
                     }
                     let cb_collected_at = <i64 as pco_pack::PcoSerde>::write(
                         col_collected_at,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let cb_database_id = <i64 as pco_pack::PcoSerde>::write(
                         col_database_id,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let cb_value = <f64 as pco_pack::PcoSerde>::write(
                         col_value,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let (g_start, g_end) = if !group_indices.is_empty() {
@@ -592,7 +575,7 @@ const _: () = {
                 }
             }
             let ts_field = "collected_at";
-            let timestamp_requested = fields.iter().any(|&f| f == ts_field)
+            let timestamp_requested = fields.contains(&ts_field)
                 || query_fields.iter().any(|q| q.as_str() == ts_field);
             if timestamp_requested || fields.is_empty() {
                 all_fields.push("start_at");
@@ -758,7 +741,7 @@ const _: () = {
             let mut results = Vec::with_capacity(matches.count_ones());
             let raw_chunks = matches.as_raw_slice();
             let mut base_row_index: usize = 0;
-            let total_chunks = (row_count + 63) / 64;
+            let total_chunks = row_count.div_ceil(64);
             for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
                 if chunk_idx >= total_chunks {
                     break;

@@ -33,21 +33,12 @@ const _: () = {
         pub start_at: pco_pack::chrono::DateTime<pco_pack::chrono::Utc>,
         pub end_at: pco_pack::chrono::DateTime<pco_pack::chrono::Utc>,
     }
+    #[derive(Default)]
     pub struct Writer {
         pub database_id: Vec<i64>,
         pub granularity: Vec<i32>,
         pub collected_at: Vec<i64>,
         pub fingerprint: Vec<i64>,
-    }
-    impl Default for Writer {
-        fn default() -> Self {
-            Self {
-                database_id: Default::default(),
-                granularity: Default::default(),
-                collected_at: Default::default(),
-                fingerprint: Default::default(),
-            }
-        }
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -181,7 +172,7 @@ const _: () = {
         ) -> pco_pack::anyhow::Result<Vec<u8>> {
             let mut groups: pco_pack::ahash::HashMap<(i64, i32), Vec<usize>> = Default::default();
             for (i, rec) in data.iter().enumerate() {
-                let key = (rec.database_id.clone(), rec.granularity.clone());
+                let key = (rec.database_id, rec.granularity);
                 groups.entry(key).or_default().push(i);
             }
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
@@ -195,19 +186,19 @@ const _: () = {
                 let mut col_fingerprint: Vec<i64> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_collected_at.push(rec.collected_at.clone());
-                    col_fingerprint.push(rec.fingerprint.clone());
+                    col_collected_at.push(rec.collected_at);
+                    col_fingerprint.push(rec.fingerprint);
                 }
                 let cb_collected_at = <chrono::DateTime<
                     chrono::Utc,
                 > as pco_pack::PcoSerde>::write(
                     col_collected_at,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 let cb_fingerprint = <i64 as pco_pack::PcoSerde>::write(
                     col_fingerprint,
-                    0u32 as u32,
+                    0u32,
                     Default::default(),
                 )?;
                 let (g_start, g_end) = if !indices.is_empty() {
@@ -220,8 +211,8 @@ const _: () = {
                 };
                 records
                     .push(Chunk {
-                        database_id: key.0.clone(),
-                        granularity: key.1.clone(),
+                        database_id: key.0,
+                        granularity: key.1,
                         start_at: pco_pack::chrono::DateTime::<
                             pco_pack::chrono::Utc,
                         >::from_timestamp_micros(g_start)
@@ -260,9 +251,7 @@ const _: () = {
             }
             let bl = {
                 let mut bl_buf = [0u8; 8];
-                for i in 0..8 {
-                    bl_buf[i] = buf[pos + i];
-                }
+                bl_buf.copy_from_slice(&buf[pos..pos + 8]);
                 u64::from_le_bytes(bl_buf) as usize
             };
             src.set_position(pos as u64 + 8);
@@ -284,8 +273,8 @@ const _: () = {
                 }
             };
             Ok(Reader {
-                database_id: rec.database_id.clone(),
-                granularity: rec.granularity.clone(),
+                database_id: rec.database_id,
+                granularity: rec.granularity,
                 start_at: rec.start_at,
                 end_at: rec.end_at,
                 collected_at: pco_pack::LazyReader::new(
@@ -327,15 +316,15 @@ const _: () = {
             if field == 0usize {
                 match filter {
                     pco_pack::Filter::I64(v) => {
-                        (reader.database_id != (*v as i64)).then(|| matches.fill(false));
+                        (reader.database_id != *v).then(|| matches.fill(false));
                     }
                     pco_pack::Filter::Range(range) => {
-                        let val = reader.database_id as i64;
+                        let val = reader.database_id;
                         (!(*range.start() <= val && val <= *range.end()))
                             .then(|| matches.fill(false));
                     }
                     pco_pack::Filter::InclusionI64(values) => {
-                        (!values.contains(&(reader.database_id as i64)))
+                        (!values.contains(&(reader.database_id)))
                             .then(|| matches.fill(false));
                     }
                     _ => {
@@ -377,7 +366,8 @@ const _: () = {
                         let chunk_start = reader.start_at.timestamp_micros();
                         let chunk_end = reader.end_at.timestamp_micros();
                         if chunk_start > end || chunk_end < start {
-                            return Ok(matches.fill(false));
+                            matches.fill(false);
+                            return Ok(());
                         } else if chunk_start >= start && chunk_end <= end {
                             return Ok(());
                         } else {
@@ -407,16 +397,15 @@ const _: () = {
                     }
                     match filter {
                         pco_pack::Filter::I64(v) => {
-                            (reader.database_id != (*v as i64))
-                                .then(|| matches.fill(false));
+                            (reader.database_id != *v).then(|| matches.fill(false));
                         }
                         pco_pack::Filter::Range(range) => {
-                            let val = reader.database_id as i64;
+                            let val = reader.database_id;
                             (!(*range.start() <= val && val <= *range.end()))
                                 .then(|| matches.fill(false));
                         }
                         pco_pack::Filter::InclusionI64(values) => {
-                            (!values.contains(&(reader.database_id as i64)))
+                            (!values.contains(&(reader.database_id)))
                                 .then(|| matches.fill(false));
                         }
                         _ => {
@@ -426,7 +415,7 @@ const _: () = {
                             )
                         }
                     }
-                    return Ok(());
+                    Ok(())
                 }
                 1usize => {
                     if path.len() > 1 {
@@ -453,16 +442,10 @@ const _: () = {
                             )
                         }
                     }
-                    return Ok(());
+                    Ok(())
                 }
-                2usize => {
-                    return reader
-                        .collected_at
-                        .filter_nested(&path[1..], filter, matches);
-                }
-                3usize => {
-                    return reader.fingerprint.filter_nested(&path[1..], filter, matches);
-                }
+                2usize => reader.collected_at.filter_nested(&path[1..], filter, matches),
+                3usize => reader.fingerprint.filter_nested(&path[1..], filter, matches),
                 _ => unreachable!("filter_nested called with invalid path {:?}", path),
             }
         }
@@ -567,7 +550,7 @@ const _: () = {
         fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
             let mut groups: pco_pack::ahash::HashMap<(i64, i32), Vec<usize>> = Default::default();
             for (i, rec) in data.iter().enumerate() {
-                let key = (rec.database_id.clone(), rec.granularity.clone());
+                let key = (rec.database_id, rec.granularity);
                 groups.entry(key).or_default().push(i);
             }
             let mut result: Vec<Chunk> = Vec::new();
@@ -582,19 +565,19 @@ const _: () = {
                     let mut col_fingerprint: Vec<i64> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_collected_at.push(rec.collected_at.clone());
-                        col_fingerprint.push(rec.fingerprint.clone());
+                        col_collected_at.push(rec.collected_at);
+                        col_fingerprint.push(rec.fingerprint);
                     }
                     let cb_collected_at = <chrono::DateTime<
                         chrono::Utc,
                     > as pco_pack::PcoSerde>::write(
                         col_collected_at,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let cb_fingerprint = <i64 as pco_pack::PcoSerde>::write(
                         col_fingerprint,
-                        0u32 as u32,
+                        0u32,
                         Default::default(),
                     )?;
                     let (g_start, g_end) = if !group_indices.is_empty() {
@@ -608,8 +591,8 @@ const _: () = {
                         (0i64, 0i64)
                     };
                     let rec = Chunk {
-                        database_id: key.0.clone(),
-                        granularity: key.1.clone(),
+                        database_id: key.0,
+                        granularity: key.1,
                         start_at: pco_pack::chrono::DateTime::<
                             pco_pack::chrono::Utc,
                         >::from_timestamp_micros(g_start)
@@ -710,7 +693,7 @@ const _: () = {
                 }
             }
             let ts_field = "collected_at";
-            let timestamp_requested = fields.iter().any(|&f| f == ts_field)
+            let timestamp_requested = fields.contains(&ts_field)
                 || query_fields.iter().any(|q| q.as_str() == ts_field);
             if timestamp_requested || fields.is_empty() {
                 all_fields.push("start_at");
@@ -730,8 +713,8 @@ const _: () = {
     #[inline]
     fn expand_row(g: &mut Reader, row: usize) -> pco_pack::anyhow::Result<QueryStat> {
         Ok(QueryStat {
-            database_id: g.database_id.clone(),
-            granularity: g.granularity.clone(),
+            database_id: g.database_id,
+            granularity: g.granularity,
             collected_at: g.collected_at.pop_inner(row)?,
             fingerprint: g.fingerprint.pop_inner(row)?,
         })
@@ -776,8 +759,8 @@ const _: () = {
         /// Decompresses all payload columns and reconstructs the original rows.
         pub fn expand(self) -> pco_pack::anyhow::Result<Vec<QueryStat>> {
             let mut reader = Reader {
-                database_id: self.database_id.clone(),
-                granularity: self.granularity.clone(),
+                database_id: self.database_id,
+                granularity: self.granularity,
                 start_at: self.start_at,
                 end_at: self.end_at,
                 collected_at: <pco_pack::LazyReader<
@@ -809,8 +792,8 @@ const _: () = {
                 query,
             )?;
             let mut reader = Reader {
-                database_id: self.database_id.clone(),
-                granularity: self.granularity.clone(),
+                database_id: self.database_id,
+                granularity: self.granularity,
                 start_at: self.start_at,
                 end_at: self.end_at,
                 collected_at: <pco_pack::LazyReader<
@@ -855,7 +838,7 @@ const _: () = {
             let mut results = Vec::with_capacity(matches.count_ones());
             let raw_chunks = matches.as_raw_slice();
             let mut base_row_index: usize = 0;
-            let total_chunks = (row_count + 63) / 64;
+            let total_chunks = row_count.div_ceil(64);
             for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
                 if chunk_idx >= total_chunks {
                     break;

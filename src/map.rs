@@ -69,15 +69,15 @@ where
     let mut virtual_keys = reader.keys.clone();
     let mut offset: usize = 0;
     let mut matches_vec: Vec<bool> = Vec::with_capacity(num_entries);
-    for entry_idx in 0..num_entries {
-        let keys_in_entry = counts[entry_idx] as usize;
+    for &count in counts.iter() {
+        let keys_in_entry = count as usize;
         let mut matched = false;
         for i in 0..keys_in_entry {
-            if let Ok(Some(key)) = K::get(&mut virtual_keys, offset + i) {
-                if K::filter_match(&key, filter) {
-                    matched = true;
-                    break;
-                }
+            if let Ok(Some(key)) = K::get(&mut virtual_keys, offset + i)
+                && K::filter_match(&key, filter)
+            {
+                matched = true;
+                break;
             }
         }
         matches_vec.push(matched);

@@ -41,7 +41,7 @@ impl FilterMask {
     /// Returns the number of set bits (ones) in this mask.
     #[inline]
     pub fn count_ones(&self) -> usize {
-        self.0.count_ones() as usize
+        self.0.count_ones()
     }
 
     /// Returns a reference to the underlying raw u64 slice for low-level iteration over chunks.
@@ -139,7 +139,7 @@ impl FilterMask {
         if len == 0 {
             return Self(BitVec::new());
         }
-        let mut words = Vec::with_capacity((len + 63) / 64);
+        let mut words = Vec::with_capacity(len.div_ceil(64));
         for chunk in slice.chunks(64) {
             let mut word = 0u64;
             for (i, &b) in chunk.iter().enumerate() {

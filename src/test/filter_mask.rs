@@ -24,6 +24,8 @@ fn any_set_empty_mask() {
 }
 
 #[test]
+// The reversed 100..50 range is a deliberate edge case for this fn, not an iteration bug.
+#[allow(clippy::reversed_empty_ranges)]
 fn any_set_in_range_single_word() {
     let mut m = mask_from_words(&[0u64; 4], 256);
     m.0.get_mut(70..100).unwrap().fill(true);
@@ -177,7 +179,7 @@ fn from_bool_slice_len_matches_input() {
     let m = FilterMask::from_bool_slice(&[true, false, true]);
     assert_eq!(m.as_bitslice().len(), 3);
     assert_eq!(m.count_ones(), 2);
-    let m = FilterMask::from_bool_slice(&vec![true; 100]);
+    let m = FilterMask::from_bool_slice(&[true; 100]);
     assert_eq!(m.as_bitslice().len(), 100);
     assert_eq!(m.count_ones(), 100);
     assert_eq!(FilterMask::from_bool_slice(&[]).as_bitslice().len(), 0);

@@ -207,31 +207,28 @@ fn field_filter_type(ty: &Type) -> proc_macro2::TokenStream {
 
 /// Match the last segment of a type path and return its identifier.
 fn type_last_segment(ty: &Type) -> Option<String> {
-    if let Type::Path(tp) = ty {
-        if let Some(seg) = tp.path.segments.last() {
-            return Some(seg.ident.to_string());
-        }
+    if let Type::Path(tp) = ty
+        && let Some(seg) = tp.path.segments.last()
+    {
+        return Some(seg.ident.to_string());
     }
     None
 }
 
 /// Check if a type is chrono::DateTime<Utc>.
 fn is_datetime_utc(ty: &Type) -> bool {
-    if let Type::Path(tp) = ty {
-        if let Some(last_seg) = tp.path.segments.last() {
-            if last_seg.ident == "DateTime" {
-                if let syn::PathArguments::AngleBracketed(args) = &last_seg.arguments {
-                    // Check for <Utc> generic argument.
-                    for arg in &args.args {
-                        if let syn::GenericArgument::Type(Type::Path(gtp)) = arg {
-                            if let Some(seg) = gtp.path.segments.last() {
-                                if seg.ident == "Utc" {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
+    if let Type::Path(tp) = ty
+        && let Some(last_seg) = tp.path.segments.last()
+        && last_seg.ident == "DateTime"
+        && let syn::PathArguments::AngleBracketed(args) = &last_seg.arguments
+    {
+        // Check for <Utc> generic argument.
+        for arg in &args.args {
+            if let syn::GenericArgument::Type(Type::Path(gtp)) = arg
+                && let Some(seg) = gtp.path.segments.last()
+                && seg.ident == "Utc"
+            {
+                return true;
             }
         }
     }

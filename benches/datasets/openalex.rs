@@ -283,12 +283,12 @@ pub fn bench() {
     let proj_q = serde_json::json!({ "language": lang });
     let mut proj_truth: std::collections::HashMap<i32, (i64, u64)> = Default::default();
     for w in data.iter() {
-        if w.language.as_deref() == Some(lang.as_str()) {
-            if let Some(y) = w.publication_year {
-                let e = proj_truth.entry(y).or_default();
-                e.0 += w.cited_by_count as i64;
-                e.1 += 1;
-            }
+        if w.language.as_deref() == Some(lang.as_str())
+            && let Some(y) = w.publication_year
+        {
+            let e = proj_truth.entry(y).or_default();
+            e.0 += w.cited_by_count as i64;
+            e.1 += 1;
         }
     }
     let fold = |rows: &[Work]| -> std::collections::HashMap<i32, (i64, u64)> {
@@ -531,7 +531,7 @@ impl From<&Work> for WorkF {
             doi: r.doi.clone(),
             title: r.title.clone(),
             publication_year: r.publication_year,
-            publication_date: r.publication_date.clone(),
+            publication_date: r.publication_date,
             language: r.language.clone(),
             work_type: r.work_type,
             cited_by_count: r.cited_by_count,
@@ -546,8 +546,8 @@ impl From<&Work> for WorkF {
             topics: r.topics.iter().map(TopicF::from).collect(),
             keywords: r.keywords.iter().map(KwF::from).collect(),
             abstract_inverted_index: r.abstract_inverted_index.clone(),
-            updated_date: r.updated_date.clone(),
-            created_date: r.created_date.clone(),
+            updated_date: r.updated_date,
+            created_date: r.created_date,
         }
     }
 }
@@ -1137,7 +1137,7 @@ impl From<&Work> for WorkVx {
             doi: r.doi.clone(),
             title: r.title.clone(),
             publication_year: r.publication_year,
-            publication_date: r.publication_date.clone(),
+            publication_date: r.publication_date,
             language: r.language.as_deref().map(str::to_string),
             work_type: work_type_str(&r.work_type).to_string(),
             cited_by_count: r.cited_by_count,
@@ -1152,8 +1152,8 @@ impl From<&Work> for WorkVx {
             topics: r.topics.iter().map(TopicVx::from).collect(),
             keywords: r.keywords.iter().map(KwVx::from).collect(),
             abstract_inverted_index: abstract_kv(&r.abstract_inverted_index),
-            updated_date: r.updated_date.clone(),
-            created_date: r.created_date.clone(),
+            updated_date: r.updated_date,
+            created_date: r.created_date,
         }
     }
 }
@@ -1423,7 +1423,7 @@ impl From<WorkJson> for Work {
             is_oa: j.open_access.is_oa,
             oa_url: j.open_access.oa_url,
             source: source.as_ref().map(|s| s.display_name.clone()),
-            source_type: source.as_ref().and_then(|s| s.source_type.as_deref()).map(|t| source_type(t)),
+            source_type: source.as_ref().and_then(|s| s.source_type.as_deref()).map(source_type),
             authorships: j.authorships.into_iter().map(Authorship::from).collect(),
             topics: j.topics.into_iter().map(Topic::from).collect(),
             keywords: j.keywords.into_iter().map(Kw::from).collect(),

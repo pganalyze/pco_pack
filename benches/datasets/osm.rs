@@ -786,7 +786,8 @@ fn load() -> (Vec<Node>, Vec<Way>, Vec<Relation>, Stats) {
                         stats.lat_max = stats.lat_max.max(lat);
                         stats.lon_min = stats.lon_min.min(lon);
                         stats.lon_max = stats.lon_max.max(lon);
-                        if lat >= AUSTRIA_LAT0 && lat <= AUSTRIA_LAT1 && lon >= AUSTRIA_LON0 && lon <= AUSTRIA_LON1 {
+                        if (AUSTRIA_LAT0..=AUSTRIA_LAT1).contains(&lat) && (AUSTRIA_LON0..=AUSTRIA_LON1).contains(&lon)
+                        {
                             stats.lat_bulk_min = stats.lat_bulk_min.min(lat);
                             stats.lat_bulk_max = stats.lat_bulk_max.max(lat);
                             stats.lon_bulk_min = stats.lon_bulk_min.min(lon);

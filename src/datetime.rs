@@ -102,34 +102,31 @@ impl PcoFilter for chrono::DateTime<chrono::Utc> {
             return Err(::anyhow::anyhow!("Field '{}' is a timestamp leaf and cannot contain nested path", path));
         }
 
-        if let serde_json::Value::Object(obj) = json {
-            if let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end")) {
-                let start = parse_datetime_value(start_val, &sub_label(path, "start"))?;
-                let end = parse_datetime_value(end_val, &sub_label(path, "end"))?;
-                return Ok(ResolvedFilter { path: vec![0], filter: Filter::Range(start..=end) });
-            }
+        if let serde_json::Value::Object(obj) = json
+            && let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end"))
+        {
+            let start = parse_datetime_value(start_val, &sub_label(path, "start"))?;
+            let end = parse_datetime_value(end_val, &sub_label(path, "end"))?;
+            return Ok(ResolvedFilter { path: vec![0], filter: Filter::Range(start..=end) });
         }
 
-        if let serde_json::Value::Array(arr) = json {
-            if !arr.is_empty() {
-                let mut values = Vec::with_capacity(arr.len());
-                for (i, v) in arr.iter().enumerate() {
-                    match parse_datetime_value(v, &format!("{}[{}]", path, i)) {
-                        Ok(val) => values.push(val),
-                        Err(_) => {
-                            return Ok(ResolvedFilter {
-                                path: vec![0],
-                                filter: Filter::InclusionI64(Default::default()),
-                            });
-                        }
+        if let serde_json::Value::Array(arr) = json
+            && !arr.is_empty()
+        {
+            let mut values = Vec::with_capacity(arr.len());
+            for (i, v) in arr.iter().enumerate() {
+                match parse_datetime_value(v, &format!("{}[{}]", path, i)) {
+                    Ok(val) => values.push(val),
+                    Err(_) => {
+                        return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionI64(Default::default()) });
                     }
                 }
-                if !values.is_empty() {
-                    return Ok(ResolvedFilter {
-                        path: vec![0],
-                        filter: Filter::InclusionI64(values.into_iter().collect()),
-                    });
-                }
+            }
+            if !values.is_empty() {
+                return Ok(ResolvedFilter {
+                    path: vec![0],
+                    filter: Filter::InclusionI64(values.into_iter().collect()),
+                });
             }
         }
 
@@ -173,19 +170,19 @@ pub(crate) fn parse_datetime_value(json: &serde_json::Value, field_path: &str) -
 impl CoercibleNumber for chrono::DateTime<chrono::Utc> {
     fn coerce_from(filter: &Filter) -> Self {
         if let Filter::I64(val) = filter {
-            Self::from_timestamp_micros(*val).unwrap_or_else(|| if *val < 0 { Self::MIN_UTC } else { Self::MAX_UTC })
+            Self::from_timestamp_micros(*val).unwrap_or(if *val < 0 { Self::MIN_UTC } else { Self::MAX_UTC })
         } else {
             unreachable!("unsupported filter variant {:?} for DateTime", filter)
         }
     }
 
     fn coerce_from_int(val: i64) -> Self {
-        Self::from_timestamp_micros(val).unwrap_or_else(|| if val < 0 { Self::MIN_UTC } else { Self::MAX_UTC })
+        Self::from_timestamp_micros(val).unwrap_or(if val < 0 { Self::MIN_UTC } else { Self::MAX_UTC })
     }
 
     fn coerce_from_float(val: f64) -> Self {
         let micros = val as i64;
-        Self::from_timestamp_micros(micros).unwrap_or_else(|| if micros < 0 { Self::MIN_UTC } else { Self::MAX_UTC })
+        Self::from_timestamp_micros(micros).unwrap_or(if micros < 0 { Self::MIN_UTC } else { Self::MAX_UTC })
     }
 }
 

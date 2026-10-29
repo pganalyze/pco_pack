@@ -2,10 +2,10 @@
 /// Returns `Some(true)` when the ident matches, `Some(false)` otherwise,
 /// or `None` if the type is not a `TypePath`.
 fn type_last_segment_matches(ty: &syn::Type, expected: &str) -> Option<bool> {
-    if let syn::Type::Path(tp) = ty {
-        if let Some(seg) = tp.path.segments.last() {
-            return Some(seg.ident == expected);
-        }
+    if let syn::Type::Path(tp) = ty
+        && let Some(seg) = tp.path.segments.last()
+    {
+        return Some(seg.ident == expected);
     }
     None
 }
@@ -52,16 +52,45 @@ pub fn is_json_move_type(ty: &syn::Type) -> bool {
     if is_json_type(ty) {
         return true;
     }
-    if let syn::Type::Path(tp) = ty {
-        if let Some(seg) = tp.path.segments.last() {
-            if matches!(seg.ident.to_string().as_str(), "Option" | "Vec") {
-                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                    if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
-                        return is_json_type(inner);
-                    }
-                }
-            }
-        }
+    if let syn::Type::Path(tp) = ty
+        && let Some(seg) = tp.path.segments.last()
+        && matches!(seg.ident.to_string().as_str(), "Option" | "Vec")
+        && let syn::PathArguments::AngleBracketed(args) = &seg.arguments
+        && let Some(syn::GenericArgument::Type(inner)) = args.args.first()
+    {
+        return is_json_type(inner);
     }
     false
+}
+
+/// Check if the type is a `Copy` scalar. Templates use this to read such fields
+/// by value instead of emitting a `.clone()`. Unknown shapes conservatively
+/// fall back to `false` so cloning stays available for real `Clone` types.
+pub fn is_copy_scalar(ty: &syn::Type) -> bool {
+    match ty {
+        syn::Type::Path(tp) => match tp.path.segments.last() {
+            Some(seg) => matches!(
+                seg.ident.to_string().as_str(),
+                "i8" | "i16"
+                    | "i32"
+                    | "i64"
+                    | "isize"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+                    | "usize"
+                    | "f32"
+                    | "f64"
+                    | "bool"
+                    | "char"
+                    | "f16"
+                    | "DateTime"
+                    | "Uuid"
+                    | "TimeDelta"
+            ),
+            None => false,
+        },
+        _ => false,
+    }
 }

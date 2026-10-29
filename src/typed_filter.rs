@@ -153,7 +153,7 @@ fn truncate_to_micros(v: ::chrono::DateTime<::chrono::Utc>) -> ::chrono::DateTim
 
 /// Reconstructs a timestamp from microseconds since epoch.
 fn from_micros(micros: i64) -> ::chrono::DateTime<::chrono::Utc> {
-    ::chrono::DateTime::<::chrono::Utc>::from_timestamp_micros(micros).unwrap_or_else(|| {
+    ::chrono::DateTime::<::chrono::Utc>::from_timestamp_micros(micros).unwrap_or({
         if micros < 0 {
             ::chrono::DateTime::<::chrono::Utc>::MIN_UTC
         } else {

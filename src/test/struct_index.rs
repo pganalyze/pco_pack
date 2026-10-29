@@ -38,7 +38,7 @@ fn test_per_chunk_serialization_with_index() {
     assert_eq!(chunks.len(), 3);
 
     for chunk in &chunks {
-        assert!(!SensorReading::to_bytes(&[chunk.clone()]).unwrap().is_empty());
+        assert!(!SensorReading::to_bytes(std::slice::from_ref(chunk)).unwrap().is_empty());
     }
 
     let bytes = SensorReading::serialize(data.clone()).unwrap();

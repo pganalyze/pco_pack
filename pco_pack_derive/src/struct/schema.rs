@@ -52,28 +52,15 @@ impl StructGen {
             let idx = proc_macro2::Literal::usize_unsuffixed(0);
             let ty = &fi.ty;
 
-            if fi.role == FieldRole::Timestamp {
-                quote! {
-                    let sub_path = remainder.unwrap_or("");
-                    let mut filter = <#ty as pco_pack::PcoFilter>::resolve_filter(sub_path, json)?;
-                    if sub_path.is_empty() {
-                        filter.path[0] = #idx;
-                    } else {
-                        filter.path.insert(0, #idx);
-                    }
-                    Ok(filter)
+            quote! {
+                let sub_path = remainder.unwrap_or("");
+                let mut filter = <#ty as pco_pack::PcoFilter>::resolve_filter(sub_path, json)?;
+                if sub_path.is_empty() {
+                    filter.path[0] = #idx;
+                } else {
+                    filter.path.insert(0, #idx);
                 }
-            } else {
-                quote! {
-                    let sub_path = remainder.unwrap_or("");
-                    let mut filter = <#ty as pco_pack::PcoFilter>::resolve_filter(sub_path, json)?;
-                    if sub_path.is_empty() {
-                        filter.path[0] = #idx;
-                    } else {
-                        filter.path.insert(0, #idx);
-                    }
-                    Ok(filter)
-                }
+                Ok(filter)
             }
         } else {
             quote! {

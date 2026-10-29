@@ -107,11 +107,11 @@ pub fn bench() {
 
         time_rows.push(TimeRow {
             uniqueness: format!("{}%", pct),
-            timeline_ms: format_ms(tl_serial_ms as f64),
-            datetime_ms: format_ms(dt_serial_ms as f64),
-            round_ms: format_ms(round_serial_ms as f64),
-            tl_vs_dt_ratio: format!("{:.1}x", dt_serial_ms as f64 / tl_serial_ms as f64),
-            tr_vs_dt_ratio: format!("{:.2}x", dt_serial_ms as f64 / round_serial_ms as f64),
+            timeline_ms: format_ms(tl_serial_ms),
+            datetime_ms: format_ms(dt_serial_ms),
+            round_ms: format_ms(round_serial_ms),
+            tl_vs_dt_ratio: format!("{:.1}x", dt_serial_ms / tl_serial_ms),
+            tr_vs_dt_ratio: format!("{:.2}x", dt_serial_ms / round_serial_ms),
         });
 
         size_rows.push(SizeRow {
