@@ -218,26 +218,11 @@ impl Timeline {
     }
 
     /// Build a Timeline from raw decoded bounds, enforcing the stored invariant.
-    /// PcoPack-written data is already clean, so the scan short-circuits and no
-    /// sort or coalesce runs; sanitizing here is what lets `merge` trust its input.
+    /// Malformed data cannot break the sorted invariant that `merge` relies on.
     fn coalesced(mut ranges: Vec<(i64, i64)>) -> Self {
         ranges.retain(|&(s, e)| s <= e);
         if !Self::is_clean(&ranges) {
-            ranges.sort_unstable_by_key(|&(s, _)| s);
-            let mut merged: Vec<(i64, i64)> = Vec::with_capacity(ranges.len());
-            for (s, e) in ranges {
-                let append = match merged.last_mut() {
-                    Some(last) if s <= last.1.saturating_add(1) => {
-                        last.1 = last.1.max(e);
-                        false
-                    }
-                    _ => true,
-                };
-                if append {
-                    merged.push((s, e));
-                }
-            }
-            ranges = merged;
+            ranges = Self::sorted_folded(ranges);
         }
         Self { ranges }
     }
@@ -245,6 +230,25 @@ impl Timeline {
     /// True when ranges are sorted and pairwise disjoint (adjacent touches are fine).
     fn is_clean(ranges: &[(i64, i64)]) -> bool {
         ranges.windows(2).all(|w| w[0].1 < w[1].0)
+    }
+
+    /// Sort bounds and coalesce overlaps and adjacencies into a canonical Vec.
+    fn sorted_folded(mut ranges: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
+        ranges.sort_unstable_by_key(|&(s, _)| s);
+        let mut merged: Vec<(i64, i64)> = Vec::with_capacity(ranges.len());
+        for (s, e) in ranges {
+            let append = match merged.last_mut() {
+                Some(last) if s <= last.1.saturating_add(1) => {
+                    last.1 = last.1.max(e);
+                    false
+                }
+                _ => true,
+            };
+            if append {
+                merged.push((s, e));
+            }
+        }
+        merged
     }
 
     /// Floor a timestamp to the nearest bucket boundary.
@@ -264,7 +268,8 @@ impl Timeline {
         // A range (s, e) overlaps/adjacent with (start, end) when s <= end + 1 && start <= e + 1.
         // Saturating keeps i64::MIN/i64::MAX bounds surviving deserialization from
         // overflowing in debug or silently wrapping in release.
-        let idx = self.ranges.binary_search_by(|&(_, r_end)| r_end.cmp(&start.saturating_sub(1)));
+        let key = start.saturating_sub(1);
+        let idx = self.ranges.binary_search_by(|&(_, r_end)| r_end.cmp(&key));
         let i = idx.unwrap_or_else(|e| e);
 
         // Merge all overlapping/adjacent ranges.
@@ -305,12 +310,23 @@ impl PcoSerde for Timeline {
         }
         reader.cached_offset = offset + target_len;
         reader.length_idx = index + 1;
+        // Validate inline while decoding: a separate retain+scan pass over
+        // multi-range rows cost ~5% on the reduce and filter benches.
         let mut ranges = Vec::with_capacity(target_len);
+        let mut clean = true;
         for i in 0..target_len {
             let (s, e) = <(i64, i64)>::get(&mut reader.inner_reader, offset + i)?.context("inner missing")?;
-            ranges.push((s, e));
+            if s <= e {
+                if clean && ranges.last().is_some_and(|&(_, prev_end)| prev_end >= s) {
+                    clean = false;
+                }
+                ranges.push((s, e));
+            }
         }
-        Ok(Some(Timeline::coalesced(ranges)))
+        if !clean {
+            ranges = Self::sorted_folded(ranges);
+        }
+        Ok(Some(Timeline { ranges }))
     }
 }
 
