@@ -503,6 +503,49 @@ fn typed_filter_inclusion_used_in_filter_bytes() {
 }
 
 #[test]
+fn typed_filter_empty_inclusion_index_matches_no_rows() {
+    let now = Utc::now();
+    let data = vec![
+        Sensor { device_id: 1, collected_at: now, temperature: 23.0 },
+        Sensor { device_id: 2, collected_at: now, temperature: 42.0 },
+        Sensor { device_id: 3, collected_at: now, temperature: 55.0 },
+    ];
+
+    let bytes = Sensor::serialize(data).unwrap();
+
+    let filter = SensorFilter::new(Vec::<i64>::new(), (now - Duration::hours(1))..=now + Duration::hours(1));
+
+    let results = Sensor::filter_bytes(&bytes, filter, &[]).unwrap();
+    assert_eq!(results.len(), 0);
+}
+
+#[test]
+fn typed_filter_empty_inclusion_serializes_to_empty_array() {
+    let now = Utc::now();
+    let filter = SensorFilter::new(Vec::<i64>::new(), (now - Duration::minutes(5))..=now);
+
+    let json: serde_json::Value = filter.try_into().unwrap();
+    assert_eq!(json["device_id"], serde_json::json!([]));
+}
+
+#[test]
+fn timestamp_empty_inclusion_matches_no_rows() {
+    let now = Utc::now();
+    let data = vec![
+        Sensor { device_id: 1, collected_at: now, temperature: 23.0 },
+        Sensor { device_id: 2, collected_at: now, temperature: 42.0 },
+    ];
+    let bytes = Sensor::serialize(data).unwrap();
+
+    let filter = SensorFilter::new(1i64..=2, Vec::<DateTime<Utc>>::new());
+    let results = Sensor::filter_bytes(&bytes, filter, &[]).unwrap();
+    assert_eq!(results.len(), 0);
+
+    let results = Sensor::filter_bytes(&bytes, serde_json::json!({ "collected_at": [] }), &[]).unwrap();
+    assert_eq!(results.len(), 0);
+}
+
+#[test]
 fn typed_filter_with_multi_index() {
     let data = vec![
         QueryStat { db_id: 1, granularity: 60, calls: 100 },

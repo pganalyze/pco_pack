@@ -451,9 +451,7 @@ impl PcoFilter for Timeline {
                 .with_context(|| format!("Range end must be an integer, got {}", json_type_name(end_val)))?;
             return Ok(ResolvedFilter { path: vec![0], filter: Filter::Range(start..=end) });
         }
-        if let serde_json::Value::Array(arr) = json
-            && !arr.is_empty()
-        {
+        if let serde_json::Value::Array(arr) = json {
             let ints: Vec<i64> = arr.iter().filter_map(|v| v.as_i64()).collect();
             if ints.len() == arr.len() {
                 return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionI64(ints.into_iter().collect()) });
