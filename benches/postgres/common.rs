@@ -184,7 +184,10 @@ pub fn cell(m: &CodecMetrics, kind: &str, filter_idx: Option<usize>) -> String {
         "Serialize" => m.serial_ms.map(format_ms),
         "Deserialize" => m.deserial_ms.map(format_ms),
         "Size" => m.size.map(format_bytes),
-        "Project" => m.project_ms.map(format_ms),
+        "Project" => match filter_idx {
+            Some(i) => m.project_ms.get(i).copied().flatten().map(format_ms),
+            None => None,
+        },
         _ => match filter_idx {
             Some(i) => m.filter_ms.get(i).copied().flatten().map(format_ms),
             None => None,

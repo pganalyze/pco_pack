@@ -298,6 +298,17 @@ impl Bk {
     }
 }
 
+/// The vortex filter expression for a backends filter key, shared by the
+/// filter cells and the reduce scans.
+fn vortex_filter(k: &Bk) -> vortex::array::expr::Expression {
+    use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq, or};
+    match k {
+        Bk::Time(a, b) => and(gt_eq(col("collected_at"), lit(*a)), lt_eq(col("collected_at"), lit(*b))),
+        Bk::Active => or(eq(col("backend_state"), lit(1i8)), eq(col("backend_state"), lit(2i8))),
+        Bk::Waits => gt_eq(col("wait_event"), lit(1i16)),
+    }
+}
+
 pub fn bench() -> anyhow::Result<()> {
     let name = "backend_snapshots.msgpack.zst";
     let Some(rows) = common::read_blob(name, &common::data_dir(), &common::lfs_warning(name))? else {
@@ -333,27 +344,34 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     let time_round_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_time_round.iter()).map(|(q, (_, e))| (q, *e)).collect();
 
-    // Projection fold ground truth: query_fingerprint => survivor count over
-    // the last-1h window, folded before `rows` moves into the encoders.
-    let window = &keys[0];
-    let proj_truth = fold_fp_counts(rows.iter().filter(|r| window.matches(r)).filter_map(|r| r.query_fingerprint));
-    let proj_truth_time_round =
-        fold_fp_counts(rows.iter().filter(|r| window.matches_time_round(r)).filter_map(|r| r.query_fingerprint));
-    let proj_q = queries[0].clone();
+    // Projection fold ground truth per reduce scenario (the last-1h window,
+    // then the active-states filter): query_fingerprint => survivor count,
+    // folded before `rows` moves into the encoders.
+    let reduce_keys = [keys[0], keys[1]];
+    let proj_truths: Vec<HashMap<i64, u32>> = reduce_keys
+        .iter()
+        .map(|k| fold_fp_counts(rows.iter().filter(|r| k.matches(r)).filter_map(|r| r.query_fingerprint)))
+        .collect();
+    let proj_truths_time_round: Vec<HashMap<i64, u32>> = reduce_keys
+        .iter()
+        .map(|k| fold_fp_counts(rows.iter().filter(|r| k.matches_time_round(r)).filter_map(|r| r.query_fingerprint)))
+        .collect();
 
     let (mut pco_time_round, tr_bytes) =
         common::bench_pco_pack_full(&time_round_rows, &time_round_filters, |_back, _off| {}, || {});
     drop(time_round_rows);
     if crate::enabled("pco_pack") {
-        let (ms_tr, fold_tr) = common::bench_pco_pack_projected::<BackendSnapshotTimeRound, _>(
-            &tr_bytes,
-            &proj_q,
-            &["query_fingerprint", "wait_event"],
-            kf_time_round[0].1,
-            |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
-        );
-        assert_eq!(fold_tr, proj_truth_time_round, "backend_snapshots (TimeRound) projected fold");
-        pco_time_round.project_ms = Some(ms_tr);
+        for i in 0..reduce_keys.len() {
+            let (ms_tr, fold_tr) = common::bench_pco_pack_projected::<BackendSnapshotTimeRound, _>(
+                &tr_bytes,
+                &queries[i],
+                &["query_fingerprint", "wait_event"],
+                kf_time_round[i].1,
+                |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
+            );
+            assert_eq!(fold_tr, proj_truths_time_round[i], "backend_snapshots (TimeRound) projected fold");
+            pco_time_round.project_ms.push(Some(ms_tr));
+        }
     }
 
     let col_rows: Vec<BackendSnapshotCol> = rows.iter().map(BackendSnapshotCol::from).collect();
@@ -379,56 +397,46 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
         },
     );
     if crate::enabled("columnar") {
-        col.project_ms = Some(common::reduce_columnar::<BackendSnapshotCol, Bk, i64, HashMap<i64, u32>, _, _>(
-            &col_buf,
-            &keys[0],
-            |decoded: &columnar::BorrowedOf<'_, BackendSnapshotCol>, k: &Bk| {
-                (0..columnar::Len::len(decoded))
-                    .filter_map(|i| {
-                        let r = columnar::Index::get(decoded, i);
-                        let hit = match k {
-                            Bk::Time(a, b) => {
-                                let us = *r.collected_at;
-                                *a <= us && us <= *b
-                            }
-                            Bk::Active => matches!(*r.backend_state, 1 | 2),
-                            Bk::Waits => *r.wait_event >= 1,
-                        };
-                        if hit { r.query_fingerprint.copied() } else { None }
-                    })
-                    .collect()
-            },
-            |pairs, _k| fold_fp_counts(pairs.into_iter()),
-            &proj_truth,
-        ));
+        for (k, truth) in reduce_keys.iter().zip(&proj_truths) {
+            col.project_ms.push(Some(common::reduce_columnar::<BackendSnapshotCol, Bk, i64, HashMap<i64, u32>, _, _>(
+                &col_buf,
+                k,
+                |decoded: &columnar::BorrowedOf<'_, BackendSnapshotCol>, k: &Bk| {
+                    (0..columnar::Len::len(decoded))
+                        .filter_map(|i| {
+                            let r = columnar::Index::get(decoded, i);
+                            let hit = match k {
+                                Bk::Time(a, b) => {
+                                    let us = *r.collected_at;
+                                    *a <= us && us <= *b
+                                }
+                                Bk::Active => matches!(*r.backend_state, 1 | 2),
+                                Bk::Waits => *r.wait_event >= 1,
+                            };
+                            if hit { r.query_fingerprint.copied() } else { None }
+                        })
+                        .collect()
+                },
+                |pairs, _k| fold_fp_counts(pairs.into_iter()),
+                truth,
+            )));
+        }
     }
     drop(col_buf);
 
     let vx_rows: Vec<BackendSnapshotCol> = rows.iter().map(BackendSnapshotCol::from).collect();
-    let (mut vx, vx_buf) = common::bench_vortex_ds(&vx_rows, &kf, |k: &Bk| {
-        use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq, or};
-        match k {
-            Bk::Time(a, b) => and(gt_eq(col("collected_at"), lit(*a)), lt_eq(col("collected_at"), lit(*b))),
-            Bk::Active => or(eq(col("backend_state"), lit(1i8)), eq(col("backend_state"), lit(2i8))),
-            Bk::Waits => gt_eq(col("wait_event"), lit(1i16)),
-        }
-    });
+    let (mut vx, vx_buf) = common::bench_vortex_ds(&vx_rows, &kf, vortex_filter);
     if crate::enabled("vortex") {
-        vx.project_ms = common::reduce_vortex_ds::<(Option<i64>,), Bk, _, _, _>(
-            &vx_buf,
-            &keys[0],
-            |k: &Bk| {
-                use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq, or};
-                match k {
-                    Bk::Time(a, b) => and(gt_eq(col("collected_at"), lit(*a)), lt_eq(col("collected_at"), lit(*b))),
-                    Bk::Active => or(eq(col("backend_state"), lit(1i8)), eq(col("backend_state"), lit(2i8))),
-                    Bk::Waits => gt_eq(col("wait_event"), lit(1i16)),
-                }
-            },
-            &["query_fingerprint"],
-            |rows: Vec<(Option<i64>,)>, _: &Bk| fold_fp_counts(rows.into_iter().filter_map(|(fp,)| fp)),
-            &proj_truth,
-        );
+        for (k, truth) in reduce_keys.iter().zip(&proj_truths) {
+            vx.project_ms.push(common::reduce_vortex_ds::<(Option<i64>,), Bk, _, _, _>(
+                &vx_buf,
+                k,
+                |k: &Bk| Some(vortex_filter(k)),
+                &["query_fingerprint"],
+                |rows: Vec<(Option<i64>,)>, _: &Bk| fold_fp_counts(rows.into_iter().filter_map(|(fp,)| fp)),
+                truth,
+            ));
+        }
     }
     drop(vx_rows);
     drop(vx_buf);
@@ -450,37 +458,41 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
         },
     );
     if crate::enabled("serde_columnar") {
-        sc.project_ms = Some(common::reduce_serde_columnar::<backends_sc::BackendsScStore, Bk, i64, _, _, _>(
-            &sc_buf,
-            &keys[0],
-            |s: &backends_sc::BackendsScStore, k: &Bk| {
-                s.data
-                    .iter()
-                    .filter(|r| match k {
-                        Bk::Time(a, b) => *a <= r.collected_at && r.collected_at <= *b,
-                        Bk::Active => matches!(r.backend_state, 1 | 2),
-                        Bk::Waits => r.wait_event >= 1,
-                    })
-                    .filter_map(|r| r.query_fingerprint)
-                    .collect()
-            },
-            |pairs, _k| fold_fp_counts(pairs.into_iter()),
-            &proj_truth,
-        ));
+        for (k, truth) in reduce_keys.iter().zip(&proj_truths) {
+            sc.project_ms.push(Some(common::reduce_serde_columnar::<backends_sc::BackendsScStore, Bk, i64, _, _, _>(
+                &sc_buf,
+                k,
+                |s: &backends_sc::BackendsScStore, k: &Bk| {
+                    s.data
+                        .iter()
+                        .filter(|r| match k {
+                            Bk::Time(a, b) => *a <= r.collected_at && r.collected_at <= *b,
+                            Bk::Active => matches!(r.backend_state, 1 | 2),
+                            Bk::Waits => r.wait_event >= 1,
+                        })
+                        .filter_map(|r| r.query_fingerprint)
+                        .collect()
+                },
+                |pairs, _k| fold_fp_counts(pairs.into_iter()),
+                truth,
+            )));
+        }
     }
     drop(sc_buf);
 
     let (mut mp, mp_buf) = common::bench_msgpack(&rows, &kf, |r: &BackendSnapshot, k: &Bk| k.matches(r));
     if crate::enabled("msgpack") {
-        mp.project_ms = Some(common::reduce_msgpack::<BackendSnapshot, Bk, i64, _, _, _>(
-            &mp_buf,
-            &keys[0],
-            |rows: &[BackendSnapshot], k: &Bk| {
-                rows.iter().filter(|r| k.matches(r)).filter_map(|r| r.query_fingerprint).collect()
-            },
-            |pairs, _k| fold_fp_counts(pairs.into_iter()),
-            &proj_truth,
-        ));
+        for (k, truth) in reduce_keys.iter().zip(&proj_truths) {
+            mp.project_ms.push(Some(common::reduce_msgpack::<BackendSnapshot, Bk, i64, _, _, _>(
+                &mp_buf,
+                k,
+                |rows: &[BackendSnapshot], k: &Bk| {
+                    rows.iter().filter(|r| k.matches(r)).filter_map(|r| r.query_fingerprint).collect()
+                },
+                |pairs, _k| fold_fp_counts(pairs.into_iter()),
+                truth,
+            )));
+        }
     }
     drop(mp_buf);
 
@@ -503,22 +515,26 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     // count per fingerprint, standing in for its whole collapsed tick run.
     // The Reduce label's percent stays the per-tick selectivity; this fold
     // answers "how many folded rows per fingerprint", not ticks.
-    let tl_truth =
-        fold_fp_counts(tl_rows.iter().filter(|r| keys[0].matches_timeline(r)).filter_map(|r| r.query_fingerprint));
+    let tl_truths: Vec<HashMap<i64, u32>> = reduce_keys
+        .iter()
+        .map(|k| fold_fp_counts(tl_rows.iter().filter(|r| k.matches_timeline(r)).filter_map(|r| r.query_fingerprint)))
+        .collect();
     let tl_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_tl.iter()).map(|(q, (_, e))| (q, *e)).collect();
     let (mut pco_timeline, tl_bytes) = common::bench_pco_pack_full(&tl_rows, &tl_filters, |_back, _off| {}, || {});
     drop(tl_rows);
     if crate::enabled("pco_pack") {
-        let (ms_tl, fold_tl) = common::bench_pco_pack_projected::<BackendSnapshotTimeline, _>(
-            &tl_bytes,
-            &proj_q,
-            &["query_fingerprint"],
-            kf_tl[0].1,
-            |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
-        );
-        assert_eq!(fold_tl, tl_truth, "backend_snapshots (Timeline) projected fold over folded rows");
-        pco_timeline.project_ms = Some(ms_tl);
+        for i in 0..reduce_keys.len() {
+            let (ms_tl, fold_tl) = common::bench_pco_pack_projected::<BackendSnapshotTimeline, _>(
+                &tl_bytes,
+                &queries[i],
+                &["query_fingerprint"],
+                kf_tl[i].1,
+                |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
+            );
+            assert_eq!(fold_tl, tl_truths[i], "backend_snapshots (Timeline) projected fold over folded rows");
+            pco_timeline.project_ms.push(Some(ms_tl));
+        }
         drop(tl_bytes);
     }
 
@@ -538,38 +554,46 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     assert_eq!(tl_rows10.len(), nd, "backend_snapshots (Timeline 10s) row count");
     let kf_tl10: Vec<(Bk, usize)> =
         keys.iter().map(|k| (*k, tl_rows10.iter().filter(|r| k.matches_timeline10s(r)).count())).collect();
-    let tl_truth10 =
-        fold_fp_counts(tl_rows10.iter().filter(|r| keys[0].matches_timeline10s(r)).filter_map(|r| r.query_fingerprint));
+    let tl_truths10: Vec<HashMap<i64, u32>> = reduce_keys
+        .iter()
+        .map(|k| {
+            fold_fp_counts(tl_rows10.iter().filter(|r| k.matches_timeline10s(r)).filter_map(|r| r.query_fingerprint))
+        })
+        .collect();
     let tl10_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_tl10.iter()).map(|(q, (_, e))| (q, *e)).collect();
     let (mut pco_timeline10, tl10_bytes) =
         common::bench_pco_pack_full(&tl_rows10, &tl10_filters, |_back, _off| {}, || {});
     drop(tl_rows10);
     if crate::enabled("pco_pack") {
-        let (ms_tl10, fold_tl10) = common::bench_pco_pack_projected::<BackendSnapshotTimeline10s, _>(
-            &tl10_bytes,
-            &proj_q,
-            &["query_fingerprint"],
-            kf_tl10[0].1,
-            |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
-        );
-        assert_eq!(fold_tl10, tl_truth10, "backend_snapshots (Timeline 10s) projected fold over folded rows");
-        pco_timeline10.project_ms = Some(ms_tl10);
+        for i in 0..reduce_keys.len() {
+            let (ms_tl10, fold_tl10) = common::bench_pco_pack_projected::<BackendSnapshotTimeline10s, _>(
+                &tl10_bytes,
+                &queries[i],
+                &["query_fingerprint"],
+                kf_tl10[i].1,
+                |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
+            );
+            assert_eq!(fold_tl10, tl_truths10[i], "backend_snapshots (Timeline 10s) projected fold over folded rows");
+            pco_timeline10.project_ms.push(Some(ms_tl10));
+        }
         drop(tl10_bytes);
     }
 
     let (mut pco, pco_bytes) = common::bench_pco_pack_full(&rows, &pco_filters, |_back, _off| {}, || {});
     drop(rows);
     if crate::enabled("pco_pack") {
-        let (ms_pco, fold) = common::bench_pco_pack_projected::<BackendSnapshot, _>(
-            &pco_bytes,
-            &proj_q,
-            &["query_fingerprint", "wait_event"],
-            kf[0].1,
-            |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
-        );
-        assert_eq!(fold, proj_truth, "backend_snapshots projected fold");
-        pco.project_ms = Some(ms_pco);
+        for i in 0..reduce_keys.len() {
+            let (ms_pco, fold) = common::bench_pco_pack_projected::<BackendSnapshot, _>(
+                &pco_bytes,
+                &queries[i],
+                &["query_fingerprint", "wait_event"],
+                kf[i].1,
+                |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
+            );
+            assert_eq!(fold, proj_truths[i], "backend_snapshots projected fold");
+            pco.project_ms.push(Some(ms_pco));
+        }
         drop(pco_bytes);
     }
 
@@ -610,20 +634,24 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
             msgpack: cell(&mp, "Filter", Some(i)),
         });
     }
-    pco_out.push(CodecRowTimeline {
-        metric: common::reduce_label(kf[0].1, n),
-        pco_pack: cell(&pco, "Project", None),
-        pco_time_round: cell(&pco_time_round, "Project", None),
-        pco_timeline: cell(&pco_timeline, "Project", None),
-        pco_timeline_10s: cell(&pco_timeline10, "Project", None),
-    });
-    other_out.push(CodecRowOther {
-        metric: common::reduce_label(kf[0].1, n),
-        vortex: cell(&vx, "Project", None),
-        columnar: cell(&col, "Project", None),
-        serde_columnar: cell(&sc, "Project", None),
-        msgpack: cell(&mp, "Project", None),
-    });
+    let reduce_labels: Vec<String> =
+        kf.iter().take(reduce_keys.len()).map(|(_, e)| common::reduce_label(*e, n)).collect();
+    for (i, label) in reduce_labels.iter().enumerate() {
+        pco_out.push(CodecRowTimeline {
+            metric: label.clone(),
+            pco_pack: cell(&pco, "Project", Some(i)),
+            pco_time_round: cell(&pco_time_round, "Project", Some(i)),
+            pco_timeline: cell(&pco_timeline, "Project", Some(i)),
+            pco_timeline_10s: cell(&pco_timeline10, "Project", Some(i)),
+        });
+        other_out.push(CodecRowOther {
+            metric: label.clone(),
+            vortex: cell(&vx, "Project", Some(i)),
+            columnar: cell(&col, "Project", Some(i)),
+            serde_columnar: cell(&sc, "Project", Some(i)),
+            msgpack: cell(&mp, "Project", Some(i)),
+        });
+    }
     println!("#### PcoPack scenarios\n");
     println!("{}", markdown_tables::as_table(&pco_out));
     println!();

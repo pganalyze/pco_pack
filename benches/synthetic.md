@@ -157,6 +157,7 @@ First four rows use native `vortex.map`, the rest struct promotion. Struct promo
 | Text miss        | 14.4 ms | 0.0 ms   | 21.0 ms  | 37.6 ms        | 74.6 ms |
 | Text IN (2 rows) | 16.9 ms | 11.2 ms  | 22.7 ms  | 38.8 ms        | 75.1 ms |
 | Reduce 70.04%    | 12.9 ms | 5.2 ms   | 24.3 ms  | 40.9 ms        | 78.6 ms |
+| Reduce <0.01%    | 1.7 ms  | 0.8 ms   | 23.1 ms  | 39.0 ms        | 77.9 ms |
 
 ## Timeline
 

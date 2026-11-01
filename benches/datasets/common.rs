@@ -53,24 +53,15 @@ pub struct CodecMetrics {
     pub size: Option<usize>,
     /// One entry per measured filter, in order; `None` if not expressible.
     pub filter_ms: Vec<Option<f64>>,
-    /// `filter(query, fields)` + reduce over the projected survivors; `None`
-    /// for codecs without a partial-column read path.
-    pub project_ms: Option<f64>,
+    /// `filter(query, fields)` + reduce over the projected survivors; one
+    /// entry per measured reduce scenario, in order; `None` for codecs
+    /// without a partial-column read path.
+    pub project_ms: Vec<Option<f64>>,
 }
 
-pub fn bench_pco_pack<T, V, F>(
-    data: &[T], filters: &[(&serde_json::Value, usize)], verify: V, finish: F,
-) -> CodecMetrics
-where
-    T: pco_pack::PcoPack + Clone + std::fmt::Debug,
-    V: FnMut(&[T], usize),
-    F: FnOnce(),
-{
-    bench_pco_pack_full(data, filters, verify, finish).0
-}
-
-/// Same as `bench_pco_pack` but also returns the serialized blob, so a
-/// projection scenario can load the exact bytes the fastest pass produced.
+/// Serialize + filter runner (PcoPack): returns the metrics and the
+/// serialized blob, so a projection scenario can load the exact bytes the
+/// fastest pass produced.
 /// The timed serialize covers `write` + `to_bytes` over the whole capture
 /// (the row clone that stands in for the caller staging its data runs
 /// before the timer starts).
@@ -194,13 +185,15 @@ where
 /// verify survivor counts for the same expression over the same bytes), so
 /// the fold accumulates every row without re-testing the predicate. A
 /// caught panic returns `None`, degrading the cell to "-" like the main
-/// runner.
+/// runner. A `build_expr` that returns `None` skips the filter entirely
+/// (the full-scan Reduce 100% shape); the projection still bounds what the
+/// scan materializes.
 pub fn reduce_vortex_ds<R, K, E, M, F>(
     blob: &[u8], key: &K, build_expr: E, projection: &[&'static str], fold: F, truth: &M,
 ) -> Option<f64>
 where
     R: serde::de::DeserializeOwned,
-    E: Fn(&K) -> vortex::array::expr::Expression,
+    E: Fn(&K) -> Option<vortex::array::expr::Expression>,
     F: Fn(Vec<R>, &K) -> M,
     M: PartialEq + std::fmt::Debug,
 {
@@ -219,8 +212,10 @@ where
             let rows: Vec<R> = rt.block_on(async {
                 let file = session.open_options().open_buffer(buffer.clone()).unwrap();
                 let mut scan = file.scan().unwrap();
-                let bound = build_expr(key).bind(file.dtype()).unwrap().optimize_recursive().unwrap();
-                scan = scan.with_filter(bound);
+                if let Some(expr) = build_expr(key) {
+                    let bound = expr.bind(file.dtype()).unwrap().optimize_recursive().unwrap();
+                    scan = scan.with_filter(bound);
+                }
                 let proj = select(projection, root()).bind(file.dtype()).unwrap().optimize_recursive().unwrap();
                 scan = scan.with_projection(proj);
                 let array = scan.into_array_stream().unwrap().read_all().await.unwrap();
@@ -304,7 +299,7 @@ where
         deserial_ms: Some(deserial_ms),
         size: Some(blob.len()),
         filter_ms,
-        project_ms: None,
+        project_ms: Vec::new(),
     }
 }
 
@@ -364,7 +359,7 @@ where
             deserial_ms: Some(deserial_ms),
             size: Some(blob.len()),
             filter_ms,
-            project_ms: None,
+            project_ms: Vec::new(),
         },
         blob,
     )
@@ -421,7 +416,7 @@ where
             deserial_ms: Some(deserial_ms),
             size: Some(blob.len()),
             filter_ms,
-            project_ms: None,
+            project_ms: Vec::new(),
         },
         blob,
     )
@@ -475,7 +470,7 @@ where
             deserial_ms: Some(deserial_ms),
             size: Some(blob.len()),
             filter_ms,
-            project_ms: None,
+            project_ms: Vec::new(),
         },
         blob,
     )
@@ -612,7 +607,7 @@ where
                 deserial_ms: Some(deserial_ms),
                 size: Some(blob.len()),
                 filter_ms,
-                project_ms: None,
+                project_ms: Vec::new(),
             },
             blob,
         )
@@ -748,7 +743,12 @@ fn cell(m: &CodecMetrics, kind: &str, filter_idx: Option<usize>) -> String {
         "Serialize" => m.serial_ms.as_ref().map(|v| format_ms(*v)),
         "Deserialize" => m.deserial_ms.as_ref().map(|v| format_ms(*v)),
         "Size" => m.size.as_ref().map(|v| format_bytes(*v)),
-        "Project" => m.project_ms.map(format_ms),
+        "Project" => match filter_idx {
+            // Bounds check instead of `.get`: `columnar::Index` is in scope in
+            // this file and its trait method shadows the inherent `Vec::get`.
+            Some(i) if i < m.project_ms.len() => m.project_ms[i].map(format_ms),
+            _ => None,
+        },
         _ => match filter_idx {
             Some(i) if i < m.filter_ms.len() => {
                 let v: Option<f64> = m.filter_ms[i];
@@ -774,8 +774,9 @@ pub struct CodecResults {
 
 impl CodecResults {
     /// The dataset codec table: `Metric | PcoPack | [PcoPack (lossy)] | Vortex
-    /// | columnar | serde_columnar | msgpack`, Size first.
-    pub fn print(self, filter_labels: &[&str], project_label: Option<&str>) {
+    /// | columnar | serde_columnar | msgpack`, Size first, then one row per
+    /// filter label and one row per reduce-scenario label.
+    pub fn print(self, filter_labels: &[&str], project_labels: &[&str]) {
         let metrics = ["Size", "Serialize", "Deserialize"];
         if let Some(l) = &self.pco_pack_lossy {
             let mut rows: Vec<CodecRowLossy> = metrics
@@ -801,15 +802,15 @@ impl CodecResults {
                     msgpack: cell(&self.msgpack, "Filter", Some(i)),
                 });
             }
-            if let Some(label) = project_label {
+            for (i, label) in project_labels.iter().enumerate() {
                 rows.push(CodecRowLossy {
                     metric: label.to_string(),
-                    pco_pack: cell(&self.pco_pack, "Project", None),
-                    pco_pack_lossy: cell(l, "Project", None),
-                    vortex: cell(&self.vortex, "Project", None),
-                    columnar: cell(&self.columnar, "Project", None),
-                    serde_columnar: cell(&self.serde_columnar, "Project", None),
-                    msgpack: cell(&self.msgpack, "Project", None),
+                    pco_pack: cell(&self.pco_pack, "Project", Some(i)),
+                    pco_pack_lossy: cell(l, "Project", Some(i)),
+                    vortex: cell(&self.vortex, "Project", Some(i)),
+                    columnar: cell(&self.columnar, "Project", Some(i)),
+                    serde_columnar: cell(&self.serde_columnar, "Project", Some(i)),
+                    msgpack: cell(&self.msgpack, "Project", Some(i)),
                 });
             }
             println!("{}", markdown_tables::as_table(&rows));
@@ -835,14 +836,14 @@ impl CodecResults {
                     msgpack: cell(&self.msgpack, "Filter", Some(i)),
                 });
             }
-            if let Some(label) = project_label {
+            for (i, label) in project_labels.iter().enumerate() {
                 rows.push(CodecRow {
                     metric: label.to_string(),
-                    pco_pack: cell(&self.pco_pack, "Project", None),
-                    vortex: cell(&self.vortex, "Project", None),
-                    columnar: cell(&self.columnar, "Project", None),
-                    serde_columnar: cell(&self.serde_columnar, "Project", None),
-                    msgpack: cell(&self.msgpack, "Project", None),
+                    pco_pack: cell(&self.pco_pack, "Project", Some(i)),
+                    vortex: cell(&self.vortex, "Project", Some(i)),
+                    columnar: cell(&self.columnar, "Project", Some(i)),
+                    serde_columnar: cell(&self.serde_columnar, "Project", Some(i)),
+                    msgpack: cell(&self.msgpack, "Project", Some(i)),
                 });
             }
             println!("{}", markdown_tables::as_table(&rows));

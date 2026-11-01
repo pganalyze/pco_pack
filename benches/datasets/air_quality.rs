@@ -127,46 +127,58 @@ pub fn bench() {
     );
     drop(dataf);
 
-    // Projection + reduce: filter the 1 h window, load only
-    // [kafka_partition, pm_2_5], reduce partition => average pm2.5. No
-    // other columns inflate; there is no text column in this schema, so
-    // the text-filter scenario is not applicable here.
-    let proj_q = serde_json::json!({ "timestamp": { "start": us_ranges[0].0, "end": us_ranges[0].1 } });
-    let mut proj_truth: std::collections::HashMap<i32, (i64, u64)> = Default::default();
-    for r in data.iter() {
-        if (us_ranges[0].0..=us_ranges[0].1).contains(&r.timestamp.timestamp_micros()) {
-            let e = proj_truth.entry(r.kafka_partition).or_default();
-            e.0 += r.pm_2_5 as i64;
-            e.1 += 1;
-        }
-    }
-    if crate::enabled("pco_pack") {
-        let (ms, map) = common::bench_pco_pack_projected::<AirQuality, _>(
-            &pco_bytes,
-            &proj_q,
-            &["kafka_partition", "pm_2_5"],
-            exp_pco[0],
-            |rows| {
-                let mut acc: std::collections::HashMap<i32, (i64, u64)> = Default::default();
-                for r in rows {
-                    let e = acc.entry(r.kafka_partition).or_default();
+    // Projection + reduce: filter each window from the min timestamp, load
+    // only [kafka_partition, pm_2_5], reduce partition => average pm2.5. The
+    // 1 h and 24 h windows put the few-rows and many-rows points on the
+    // same fold. No other columns inflate; there is no text column in this
+    // schema, so the text-filter scenario is not applicable here.
+    let proj_q: Vec<serde_json::Value> =
+        us_ranges.iter().map(|(a, b)| serde_json::json!({ "timestamp": { "start": a, "end": b } })).collect();
+    let proj_truths: Vec<std::collections::HashMap<i32, (i64, u64)>> = us_ranges
+        .iter()
+        .map(|(a, b)| {
+            let mut map: std::collections::HashMap<i32, (i64, u64)> = Default::default();
+            for r in data.iter() {
+                if (*a..=*b).contains(&r.timestamp.timestamp_micros()) {
+                    let e = map.entry(r.kafka_partition).or_default();
                     e.0 += r.pm_2_5 as i64;
                     e.1 += 1;
                 }
-                acc
-            },
-        );
-        assert_eq!(map, proj_truth, "air_quality projected reduce");
-        pco.project_ms = Some(ms);
+            }
+            map
+        })
+        .collect();
+    if crate::enabled("pco_pack") {
+        for ((q, e), truth) in proj_q.iter().zip(exp_pco.iter()).zip(proj_truths.iter()) {
+            let (ms, map) = common::bench_pco_pack_projected::<AirQuality, _>(
+                &pco_bytes,
+                q,
+                &["kafka_partition", "pm_2_5"],
+                *e,
+                |rows| {
+                    let mut acc: std::collections::HashMap<i32, (i64, u64)> = Default::default();
+                    for r in rows {
+                        let e = acc.entry(r.kafka_partition).or_default();
+                        e.0 += r.pm_2_5 as i64;
+                        e.1 += 1;
+                    }
+                    acc
+                },
+            );
+            assert_eq!(map, *truth, "air_quality projected reduce");
+            pco.project_ms.push(Some(ms));
+        }
         drop(pco_bytes);
-        let (msf, _) = common::bench_pco_pack_projected::<AqF, _>(
-            &pcof_bytes,
-            &proj_q,
-            &["kafka_partition", "pm_2_5"],
-            exp_pcof[0],
-            |rows| rows.len(),
-        );
-        pcof.project_ms = Some(msf);
+        for (q, e) in proj_q.iter().zip(exp_pcof.iter()) {
+            let (msf, _) = common::bench_pco_pack_projected::<AqF, _>(
+                &pcof_bytes,
+                q,
+                &["kafka_partition", "pm_2_5"],
+                *e,
+                |rows| rows.len(),
+            );
+            pcof.project_ms.push(Some(msf));
+        }
         drop(pcof_bytes);
     }
 
@@ -190,32 +202,34 @@ pub fn bench() {
     );
     if crate::enabled("columnar") {
         // Honest reduce: full indexed decode, partition => avg pm2.5.
-        col.project_ms = Some(common::reduce_columnar::<AqCol, (i64, i64), (i32, i64), _, _, _>(
-            &col_buf,
-            &ns_ranges[0],
-            |decoded: &columnar::BorrowedOf<'_, AqCol>, k: &(i64, i64)| {
-                (0..columnar::Len::len(decoded))
-                    .filter_map(|i| {
-                        let r = columnar::Index::get(decoded, i);
-                        if k.0 <= *r.timestamp && *r.timestamp <= k.1 {
-                            Some((*r.kafka_partition, *r.pm_2_5 as i64))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            },
-            |pairs, _k| {
-                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
-                for (part, pm) in pairs {
-                    let e = acc.entry(part).or_default();
-                    e.0 += pm;
-                    e.1 += 1;
-                }
-                acc
-            },
-            &proj_truth,
-        ));
+        for (k, truth) in ns_ranges.iter().zip(&proj_truths) {
+            col.project_ms.push(Some(common::reduce_columnar::<AqCol, (i64, i64), (i32, i64), _, _, _>(
+                &col_buf,
+                k,
+                |decoded: &columnar::BorrowedOf<'_, AqCol>, k: &(i64, i64)| {
+                    (0..columnar::Len::len(decoded))
+                        .filter_map(|i| {
+                            let r = columnar::Index::get(decoded, i);
+                            if k.0 <= *r.timestamp && *r.timestamp <= k.1 {
+                                Some((*r.kafka_partition, *r.pm_2_5 as i64))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                },
+                |pairs, _k| {
+                    let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+                    for (part, pm) in pairs {
+                        let e = acc.entry(part).or_default();
+                        e.0 += pm;
+                        e.1 += 1;
+                    }
+                    acc
+                },
+                truth,
+            )));
+        }
     }
     drop(col_buf);
 
@@ -229,27 +243,31 @@ pub fn bench() {
         },
     );
     if crate::enabled("serde_columnar") {
-        sc.project_ms = Some(common::reduce_serde_columnar::<aq_sc::AqScStore, (i64, i64), (i32, i64), _, _, _>(
-            &sc_buf,
-            &ns_ranges[0],
-            |s: &aq_sc::AqScStore, k: &(i64, i64)| {
-                s.data
-                    .iter()
-                    .filter(|r| k.0 <= r.timestamp && r.timestamp <= k.1)
-                    .map(|r| (r.kafka_partition, r.pm_2_5 as i64))
-                    .collect()
-            },
-            |pairs, _k| {
-                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
-                for (part, pm) in pairs {
-                    let e = acc.entry(part).or_default();
-                    e.0 += pm;
-                    e.1 += 1;
-                }
-                acc
-            },
-            &proj_truth,
-        ));
+        for (k, truth) in ns_ranges.iter().zip(&proj_truths) {
+            sc.project_ms.push(Some(
+                common::reduce_serde_columnar::<aq_sc::AqScStore, (i64, i64), (i32, i64), _, _, _>(
+                    &sc_buf,
+                    k,
+                    |s: &aq_sc::AqScStore, k: &(i64, i64)| {
+                        s.data
+                            .iter()
+                            .filter(|r| k.0 <= r.timestamp && r.timestamp <= k.1)
+                            .map(|r| (r.kafka_partition, r.pm_2_5 as i64))
+                            .collect()
+                    },
+                    |pairs, _k| {
+                        let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+                        for (part, pm) in pairs {
+                            let e = acc.entry(part).or_default();
+                            e.0 += pm;
+                            e.1 += 1;
+                        }
+                        acc
+                    },
+                    truth,
+                ),
+            ));
+        }
     }
     drop(sc_buf);
 
@@ -258,29 +276,31 @@ pub fn bench() {
         k.0 <= ns && ns <= k.1
     });
     if crate::enabled("msgpack") {
-        mp.project_ms = Some(common::reduce_msgpack::<AirQuality, (i64, i64), (i32, i64), _, _, _>(
-            &mp_buf,
-            &ns_ranges[0],
-            |rows: &[AirQuality], k: &(i64, i64)| {
-                rows.iter()
-                    .filter(|r| {
-                        let ns = r.timestamp.timestamp_nanos_opt().unwrap();
-                        k.0 <= ns && ns <= k.1
-                    })
-                    .map(|r| (r.kafka_partition, r.pm_2_5 as i64))
-                    .collect()
-            },
-            |pairs, _k| {
-                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
-                for (part, pm) in pairs {
-                    let e = acc.entry(part).or_default();
-                    e.0 += pm;
-                    e.1 += 1;
-                }
-                acc
-            },
-            &proj_truth,
-        ));
+        for (k, truth) in ns_ranges.iter().zip(&proj_truths) {
+            mp.project_ms.push(Some(common::reduce_msgpack::<AirQuality, (i64, i64), (i32, i64), _, _, _>(
+                &mp_buf,
+                k,
+                |rows: &[AirQuality], k: &(i64, i64)| {
+                    rows.iter()
+                        .filter(|r| {
+                            let ns = r.timestamp.timestamp_nanos_opt().unwrap();
+                            k.0 <= ns && ns <= k.1
+                        })
+                        .map(|r| (r.kafka_partition, r.pm_2_5 as i64))
+                        .collect()
+                },
+                |pairs, _k| {
+                    let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+                    for (part, pm) in pairs {
+                        let e = acc.entry(part).or_default();
+                        e.0 += pm;
+                        e.1 += 1;
+                    }
+                    acc
+                },
+                truth,
+            )));
+        }
     }
     drop(mp_buf);
 
@@ -297,32 +317,41 @@ pub fn bench() {
         // Filter + projection pushdown over the i64-ns ranges; survivors arrive
         // in file order and the fold counts every row (the pushed filter is
         // exact, verified by the filter cells).
-        vx.project_ms = common::reduce_vortex_ds::<(i32, i16), (i64, i64), _, _, _>(
-            &vx_buf,
-            &ns_ranges[0],
-            |k: &(i64, i64)| {
-                vortex::array::expr::and(
-                    vortex::array::expr::gt_eq(vortex::array::expr::col("timestamp"), vortex::array::expr::lit(k.0)),
-                    vortex::array::expr::lt_eq(vortex::array::expr::col("timestamp"), vortex::array::expr::lit(k.1)),
-                )
-            },
-            &["kafka_partition", "pm_2_5"],
-            |rows: Vec<(i32, i16)>, _: &(i64, i64)| {
-                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
-                for (part, pm) in rows {
-                    let e = acc.entry(part).or_default();
-                    e.0 += pm as i64;
-                    e.1 += 1;
-                }
-                acc
-            },
-            &proj_truth,
-        );
+        for (k, truth) in ns_ranges.iter().zip(&proj_truths) {
+            vx.project_ms.push(common::reduce_vortex_ds::<(i32, i16), (i64, i64), _, _, _>(
+                &vx_buf,
+                k,
+                |k: &(i64, i64)| {
+                    Some(vortex::array::expr::and(
+                        vortex::array::expr::gt_eq(
+                            vortex::array::expr::col("timestamp"),
+                            vortex::array::expr::lit(k.0),
+                        ),
+                        vortex::array::expr::lt_eq(
+                            vortex::array::expr::col("timestamp"),
+                            vortex::array::expr::lit(k.1),
+                        ),
+                    ))
+                },
+                &["kafka_partition", "pm_2_5"],
+                |rows: Vec<(i32, i16)>, _: &(i64, i64)| {
+                    let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+                    for (part, pm) in rows {
+                        let e = acc.entry(part).or_default();
+                        e.0 += pm as i64;
+                        e.1 += 1;
+                    }
+                    acc
+                },
+                truth,
+            ));
+        }
     }
     drop(data_vx);
     drop(vx_buf);
 
-    let reduce_label = common::reduce_label(exp_pco[0], n);
+    let reduce_labels: Vec<String> = exp_pco.iter().map(|&e| common::reduce_label(e, n)).collect();
+    let reduce_refs: Vec<&str> = reduce_labels.iter().map(String::as_str).collect();
 
     CodecResults {
         pco_pack: pco,
@@ -332,7 +361,7 @@ pub fn bench() {
         msgpack: mp,
         vortex: vx,
     }
-    .print(&label_refs, Some(&reduce_label));
+    .print(&label_refs, &reduce_refs);
 }
 
 /// Lossy variant: `time_round = 1 s` drops the sub-second noise of the two
