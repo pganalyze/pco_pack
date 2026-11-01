@@ -185,9 +185,7 @@ impl PcoFilter for half::f16 {
                 .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
             return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
         }
-        if let serde_json::Value::Array(arr) = json
-            && !arr.is_empty()
-        {
+        if let serde_json::Value::Array(arr) = json {
             let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
             if floats.len() == arr.len() {
                 return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionF64(floats) });
@@ -357,9 +355,7 @@ impl PcoFilter for f32 {
                 .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
             return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
         }
-        if let serde_json::Value::Array(arr) = json
-            && !arr.is_empty()
-        {
+        if let serde_json::Value::Array(arr) = json {
             let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
             if floats.len() == arr.len() {
                 return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionF64(floats) });
@@ -520,9 +516,7 @@ impl PcoFilter for f64 {
                 .with_context(|| format!("Range end must be a number, got {}", json_type_name(end_val)))?;
             return Ok(ResolvedFilter { path: vec![0], filter: Filter::FloatRange(start..=end) });
         }
-        if let serde_json::Value::Array(arr) = json
-            && !arr.is_empty()
-        {
+        if let serde_json::Value::Array(arr) = json {
             let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
             if floats.len() == arr.len() {
                 return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionF64(floats) });

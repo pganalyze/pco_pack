@@ -114,6 +114,21 @@ fn filter_simple_string() {
 }
 
 #[test]
+fn filter_empty_array_matches_no_rows() {
+    let data = make_simple_data();
+    let bytes = SimpleRecord::serialize(data.clone()).unwrap();
+
+    let result = SimpleRecord::filter_bytes(&bytes, serde_json::json!({"id": []}), &[]).unwrap();
+    assert_eq!(result.len(), 0);
+
+    let result = SimpleRecord::filter_bytes(&bytes, serde_json::json!({"score": []}), &[]).unwrap();
+    assert_eq!(result.len(), 0);
+
+    let result = SimpleRecord::filter_bytes(&bytes, serde_json::json!({"name": []}), &[]).unwrap();
+    assert_eq!(result.len(), 0);
+}
+
+#[test]
 fn filter_simple_f32() {
     let data = make_simple_data();
     let bytes = SimpleRecord::serialize(data.clone()).unwrap();

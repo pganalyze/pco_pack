@@ -101,7 +101,6 @@ impl PcoFilter for chrono::DateTime<chrono::Utc> {
         if !path.is_empty() {
             return Err(::anyhow::anyhow!("Field '{}' is a timestamp leaf and cannot contain nested path", path));
         }
-
         if let serde_json::Value::Object(obj) = json
             && let (Some(start_val), Some(end_val)) = (obj.get("start"), obj.get("end"))
         {
@@ -109,10 +108,7 @@ impl PcoFilter for chrono::DateTime<chrono::Utc> {
             let end = parse_datetime_value(end_val, &sub_label(path, "end"))?;
             return Ok(ResolvedFilter { path: vec![0], filter: Filter::Range(start..=end) });
         }
-
-        if let serde_json::Value::Array(arr) = json
-            && !arr.is_empty()
-        {
+        if let serde_json::Value::Array(arr) = json {
             let mut values = Vec::with_capacity(arr.len());
             for (i, v) in arr.iter().enumerate() {
                 match parse_datetime_value(v, &format!("{}[{}]", path, i)) {
@@ -122,12 +118,7 @@ impl PcoFilter for chrono::DateTime<chrono::Utc> {
                     }
                 }
             }
-            if !values.is_empty() {
-                return Ok(ResolvedFilter {
-                    path: vec![0],
-                    filter: Filter::InclusionI64(values.into_iter().collect()),
-                });
-            }
+            return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionI64(values.into_iter().collect()) });
         }
 
         let ts = parse_datetime_value(json, path)?;

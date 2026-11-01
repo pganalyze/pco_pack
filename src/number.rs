@@ -143,18 +143,16 @@ macro_rules! impl_pco_number {
                     }
                 }
                 if let serde_json::Value::Array(arr) = json {
-                    if !arr.is_empty() {
-                        let ints: Vec<i64> = arr.iter().filter_map(|v| v.as_i64()).collect();
-                        if ints.len() == arr.len() {
-                            return Ok(ResolvedFilter {
-                                path: vec![0],
-                                filter: Filter::InclusionI64(ints.into_iter().collect()),
-                            });
-                        }
-                        let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
-                        if floats.len() == arr.len() {
-                            return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionF64(floats) });
-                        }
+                    let ints: Vec<i64> = arr.iter().filter_map(|v| v.as_i64()).collect();
+                    if ints.len() == arr.len() {
+                        return Ok(ResolvedFilter {
+                            path: vec![0],
+                            filter: Filter::InclusionI64(ints.into_iter().collect()),
+                        });
+                    }
+                    let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
+                    if floats.len() == arr.len() {
+                        return Ok(ResolvedFilter { path: vec![0], filter: Filter::InclusionF64(floats) });
                     }
                 }
                 let value = json.as_i64().or_else(|| json.as_f64().map(|f| f as i64));
