@@ -485,128 +485,50 @@ pub fn bench() {
         f64::NAN
     };
 
-    // --- Filter + projection + reduce: active == true, load [account_id,
-    // score] only, reduce account_id => avg(score). The name/tags/color
-    // payloads stay compressed; the other codecs have no partial read path. ---
+    // --- Filter + projection + reduce: load [account_id, score] only,
+    // reduce account_id => avg(score). The name/tags/color payloads stay
+    // compressed; the other codecs have no partial read path. Two filters
+    // put the many-rows and few-rows points on the same fold: `active ==
+    // true` (~70%) and the multi filter `color == Red && score == 500.0`
+    // (the single sentinel row). ---
     let active_exp = data.iter().filter(|r| r.active).count();
-    let mut proj_truth: std::collections::HashMap<i64, (f64, u64)> = Default::default();
-    for r in data.iter().filter(|r| r.active) {
-        let e = proj_truth.entry(r.account_id).or_default();
-        e.0 += r.score;
-        e.1 += 1;
-    }
-    let proj_ms = if enabled("pco_pack") {
-        let (proj_ms, proj_map) = min_ms_pair(|| {
-            let compressed = Record::from_bytes(&pco_buf2).unwrap();
-            let results = Record::filter(&compressed, json!({"active": true}), &["account_id", "score"]).unwrap();
-            assert_eq!(results.len(), active_exp);
-            assert!(results.iter().all(|r| r.name.is_empty()), "unprojected text stays default");
-            let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
-            for r in &results {
-                let e = acc.entry(r.account_id).or_default();
-                e.0 += r.score;
-                e.1 += 1;
-            }
-            acc
-        });
-        assert_eq!(proj_map, proj_truth, "projected reduce");
-        proj_ms
-    } else {
-        f64::NAN
+    let multi_exp = data.iter().filter(|r| matches!(r.color, Color::Red) && r.score == 500.0).count();
+    assert_eq!(multi_exp, 1, "multi-filter reduce target must match the sentinel row alone");
+    let fold_inputs = FoldInputs {
+        rt: &rt,
+        vortex_session: &vortex_session,
+        vortex_buf: &vortex_buf,
+        pco: &pco_buf2,
+        columnar: &columnar_buf,
+        serde_columnar: &sc_buf,
+        msgpack: &map_buf,
+        data: &data,
     };
-
-    // Comparison-codec baselines: none can project, so each decodes every
-    // row it filters and folds active survivors into the same map. The
-    // numbers name the full-decode cost of not having metadata.
-    let col_reduce_ms = if enabled("columnar") {
-        min_ms(|| {
-            let decompressed = zstd::decode_all(&*columnar_buf).unwrap();
-            let words: &[u64] = bytemuck::cast_slice(&decompressed);
-            type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
-            let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
-            let count = Len::len(&decoded);
-            let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
-            for i in 0..count {
-                let record = Index::get(&decoded, i);
-                if record.active {
-                    let e = acc.entry(*record.account_id).or_default();
-                    e.0 += *record.score;
-                    e.1 += 1;
-                }
-            }
-            assert_eq!(acc, proj_truth, "columnar reduce");
-        })
-    } else {
-        f64::NAN
-    };
-
-    let sc_reduce_ms = if enabled("serde_columnar") {
-        min_ms(|| {
-            let decompressed = zstd::decode_all(&*sc_buf).unwrap();
-            let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
-            let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
-            for r in decoded.data.iter().filter(|r| r.active) {
-                let e = acc.entry(r.account_id).or_default();
-                e.0 += r.score;
-                e.1 += 1;
-            }
-            assert_eq!(acc, proj_truth, "serde_columnar reduce");
-        })
-    } else {
-        f64::NAN
-    };
-
-    let map_reduce_ms = if enabled("msgpack") {
-        min_ms(|| {
-            let deserialized = deserialize_flat(&map_buf);
-            let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
-            for r in deserialized.iter().filter(|r| r.active) {
-                let e = acc.entry(r.account_id).or_default();
-                e.0 += r.score;
-                e.1 += 1;
-            }
-            assert_eq!(acc, proj_truth, "msgpack reduce");
-        })
-    } else {
-        f64::NAN
-    };
-
-    let vortex_reduce_ms = if enabled("vortex") {
-        let vfilter_active = eq(col("active"), lit(true));
-
-        min_ms(|| {
-            rt.block_on(async {
-                // Same partial read as PcoPack's projected reduce: the pushed
-                // active filter is exact, so the fold consumes every projected
-                // (account_id, score) row without re-testing.
-                let batch = vortex_scan(
-                    &vortex_session,
-                    vortex_buf.clone(),
-                    Some(vfilter_active.clone()),
-                    Some(&["account_id", "score"]),
-                )
-                .await;
-                assert_eq!(batch.num_rows(), active_exp);
-                let rows: Vec<(i64, f64)> = serde_arrow::from_record_batch(&batch).unwrap();
-                let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
-                for (account_id, score) in &rows {
-                    let e = acc.entry(*account_id).or_default();
-                    e.0 += *score;
-                    e.1 += 1;
-                }
-                assert_eq!(acc, proj_truth, "vortex reduce");
-                black_box(rows)
-            })
-        })
-    } else {
-        f64::NAN
-    };
+    let (proj_ms, col_reduce_ms, sc_reduce_ms, map_reduce_ms, vortex_reduce_ms) = reduce_scenario(
+        &fold_inputs,
+        &json!({"active": true}),
+        &eq(col("active"), lit(true)),
+        Keep::Active,
+        active_exp,
+    );
+    let (proj_multi_ms, col_multi_ms, sc_multi_ms, map_multi_ms, vortex_multi_ms) = reduce_scenario(
+        &fold_inputs,
+        &json!({"color": 0, "score": 500.0}),
+        &and(eq(col("color"), lit(0_u8)), eq(col("score"), lit(500_f64))),
+        Keep::Multi,
+        multi_exp,
+    );
 
     let text_eq_label = format!("Text eq ({} rows)", text_eq_exp);
     let text_in_label = format!("Text IN ({} rows)", text_in_exp);
-    let pct = active_exp as f64 * 100.0 / data.len() as f64;
-    let num = format!("{:.2}", pct).trim_end_matches('0').trim_end_matches('.').to_string();
-    let reduce_label = format!("Reduce {num}%");
+    let reduce_label = |exp: usize| -> String {
+        let pct = exp as f64 * 100.0 / data.len() as f64;
+        if pct < 0.01 {
+            return "Reduce <0.01%".to_string();
+        }
+        let num = format!("{:.2}", pct).trim_end_matches('0').trim_end_matches('.').to_string();
+        format!("Reduce {num}%")
+    };
 
     let rows = vec![
         StructRow {
@@ -674,15 +596,204 @@ pub fn bench() {
             vortex: fmt_gated(vortex_text_in_ms),
         },
         StructRow {
-            metric: reduce_label,
+            metric: reduce_label(active_exp),
             pco_pack: fmt_gated(proj_ms),
             columnar: fmt_gated(col_reduce_ms),
             serde_columnar: fmt_gated(sc_reduce_ms),
             msgpack: fmt_gated(map_reduce_ms),
             vortex: fmt_gated(vortex_reduce_ms),
         },
+        StructRow {
+            metric: reduce_label(multi_exp),
+            pco_pack: fmt_gated(proj_multi_ms),
+            columnar: fmt_gated(col_multi_ms),
+            serde_columnar: fmt_gated(sc_multi_ms),
+            msgpack: fmt_gated(map_multi_ms),
+            vortex: fmt_gated(vortex_multi_ms),
+        },
     ];
     println!("{}", as_table(&rows));
+}
+
+/// The survivor predicate per reduce scenario, one shape per row
+/// representation: PcoPack baselines and msgpack decode full rows,
+/// columnar borrows, serde_columnar owns its own row type.
+#[derive(Clone, Copy)]
+enum Keep {
+    /// The ~70% `active == true` scenario.
+    Active,
+    /// The single-row `color == Red && score == 500.0` scenario.
+    Multi,
+}
+
+impl Keep {
+    fn record(self, r: &Record) -> bool {
+        match self {
+            Keep::Active => r.active,
+            Keep::Multi => matches!(r.color, Color::Red) && r.score == 500.0,
+        }
+    }
+
+    fn columnar(self, r: columnar::Ref<'_, ColumnarRecord>) -> bool {
+        match self {
+            Keep::Active => r.active,
+            Keep::Multi => *r.color == 0 && *r.score == 500.0,
+        }
+    }
+
+    fn sc(self, r: &serde_columnar_record::SerdeColumnarRecord) -> bool {
+        match self {
+            Keep::Active => r.active,
+            Keep::Multi => r.color == 0 && r.score == 500.0,
+        }
+    }
+}
+
+/// One encoded copy of the dataset per codec, plus the runtime and session
+/// the Vortex path needs. Both fold scenarios below share a single value of
+/// this; only the filter, the keep rule and the expected row count differ.
+struct FoldInputs<'a> {
+    rt: &'a tokio::runtime::Runtime,
+    vortex_session: &'a VortexSession,
+    vortex_buf: &'a ByteBuffer,
+    pco: &'a [u8],
+    columnar: &'a [u8],
+    serde_columnar: &'a [u8],
+    msgpack: &'a [u8],
+    data: &'a [Record],
+}
+
+/// Runs the projection + reduce scenario (filter the query, load
+/// `[account_id, score]` only, reduce account_id => avg(score)) for every
+/// gated codec and returns `(pco_pack, columnar, serde_columnar, msgpack,
+/// vortex)` milliseconds; `NaN` (a "-" cell) for codecs whose gate is off.
+/// The name/tags/color payloads stay compressed for PcoPack and Vortex; the
+/// baselines decode fully and fold the `keep` survivors into the same map
+/// the projected fold must produce.
+fn reduce_scenario(
+    inputs: &FoldInputs, query: &serde_json::Value, vortex_filter: &vortex::array::expr::Expression, keep: Keep,
+    expected: usize,
+) -> (f64, f64, f64, f64, f64) {
+    let FoldInputs {
+        rt,
+        vortex_session,
+        vortex_buf,
+        pco: pco_buf,
+        columnar: columnar_buf,
+        serde_columnar: sc_buf,
+        msgpack: map_buf,
+        data,
+    } = *inputs;
+    let mut truth: std::collections::HashMap<i64, (f64, u64)> = Default::default();
+    for r in data.iter().filter(|r| keep.record(r)) {
+        let e = truth.entry(r.account_id).or_default();
+        e.0 += r.score;
+        e.1 += 1;
+    }
+    let fold_rows = |rows: &[(i64, f64)]| -> std::collections::HashMap<i64, (f64, u64)> {
+        let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
+        for (account_id, score) in rows {
+            let e = acc.entry(*account_id).or_default();
+            e.0 += *score;
+            e.1 += 1;
+        }
+        acc
+    };
+
+    let pco_ms = if enabled("pco_pack") {
+        let (ms, map) = min_ms_pair(|| {
+            let compressed = Record::from_bytes(pco_buf).unwrap();
+            let results = Record::filter(&compressed, query.clone(), &["account_id", "score"]).unwrap();
+            assert_eq!(results.len(), expected);
+            assert!(results.iter().all(|r| r.name.is_empty()), "unprojected text stays default");
+            fold_rows(&results.iter().map(|r| (r.account_id, r.score)).collect::<Vec<_>>())
+        });
+        assert_eq!(map, truth, "projected reduce");
+        ms
+    } else {
+        f64::NAN
+    };
+
+    // Comparison-codec baselines: none can project, so each decodes every
+    // row it filters and folds the survivors into the same map. The
+    // numbers name the full-decode cost of not having metadata.
+    let columnar_ms = if enabled("columnar") {
+        min_ms(|| {
+            let decompressed = zstd::decode_all(columnar_buf).unwrap();
+            let words: &[u64] = bytemuck::cast_slice(&decompressed);
+            type B<'a> = columnar::BorrowedOf<'a, ColumnarRecord>;
+            let decoded = B::from_bytes(&mut columnar::bytes::indexed::decode(words));
+            let count = Len::len(&decoded);
+            let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
+            for i in 0..count {
+                let record = Index::get(&decoded, i);
+                if keep.columnar(record) {
+                    let e = acc.entry(*record.account_id).or_default();
+                    e.0 += *record.score;
+                    e.1 += 1;
+                }
+            }
+            assert_eq!(acc, truth, "columnar reduce");
+        })
+    } else {
+        f64::NAN
+    };
+
+    let sc_ms = if enabled("serde_columnar") {
+        min_ms(|| {
+            let decompressed = zstd::decode_all(sc_buf).unwrap();
+            let decoded: serde_columnar_record::SerdeColumnarStore = from_bytes(&decompressed).unwrap();
+            let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
+            for r in decoded.data.iter().filter(|r| keep.sc(r)) {
+                let e = acc.entry(r.account_id).or_default();
+                e.0 += r.score;
+                e.1 += 1;
+            }
+            assert_eq!(acc, truth, "serde_columnar reduce");
+        })
+    } else {
+        f64::NAN
+    };
+
+    let map_ms = if enabled("msgpack") {
+        min_ms(|| {
+            let deserialized = deserialize_flat(map_buf);
+            let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
+            for r in deserialized.iter().filter(|r| keep.record(r)) {
+                let e = acc.entry(r.account_id).or_default();
+                e.0 += r.score;
+                e.1 += 1;
+            }
+            assert_eq!(acc, truth, "msgpack reduce");
+        })
+    } else {
+        f64::NAN
+    };
+
+    let vortex_ms = if enabled("vortex") {
+        min_ms(|| {
+            rt.block_on(async {
+                // Same partial read as PcoPack's projected reduce: the pushed
+                // filter is exact, so the fold consumes every projected
+                // (account_id, score) row without re-testing.
+                let batch = vortex_scan(
+                    vortex_session,
+                    vortex_buf.clone(),
+                    Some(vortex_filter.clone()),
+                    Some(&["account_id", "score"]),
+                )
+                .await;
+                assert_eq!(batch.num_rows(), expected);
+                let rows: Vec<(i64, f64)> = serde_arrow::from_record_batch(&batch).unwrap();
+                assert_eq!(fold_rows(&rows), truth, "vortex reduce");
+                black_box(rows)
+            })
+        })
+    } else {
+        f64::NAN
+    };
+
+    (pco_ms, columnar_ms, sc_ms, map_ms, vortex_ms)
 }
 
 fn build_columnar(data: &[Record]) -> Vec<u8> {

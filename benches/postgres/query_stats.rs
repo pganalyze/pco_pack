@@ -147,12 +147,17 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
     let kf: Vec<(Sk, usize)> = keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches(r)).count())).collect();
 
     // Ground truth for the projection fold: fingerprint => average calls
-    // over the last-1h window, folded before `rows` moves into the
-    // encode benches.
-    let window = &keys[0];
-    let truth = fold_avg_calls(rows.iter().filter(|r| window.matches(r)).map(|r| (r.fingerprint, r.calls)));
-    let truth_time_round =
-        fold_avg_calls(rows.iter().filter(|r| window.matches_time_round(r)).map(|r| (r.fingerprint, r.calls)));
+    // over each reduce scenario (the last-1h window, then the loud
+    // toplevel filter), folded before `rows` moves into the encode benches.
+    let reduce_keys = [keys[0], keys[1]];
+    let truths: Vec<HashMap<i64, f64>> = reduce_keys
+        .iter()
+        .map(|k| fold_avg_calls(rows.iter().filter(|r| k.matches(r)).map(|r| (r.fingerprint, r.calls))))
+        .collect();
+    let truths_time_round: Vec<HashMap<i64, f64>> = reduce_keys
+        .iter()
+        .map(|k| fold_avg_calls(rows.iter().filter(|r| k.matches_time_round(r)).map(|r| (r.fingerprint, r.calls))))
+        .collect();
     let labels: Vec<String> = kf.iter().map(|(_, e)| common::filter_label(*e, n)).collect();
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
 
@@ -177,15 +182,17 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
         common::bench_pco_pack_full(&time_round_rows, &time_round_filters, |_back, _off| {}, || {});
     drop(time_round_rows);
     if crate::enabled("pco_pack") {
-        let (project_ms, fold_time_round) = common::bench_pco_pack_projected::<QueryStatTimeRound, _>(
-            &tr_bytes,
-            &queries[0],
-            &["fingerprint", "calls"],
-            kf_time_round[0].1,
-            |survivors| fold_avg_calls(survivors.iter().map(|r| (r.fingerprint, r.calls))),
-        );
-        assert_eq!(fold_time_round, truth_time_round, "{name} (TimeRound) projected fold");
-        pco_time_round.project_ms = Some(project_ms);
+        for i in 0..reduce_keys.len() {
+            let (project_ms, fold_time_round) = common::bench_pco_pack_projected::<QueryStatTimeRound, _>(
+                &tr_bytes,
+                &queries[i],
+                &["fingerprint", "calls"],
+                kf_time_round[i].1,
+                |survivors| fold_avg_calls(survivors.iter().map(|r| (r.fingerprint, r.calls))),
+            );
+            assert_eq!(fold_time_round, truths_time_round[i], "{name} (TimeRound) projected fold");
+            pco_time_round.project_ms.push(Some(project_ms));
+        }
     }
 
     let col_rows: Vec<QueryStatCol> = rows.iter().map(QueryStatCol::from).collect();
@@ -211,39 +218,43 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
         },
     );
     if crate::enabled("columnar") {
-        col.project_ms = Some(common::reduce_columnar::<QueryStatCol, Sk, (i64, i64), HashMap<i64, f64>, _, _>(
-            &col_buf,
-            &keys[0],
-            |decoded: &columnar::BorrowedOf<'_, QueryStatCol>, k: &Sk| {
-                (0..columnar::Len::len(decoded))
-                    .filter_map(|i| {
-                        let r = columnar::Index::get(decoded, i);
-                        match k {
-                            Sk::Time(a, b) => {
-                                let us = *r.collected_at;
-                                if *a <= us && us <= *b { Some((*r.fingerprint, *r.calls)) } else { None }
-                            }
-                            Sk::Loud => {
-                                if r.toplevel && *r.calls >= 10 {
-                                    Some((*r.fingerprint, *r.calls))
-                                } else {
-                                    None
+        for (k, t) in reduce_keys.iter().zip(&truths) {
+            col.project_ms.push(Some(
+                common::reduce_columnar::<QueryStatCol, Sk, (i64, i64), HashMap<i64, f64>, _, _>(
+                    &col_buf,
+                    k,
+                    |decoded: &columnar::BorrowedOf<'_, QueryStatCol>, k: &Sk| {
+                        (0..columnar::Len::len(decoded))
+                            .filter_map(|i| {
+                                let r = columnar::Index::get(decoded, i);
+                                match k {
+                                    Sk::Time(a, b) => {
+                                        let us = *r.collected_at;
+                                        if *a <= us && us <= *b { Some((*r.fingerprint, *r.calls)) } else { None }
+                                    }
+                                    Sk::Loud => {
+                                        if r.toplevel && *r.calls >= 10 {
+                                            Some((*r.fingerprint, *r.calls))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    Sk::Db(id) => {
+                                        if *r.database_id == *id {
+                                            Some((*r.fingerprint, *r.calls))
+                                        } else {
+                                            None
+                                        }
+                                    }
                                 }
-                            }
-                            Sk::Db(id) => {
-                                if *r.database_id == *id {
-                                    Some((*r.fingerprint, *r.calls))
-                                } else {
-                                    None
-                                }
-                            }
-                        }
-                    })
-                    .collect()
-            },
-            |pairs, _k| fold_avg_calls(pairs.into_iter()),
-            &truth,
-        ));
+                            })
+                            .collect()
+                    },
+                    |pairs, _k| fold_avg_calls(pairs.into_iter()),
+                    t,
+                ),
+            ));
+        }
     }
     drop(col_buf);
 
@@ -257,21 +268,23 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
         }
     });
     if crate::enabled("vortex") {
-        vx.project_ms = common::reduce_vortex_ds::<(i64, i64), Sk, _, _, _>(
-            &vx_buf,
-            &keys[0],
-            |k: &Sk| {
-                use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq};
-                match k {
-                    Sk::Time(a, b) => and(gt_eq(col("collected_at"), lit(*a)), lt_eq(col("collected_at"), lit(*b))),
-                    Sk::Loud => and(eq(col("toplevel"), lit(true)), gt_eq(col("calls"), lit(10i64))),
-                    Sk::Db(id) => eq(col("database_id"), lit(*id)),
-                }
-            },
-            &["fingerprint", "calls"],
-            |rows: Vec<(i64, i64)>, _: &Sk| fold_avg_calls(rows.into_iter()),
-            &truth,
-        );
+        for (k, t) in reduce_keys.iter().zip(&truths) {
+            vx.project_ms.push(common::reduce_vortex_ds::<(i64, i64), Sk, _, _, _>(
+                &vx_buf,
+                k,
+                |k: &Sk| {
+                    use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq};
+                    Some(match k {
+                        Sk::Time(a, b) => and(gt_eq(col("collected_at"), lit(*a)), lt_eq(col("collected_at"), lit(*b))),
+                        Sk::Loud => and(eq(col("toplevel"), lit(true)), gt_eq(col("calls"), lit(10i64))),
+                        Sk::Db(id) => eq(col("database_id"), lit(*id)),
+                    })
+                },
+                &["fingerprint", "calls"],
+                |rows: Vec<(i64, i64)>, _: &Sk| fold_avg_calls(rows.into_iter()),
+                t,
+            ));
+        }
     }
     drop(vx_rows);
     drop(vx_buf);
@@ -293,51 +306,64 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
         },
     );
     if crate::enabled("serde_columnar") {
-        sc.project_ms = Some(common::reduce_serde_columnar::<stats_sc::QueryStatsScStore, Sk, (i64, i64), _, _, _>(
-            &sc_buf,
-            &keys[0],
-            |s: &stats_sc::QueryStatsScStore, k: &Sk| {
-                s.data
-                    .iter()
-                    .filter(|r| match k {
-                        Sk::Time(a, b) => *a <= r.collected_at && r.collected_at <= *b,
-                        Sk::Loud => r.toplevel && r.calls >= 10,
-                        Sk::Db(id) => r.database_id == *id,
-                    })
-                    .map(|r| (r.fingerprint, r.calls))
-                    .collect()
-            },
-            |pairs, _k| fold_avg_calls(pairs.into_iter()),
-            &truth,
-        ));
+        for (k, t) in reduce_keys.iter().zip(&truths) {
+            sc.project_ms.push(Some(common::reduce_serde_columnar::<
+                stats_sc::QueryStatsScStore,
+                Sk,
+                (i64, i64),
+                _,
+                _,
+                _,
+            >(
+                &sc_buf,
+                k,
+                |s: &stats_sc::QueryStatsScStore, k: &Sk| {
+                    s.data
+                        .iter()
+                        .filter(|r| match k {
+                            Sk::Time(a, b) => *a <= r.collected_at && r.collected_at <= *b,
+                            Sk::Loud => r.toplevel && r.calls >= 10,
+                            Sk::Db(id) => r.database_id == *id,
+                        })
+                        .map(|r| (r.fingerprint, r.calls))
+                        .collect()
+                },
+                |pairs, _k| fold_avg_calls(pairs.into_iter()),
+                t,
+            )));
+        }
     }
     drop(sc_buf);
 
     let (mut mp, mp_buf) = common::bench_msgpack(&rows, &kf, |r: &QueryStat, k: &Sk| k.matches(r));
     if crate::enabled("msgpack") {
-        mp.project_ms = Some(common::reduce_msgpack::<QueryStat, Sk, (i64, i64), _, _, _>(
-            &mp_buf,
-            &keys[0],
-            |rows: &[QueryStat], k: &Sk| {
-                rows.iter().filter(|r| k.matches(r)).map(|r| (r.fingerprint, r.calls)).collect()
-            },
-            |pairs, _k| fold_avg_calls(pairs.into_iter()),
-            &truth,
-        ));
+        for (k, t) in reduce_keys.iter().zip(&truths) {
+            mp.project_ms.push(Some(common::reduce_msgpack::<QueryStat, Sk, (i64, i64), _, _, _>(
+                &mp_buf,
+                k,
+                |rows: &[QueryStat], k: &Sk| {
+                    rows.iter().filter(|r| k.matches(r)).map(|r| (r.fingerprint, r.calls)).collect()
+                },
+                |pairs, _k| fold_avg_calls(pairs.into_iter()),
+                t,
+            )));
+        }
     }
     drop(mp_buf);
 
     let (mut pco, pco_bytes) = common::bench_pco_pack_full(&rows, &pco_filters, |_back, _off| {}, || {});
     if crate::enabled("pco_pack") {
-        let (project_ms, fold) = common::bench_pco_pack_projected::<QueryStat, _>(
-            &pco_bytes,
-            &queries[0],
-            &["fingerprint", "calls"],
-            kf[0].1,
-            |survivors| fold_avg_calls(survivors.iter().map(|r| (r.fingerprint, r.calls))),
-        );
-        assert_eq!(fold, truth, "{name} projected fold");
-        pco.project_ms = Some(project_ms);
+        for i in 0..reduce_keys.len() {
+            let (project_ms, fold) = common::bench_pco_pack_projected::<QueryStat, _>(
+                &pco_bytes,
+                &queries[i],
+                &["fingerprint", "calls"],
+                kf[i].1,
+                |survivors| fold_avg_calls(survivors.iter().map(|r| (r.fingerprint, r.calls))),
+            );
+            assert_eq!(fold, truths[i], "{name} projected fold");
+            pco.project_ms.push(Some(project_ms));
+        }
     }
 
     let metrics = ["Size", "Serialize", "Deserialize"];
@@ -364,15 +390,17 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
             msgpack: cell(&mp, "Filter", Some(i)),
         });
     }
-    out.push(CodecRow {
-        metric: common::reduce_label(kf[0].1, n),
-        pco_pack: cell(&pco, "Project", None),
-        pco_time_round: cell(&pco_time_round, "Project", None),
-        vortex: cell(&vx, "Project", None),
-        columnar: cell(&col, "Project", None),
-        serde_columnar: cell(&sc, "Project", None),
-        msgpack: cell(&mp, "Project", None),
-    });
+    for (i, &(_, expected)) in kf.iter().enumerate().take(reduce_keys.len()) {
+        out.push(CodecRow {
+            metric: common::reduce_label(expected, n),
+            pco_pack: cell(&pco, "Project", Some(i)),
+            pco_time_round: cell(&pco_time_round, "Project", Some(i)),
+            vortex: cell(&vx, "Project", Some(i)),
+            columnar: cell(&col, "Project", Some(i)),
+            serde_columnar: cell(&sc, "Project", Some(i)),
+            msgpack: cell(&mp, "Project", Some(i)),
+        });
+    }
     println!("{}", markdown_tables::as_table(&out));
     println!();
 }

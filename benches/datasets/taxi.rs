@@ -119,43 +119,73 @@ pub fn bench() {
 
     // Projection + reduce: filter the 24 h window, load only
     // [pu_location_id, trip_miles], reduce zone => average miles; text
-    // and money columns never inflate.
+    // and money columns never inflate. A second reduce over the most common
+    // license puts the many-rows point on the same fold.
     let (pa, pb) = us_ranges[1];
     let proj_q = serde_json::json!({ "pickup_datetime": { "start": pa, "end": pb } });
     let mut proj_truth: std::collections::HashMap<i32, (f64, u64)> = Default::default();
+    let mut lic_truth: std::collections::HashMap<i32, (f64, u64)> = Default::default();
     for r in data.iter() {
         if (pa..=pb).contains(&r.pickup_datetime.timestamp_micros()) {
             let e = proj_truth.entry(r.pu_location_id).or_default();
             e.0 += r.trip_miles;
             e.1 += 1;
         }
+        if r.license_num == lic0 {
+            let e = lic_truth.entry(r.pu_location_id).or_default();
+            e.0 += r.trip_miles;
+            e.1 += 1;
+        }
     }
+    let fold_zone = |rows: &[Trip]| -> std::collections::HashMap<i32, (f64, u64)> {
+        let mut acc: std::collections::HashMap<i32, (f64, u64)> = Default::default();
+        for r in rows {
+            let e = acc.entry(r.pu_location_id).or_default();
+            e.0 += r.trip_miles;
+            e.1 += 1;
+        }
+        acc
+    };
+    let fold_pairs = |pairs: Vec<(i32, f64)>| -> HashMap<i32, (f64, u64)> {
+        let mut acc: HashMap<i32, (f64, u64)> = Default::default();
+        for (zone, miles) in pairs {
+            let e = acc.entry(zone).or_default();
+            e.0 += miles;
+            e.1 += 1;
+        }
+        acc
+    };
+    // Counts must match exactly; the f64 sums may drift in their last bits
+    // because projected survivors arrive chunk-major, not strictly in row
+    // order, so f64 accumulation is order-sensitive.
+    let check_fuzzy = |got: &HashMap<i32, (f64, u64)>, truth: &HashMap<i32, (f64, u64)>, msg: &str| {
+        assert_eq!(got.len(), truth.len(), "{msg} keys");
+        for (zone, (sum, cnt)) in truth {
+            let (got_sum, got_cnt) = got[zone];
+            assert_eq!(got_cnt, *cnt, "{msg} count for zone {zone}");
+            assert!((got_sum - sum).abs() <= sum.abs() * 1e-9, "{msg} sum for zone {zone}");
+        }
+    };
+    let lic_key = lic0.to_string();
     if crate::enabled("pco_pack") {
         let (ms, map) = common::bench_pco_pack_projected::<Trip, _>(
             &pco_bytes,
             &proj_q,
             &["pu_location_id", "trip_miles"],
             exp[1],
-            |rows| {
-                let mut acc: std::collections::HashMap<i32, (f64, u64)> = Default::default();
-                for r in rows {
-                    let e = acc.entry(r.pu_location_id).or_default();
-                    e.0 += r.trip_miles;
-                    e.1 += 1;
-                }
-                acc
-            },
+            fold_zone,
         );
-        // Counts must match exactly; the f64 sums may drift in their last bits
-        // because projected survivors arrive chunk-major, not strictly in row
-        // order, so f64 accumulation is order-sensitive.
-        assert_eq!(map.len(), proj_truth.len(), "taxi projected reduce keys");
-        for (zone, (sum, cnt)) in &proj_truth {
-            let (got_sum, got_cnt) = map[zone];
-            assert_eq!(got_cnt, *cnt, "taxi projected reduce count for zone {zone}");
-            assert!((got_sum - sum).abs() <= sum.abs() * 1e-9, "taxi projected reduce sum for zone {zone}");
-        }
-        pco.project_ms = Some(ms);
+        check_fuzzy(&map, &proj_truth, "taxi projected reduce");
+        pco.project_ms.push(Some(ms));
+        let (ms_lic, map_lic) = common::bench_pco_pack_projected::<Trip, _>(
+            &pco_bytes,
+            &queries[2],
+            &["pu_location_id", "trip_miles"],
+            lic_exp,
+            fold_zone,
+        );
+        check_fuzzy(&map_lic, &lic_truth, "taxi license reduce");
+        pco.project_ms.push(Some(ms_lic));
         drop(pco_bytes);
         let (msf, _) = common::bench_pco_pack_projected::<TripF, _>(
             &pcof_bytes,
@@ -164,7 +194,15 @@ pub fn bench() {
             exp[1],
             |rows| rows.len(),
         );
-        pcof.project_ms = Some(msf);
+        pcof.project_ms.push(Some(msf));
+        let (msf_lic, _) = common::bench_pco_pack_projected::<TripF, _>(
+            &pcof_bytes,
+            &queries[2],
+            &["pu_location_id", "trip_miles"],
+            lic_exp,
+            |rows| rows.len(),
+        );
+        pcof.project_ms.push(Some(msf_lic));
         drop(pcof_bytes);
     }
 
@@ -202,7 +240,7 @@ pub fn bench() {
     );
     if crate::enabled("columnar") {
         // Honest reduce: full indexed decode of the window survivors, zone => avg miles.
-        col.project_ms = Some(common::reduce_columnar::<TripCol, (i64, i64), (i32, f64), _, _, _>(
+        col.project_ms.push(Some(common::reduce_columnar::<TripCol, (i64, i64), (i32, f64), _, _, _>(
             &col_buf,
             &(pa, pb),
             |decoded: &columnar::BorrowedOf<'_, TripCol>, k: &(i64, i64)| {
@@ -218,17 +256,24 @@ pub fn bench() {
                     })
                     .collect()
             },
-            |pairs, _k| {
-                let mut acc: HashMap<i32, (f64, u64)> = Default::default();
-                for (zone, miles) in pairs {
-                    let e = acc.entry(zone).or_default();
-                    e.0 += miles;
-                    e.1 += 1;
-                }
-                acc
-            },
+            |pairs, _k| fold_pairs(pairs),
             &proj_truth,
-        ));
+        )));
+        // License eq second reduce: same fold, string key.
+        col.project_ms.push(Some(common::reduce_columnar::<TripCol, String, (i32, f64), _, _, _>(
+            &col_buf,
+            &lic_key,
+            |decoded: &columnar::BorrowedOf<'_, TripCol>, l: &String| {
+                (0..columnar::Len::len(decoded))
+                    .filter_map(|i| {
+                        let r = columnar::Index::get(decoded, i);
+                        if r.license_num == l.as_bytes() { Some((*r.pu_location_id, *r.trip_miles)) } else { None }
+                    })
+                    .collect()
+            },
+            |pairs, _k| fold_pairs(pairs),
+            &lic_truth,
+        )));
     }
     drop(col_buf);
 
@@ -249,28 +294,31 @@ pub fn bench() {
         },
     );
     if crate::enabled("serde_columnar") {
-        sc.project_ms = Some(common::reduce_serde_columnar::<taxi_sc::TripScStore, (i64, i64), (i32, f64), _, _, _>(
-            &sc_buf,
-            &(pa, pb),
-            |s: &taxi_sc::TripScStore, k: &(i64, i64)| {
-                let &(a, b) = k;
-                s.data
-                    .iter()
-                    .filter(|r| a <= r.pickup_datetime && r.pickup_datetime <= b)
-                    .map(|r| (r.pu_location_id, r.trip_miles))
-                    .collect()
-            },
-            |pairs, _k| {
-                let mut acc: HashMap<i32, (f64, u64)> = Default::default();
-                for (zone, miles) in pairs {
-                    let e = acc.entry(zone).or_default();
-                    e.0 += miles;
-                    e.1 += 1;
-                }
-                acc
-            },
-            &proj_truth,
+        sc.project_ms.push(Some(
+            common::reduce_serde_columnar::<taxi_sc::TripScStore, (i64, i64), (i32, f64), _, _, _>(
+                &sc_buf,
+                &(pa, pb),
+                |s: &taxi_sc::TripScStore, k: &(i64, i64)| {
+                    let &(a, b) = k;
+                    s.data
+                        .iter()
+                        .filter(|r| a <= r.pickup_datetime && r.pickup_datetime <= b)
+                        .map(|r| (r.pu_location_id, r.trip_miles))
+                        .collect()
+                },
+                |pairs, _k| fold_pairs(pairs),
+                &proj_truth,
+            ),
         ));
+        sc.project_ms.push(Some(common::reduce_serde_columnar::<taxi_sc::TripScStore, String, (i32, f64), _, _, _>(
+            &sc_buf,
+            &lic_key,
+            |s: &taxi_sc::TripScStore, l: &String| {
+                s.data.iter().filter(|r| r.license_num == *l).map(|r| (r.pu_location_id, r.trip_miles)).collect()
+            },
+            |pairs, _k| fold_pairs(pairs),
+            &lic_truth,
+        )));
     }
     drop(sc_buf);
 
@@ -283,7 +331,7 @@ pub fn bench() {
         Tk::Base(bn) => r.dispatching_base_num == *bn,
     });
     if crate::enabled("msgpack") {
-        mp.project_ms = Some(common::reduce_msgpack::<Trip, (i64, i64), (i32, f64), _, _, _>(
+        mp.project_ms.push(Some(common::reduce_msgpack::<Trip, (i64, i64), (i32, f64), _, _, _>(
             &mp_buf,
             &(pa, pb),
             |rows: &[Trip], k: &(i64, i64)| {
@@ -293,17 +341,18 @@ pub fn bench() {
                     .map(|r| (r.pu_location_id, r.trip_miles))
                     .collect()
             },
-            |pairs, _k| {
-                let mut acc: HashMap<i32, (f64, u64)> = Default::default();
-                for (zone, miles) in pairs {
-                    let e = acc.entry(zone).or_default();
-                    e.0 += miles;
-                    e.1 += 1;
-                }
-                acc
-            },
+            |pairs, _k| fold_pairs(pairs),
             &proj_truth,
-        ));
+        )));
+        mp.project_ms.push(Some(common::reduce_msgpack::<Trip, String, (i32, f64), _, _, _>(
+            &mp_buf,
+            &lic_key,
+            |rows: &[Trip], l: &String| {
+                rows.iter().filter(|r| r.license_num == *l).map(|r| (r.pu_location_id, r.trip_miles)).collect()
+            },
+            |pairs, _k| fold_pairs(pairs),
+            &lic_truth,
+        )));
     }
     drop(mp_buf);
 
@@ -337,12 +386,18 @@ pub fn bench() {
         // timestamps with varying fractional digits, so the fold re-tests the
         // projected timestamp numerically. Survivors arrive in file order, so
         // the f64 sums are exact.
-        vx.project_ms = common::reduce_vortex_ds::<(chrono::DateTime<chrono::Utc>, i32, f64), (String, String), _, _, _>(
+        vx.project_ms.push(common::reduce_vortex_ds::<
+            (chrono::DateTime<chrono::Utc>, i32, f64),
+            (String, String),
+            _,
+            _,
+            _,
+        >(
             &vx_buf,
             &str_ranges[1],
             |k: &(String, String)| {
                 let (a, b) = k;
-                vortex::array::expr::and(
+                Some(vortex::array::expr::and(
                     vortex::array::expr::gt_eq(
                         vortex::array::expr::col("pickup_datetime"),
                         vortex::array::expr::lit(a.as_str()),
@@ -351,7 +406,7 @@ pub fn bench() {
                         vortex::array::expr::col("pickup_datetime"),
                         vortex::array::expr::lit(b.as_str()),
                     ),
-                )
+                ))
             },
             &["pickup_datetime", "pu_location_id", "trip_miles"],
             |rows: Vec<(chrono::DateTime<chrono::Utc>, i32, f64)>, _: &(String, String)| {
@@ -367,10 +422,26 @@ pub fn bench() {
                 acc
             },
             &proj_truth,
-        );
+        ));
+        // License eq second reduce: the pushed eq is exact (verified by the
+        // text-filter cell), so the fold consumes every projected row.
+        vx.project_ms.push(common::reduce_vortex_ds::<(i32, f64), String, _, _, _>(
+            &vx_buf,
+            &lic_key,
+            |l: &String| {
+                Some(vortex::array::expr::eq(
+                    vortex::array::expr::col("license_num"),
+                    vortex::array::expr::lit(l.as_str()),
+                ))
+            },
+            &["pu_location_id", "trip_miles"],
+            |rows: Vec<(i32, f64)>, _: &String| fold_pairs(rows),
+            &lic_truth,
+        ));
     }
 
-    let reduce_label = common::reduce_label(exp[1], n);
+    let reduce_labels: Vec<String> = vec![common::reduce_label(exp[1], n), common::reduce_label(lic_exp, n)];
+    let reduce_refs: Vec<&str> = reduce_labels.iter().map(String::as_str).collect();
 
     CodecResults {
         pco_pack: pco,
@@ -380,7 +451,7 @@ pub fn bench() {
         msgpack: mp,
         vortex: vx,
     }
-    .print(&label_refs, Some(&reduce_label));
+    .print(&label_refs, &reduce_refs);
 }
 
 /// Lossy variant: `float_round = 3`, exactly lossless for this file (see

@@ -462,11 +462,14 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     labels.push(if kf[3].1 == 0 { "Text miss".to_string() } else { common::text_filter_label(kf[3].1, n) });
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
 
-    // Projection fold ground truth: query_fingerprint => average runtime_ms
-    // over the last-1h window, folded before `rows` moves into the encoders.
-    let window = &keys[0];
-    let proj_truth =
-        fold_fp_avg(rows.iter().filter(|r| window.matches(r)).map(|r| (r.query_fingerprint, r.runtime_ms)));
+    // Projection fold ground truth per reduce scenario (the last-1h window,
+    // then the slow-tail filter): query_fingerprint => average runtime_ms,
+    // folded before `rows` moves into the encoders.
+    let reduce_keys = [keys[0].clone(), keys[1].clone()];
+    let proj_truths: Vec<HashMap<i64, f64>> = reduce_keys
+        .iter()
+        .map(|k| fold_fp_avg(rows.iter().filter(|r| k.matches(r)).map(|r| (r.query_fingerprint, r.runtime_ms))))
+        .collect();
 
     println!("### query_explains ({n} rows)\n");
 
@@ -486,15 +489,17 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     let (mut pco_text, text_bytes) = common::bench_pco_pack_full(&string_rows, &pco_filters, |_back, _off| {}, || {});
     drop(string_rows);
     if crate::enabled("pco_pack") {
-        let (ms_text, fold_text) = common::bench_pco_pack_projected::<QueryExplainString, _>(
-            &text_bytes,
-            &queries[0],
-            &["query_fingerprint", "runtime_ms"],
-            kf[0].1,
-            |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
-        );
-        assert_eq!(fold_text, proj_truth, "query_explains (text) projected fold");
-        pco_text.project_ms = Some(ms_text);
+        for i in 0..reduce_keys.len() {
+            let (ms_text, fold_text) = common::bench_pco_pack_projected::<QueryExplainString, _>(
+                &text_bytes,
+                &queries[i],
+                &["query_fingerprint", "runtime_ms"],
+                kf[i].1,
+                |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
+            );
+            assert_eq!(fold_text, proj_truths[i], "query_explains (text) projected fold");
+            pco_text.project_ms.push(Some(ms_text));
+        }
         drop(text_bytes);
     }
 
@@ -505,14 +510,16 @@ fn bench_explains(rows: Vec<QueryExplain>) {
         common::bench_pco_pack_full(&lossy_rows, &lossy_filters, |_back, _off| {}, || {});
     drop(lossy_rows);
     if crate::enabled("pco_pack") {
-        let (ms_lossy, _) = common::bench_pco_pack_projected::<QueryExplainLossy, _>(
-            &lossy_bytes,
-            &queries[0],
-            &["query_fingerprint", "runtime_ms"],
-            kf_lossy[0].1,
-            |rows| rows.len(),
-        );
-        pco_lossy.project_ms = Some(ms_lossy);
+        for i in 0..reduce_keys.len() {
+            let (ms_lossy, _) = common::bench_pco_pack_projected::<QueryExplainLossy, _>(
+                &lossy_bytes,
+                &queries[i],
+                &["query_fingerprint", "runtime_ms"],
+                kf_lossy[i].1,
+                |rows| rows.len(),
+            );
+            pco_lossy.project_ms.push(Some(ms_lossy));
+        }
         drop(lossy_bytes);
     }
 
@@ -539,15 +546,17 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     );
     drop(arena_rows);
     if crate::enabled("pco_pack") {
-        let (ms_arena, fold_arena) = common::bench_pco_pack_projected::<QueryExplainArena, _>(
-            &arena_bytes,
-            &queries[0],
-            &["query_fingerprint", "runtime_ms"],
-            kf[0].1,
-            |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
-        );
-        assert_eq!(fold_arena, proj_truth, "query_explains (arena) projected fold");
-        pco_arena.project_ms = Some(ms_arena);
+        for i in 0..reduce_keys.len() {
+            let (ms_arena, fold_arena) = common::bench_pco_pack_projected::<QueryExplainArena, _>(
+                &arena_bytes,
+                &queries[i],
+                &["query_fingerprint", "runtime_ms"],
+                kf[i].1,
+                |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
+            );
+            assert_eq!(fold_arena, proj_truths[i], "query_explains (arena) projected fold");
+            pco_arena.project_ms.push(Some(ms_arena));
+        }
         drop(arena_bytes);
     }
 
@@ -574,14 +583,16 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     );
     drop(arena_lossy_rows);
     if crate::enabled("pco_pack") {
-        let (ms_al, _) = common::bench_pco_pack_projected::<QueryExplainArenaLossy, _>(
-            &arena_lossy_bytes,
-            &queries[0],
-            &["query_fingerprint", "runtime_ms"],
-            kf_lossy[0].1,
-            |rows| rows.len(),
-        );
-        pco_arena_lossy.project_ms = Some(ms_al);
+        for i in 0..reduce_keys.len() {
+            let (ms_al, _) = common::bench_pco_pack_projected::<QueryExplainArenaLossy, _>(
+                &arena_lossy_bytes,
+                &queries[i],
+                &["query_fingerprint", "runtime_ms"],
+                kf_lossy[i].1,
+                |rows| rows.len(),
+            );
+            pco_arena_lossy.project_ms.push(Some(ms_al));
+        }
         drop(arena_lossy_bytes);
     }
 
@@ -609,29 +620,38 @@ fn bench_explains(rows: Vec<QueryExplain>) {
         },
     );
     if crate::enabled("columnar") {
-        col.project_ms = Some(common::reduce_columnar::<QueryExplainCol, Ek, (i64, f32), HashMap<i64, f64>, _, _>(
-            &col_buf,
-            &keys[0],
-            |decoded: &columnar::BorrowedOf<'_, QueryExplainCol>, k: &Ek| {
-                (0..columnar::Len::len(decoded))
-                    .filter_map(|i| {
-                        let r = columnar::Index::get(decoded, i);
-                        let hit = match k {
-                            Ek::Time(a, b) => {
-                                let us = *r.seen_at;
-                                *a <= us && us <= *b
-                            }
-                            Ek::Slow => *r.runtime_ms >= 10_000.0,
-                            Ek::Server(id) => *r.server_id == *id,
-                            Ek::Error(e) => r.error == e.as_bytes(),
-                        };
-                        if hit { Some((*r.query_fingerprint, *r.runtime_ms)) } else { None }
-                    })
-                    .collect()
-            },
-            |pairs, _k| fold_fp_avg(pairs.into_iter()),
-            &proj_truth,
-        ));
+        for (k, t) in reduce_keys.iter().zip(&proj_truths) {
+            col.project_ms.push(Some(common::reduce_columnar::<
+                QueryExplainCol,
+                Ek,
+                (i64, f32),
+                HashMap<i64, f64>,
+                _,
+                _,
+            >(
+                &col_buf,
+                k,
+                |decoded: &columnar::BorrowedOf<'_, QueryExplainCol>, k: &Ek| {
+                    (0..columnar::Len::len(decoded))
+                        .filter_map(|i| {
+                            let r = columnar::Index::get(decoded, i);
+                            let hit = match k {
+                                Ek::Time(a, b) => {
+                                    let us = *r.seen_at;
+                                    *a <= us && us <= *b
+                                }
+                                Ek::Slow => *r.runtime_ms >= 10_000.0,
+                                Ek::Server(id) => *r.server_id == *id,
+                                Ek::Error(e) => r.error == e.as_bytes(),
+                            };
+                            if hit { Some((*r.query_fingerprint, *r.runtime_ms)) } else { None }
+                        })
+                        .collect()
+                },
+                |pairs, _k| fold_fp_avg(pairs.into_iter()),
+                t,
+            )));
+        }
     }
     drop(col_buf);
 
@@ -646,22 +666,24 @@ fn bench_explains(rows: Vec<QueryExplain>) {
         }
     });
     if crate::enabled("vortex") {
-        vx.project_ms = common::reduce_vortex_ds::<(i64, f32), Ek, _, _, _>(
-            &vx_buf,
-            &keys[0],
-            |k: &Ek| {
-                use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq};
-                match k {
-                    Ek::Time(a, b) => and(gt_eq(col("seen_at"), lit(*a)), lt_eq(col("seen_at"), lit(*b))),
-                    Ek::Slow => gt_eq(col("runtime_ms"), lit(10_000.0f32)),
-                    Ek::Server(id) => eq(col("server_id"), lit(*id)),
-                    Ek::Error(e) => eq(col("error"), lit(e.as_str())),
-                }
-            },
-            &["query_fingerprint", "runtime_ms"],
-            |rows: Vec<(i64, f32)>, _: &Ek| fold_fp_avg(rows.into_iter()),
-            &proj_truth,
-        );
+        for (k, t) in reduce_keys.iter().zip(&proj_truths) {
+            vx.project_ms.push(common::reduce_vortex_ds::<(i64, f32), Ek, _, _, _>(
+                &vx_buf,
+                k,
+                |k: &Ek| {
+                    use vortex::array::expr::{and, col, eq, gt_eq, lit, lt_eq};
+                    Some(match k {
+                        Ek::Time(a, b) => and(gt_eq(col("seen_at"), lit(*a)), lt_eq(col("seen_at"), lit(*b))),
+                        Ek::Slow => gt_eq(col("runtime_ms"), lit(10_000.0f32)),
+                        Ek::Server(id) => eq(col("server_id"), lit(*id)),
+                        Ek::Error(e) => eq(col("error"), lit(e.as_str())),
+                    })
+                },
+                &["query_fingerprint", "runtime_ms"],
+                |rows: Vec<(i64, f32)>, _: &Ek| fold_fp_avg(rows.into_iter()),
+                t,
+            ));
+        }
     }
     drop(vx_rows);
     drop(vx_buf);
@@ -684,53 +706,65 @@ fn bench_explains(rows: Vec<QueryExplain>) {
         },
     );
     if crate::enabled("serde_columnar") {
-        sc.project_ms = Some(common::reduce_serde_columnar::<explains_sc::ExplainsScStore, Ek, (i64, f32), _, _, _>(
-            &sc_buf,
-            &keys[0],
-            |s: &explains_sc::ExplainsScStore, k: &Ek| {
-                s.data
-                    .iter()
-                    .filter(|r| match k {
-                        Ek::Time(a, b) => *a <= r.seen_at && r.seen_at <= *b,
-                        Ek::Slow => r.runtime_ms >= 10_000.0,
-                        Ek::Server(id) => r.server_id == *id,
-                        Ek::Error(e) => r.error == *e,
-                    })
-                    .map(|r| (r.query_fingerprint, r.runtime_ms))
-                    .collect()
-            },
-            |pairs, _k| fold_fp_avg(pairs.into_iter()),
-            &proj_truth,
-        ));
+        for (k, t) in reduce_keys.iter().zip(&proj_truths) {
+            sc.project_ms.push(Some(common::reduce_serde_columnar::<
+                explains_sc::ExplainsScStore,
+                Ek,
+                (i64, f32),
+                _,
+                _,
+                _,
+            >(
+                &sc_buf,
+                k,
+                |s: &explains_sc::ExplainsScStore, k: &Ek| {
+                    s.data
+                        .iter()
+                        .filter(|r| match k {
+                            Ek::Time(a, b) => *a <= r.seen_at && r.seen_at <= *b,
+                            Ek::Slow => r.runtime_ms >= 10_000.0,
+                            Ek::Server(id) => r.server_id == *id,
+                            Ek::Error(e) => r.error == *e,
+                        })
+                        .map(|r| (r.query_fingerprint, r.runtime_ms))
+                        .collect()
+                },
+                |pairs, _k| fold_fp_avg(pairs.into_iter()),
+                t,
+            )));
+        }
     }
     drop(sc_buf);
 
     let (mut mp, mp_buf) = common::bench_msgpack(&rows, &kf, |r: &QueryExplain, k: &Ek| k.matches(r));
     if crate::enabled("msgpack") {
-        mp.project_ms = Some(common::reduce_msgpack::<QueryExplain, Ek, (i64, f32), _, _, _>(
-            &mp_buf,
-            &keys[0],
-            |rows: &[QueryExplain], k: &Ek| {
-                rows.iter().filter(|r| k.matches(r)).map(|r| (r.query_fingerprint, r.runtime_ms)).collect()
-            },
-            |pairs, _k| fold_fp_avg(pairs.into_iter()),
-            &proj_truth,
-        ));
+        for (k, t) in reduce_keys.iter().zip(&proj_truths) {
+            mp.project_ms.push(Some(common::reduce_msgpack::<QueryExplain, Ek, (i64, f32), _, _, _>(
+                &mp_buf,
+                k,
+                |rows: &[QueryExplain], k: &Ek| {
+                    rows.iter().filter(|r| k.matches(r)).map(|r| (r.query_fingerprint, r.runtime_ms)).collect()
+                },
+                |pairs, _k| fold_fp_avg(pairs.into_iter()),
+                t,
+            )));
+        }
     }
     drop(mp_buf);
 
     let (mut pco, pco_bytes) = common::bench_pco_pack_full(&rows, &pco_filters, |_back, _off| {}, || {});
     if crate::enabled("pco_pack") {
-        pco.project_ms = Some(
-            common::bench_pco_pack_projected::<QueryExplain, _>(
+        for i in 0..reduce_keys.len() {
+            let (ms_pco, fold_pco) = common::bench_pco_pack_projected::<QueryExplain, _>(
                 &pco_bytes,
-                &queries[0],
+                &queries[i],
                 &["query_fingerprint", "runtime_ms"],
-                kf[0].1,
+                kf[i].1,
                 |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
-            )
-            .0,
-        );
+            );
+            assert_eq!(fold_pco, proj_truths[i], "query_explains projected fold");
+            pco.project_ms.push(Some(ms_pco));
+        }
     }
     drop(pco_bytes);
     drop(rows);
@@ -774,21 +808,23 @@ fn bench_explains(rows: Vec<QueryExplain>) {
             msgpack: cell(&mp, "Filter", Some(i)),
         });
     }
-    pco_out.push(CodecRowPcoPack {
-        metric: common::reduce_label(kf[0].1, n),
-        text: cell(&pco_text, "Project", None),
-        json: cell(&pco, "Project", None),
-        json_lossy: cell(&pco_lossy, "Project", None),
-        arena: cell(&pco_arena, "Project", None),
-        arena_lossy: cell(&pco_arena_lossy, "Project", None),
-    });
-    other_out.push(CodecRowOther {
-        metric: common::reduce_label(kf[0].1, n),
-        vortex: cell(&vx, "Project", None),
-        columnar: cell(&col, "Project", None),
-        serde_columnar: cell(&sc, "Project", None),
-        msgpack: cell(&mp, "Project", None),
-    });
+    for (i, &(_, expected)) in kf.iter().enumerate().take(reduce_keys.len()) {
+        pco_out.push(CodecRowPcoPack {
+            metric: common::reduce_label(expected, n),
+            text: cell(&pco_text, "Project", Some(i)),
+            json: cell(&pco, "Project", Some(i)),
+            json_lossy: cell(&pco_lossy, "Project", Some(i)),
+            arena: cell(&pco_arena, "Project", Some(i)),
+            arena_lossy: cell(&pco_arena_lossy, "Project", Some(i)),
+        });
+        other_out.push(CodecRowOther {
+            metric: common::reduce_label(expected, n),
+            vortex: cell(&vx, "Project", Some(i)),
+            columnar: cell(&col, "Project", Some(i)),
+            serde_columnar: cell(&sc, "Project", Some(i)),
+            msgpack: cell(&mp, "Project", Some(i)),
+        });
+    }
     println!("#### PcoPack scenarios\n");
     println!("{}", markdown_tables::as_table(&pco_out));
     println!();

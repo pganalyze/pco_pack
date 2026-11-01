@@ -15,6 +15,7 @@ NYC AirData single-sensor stream: wide i16 measurements, a monotonic i64 counter
 | Filter 0.18% | 6.3 ms   | 6.4 ms          | 0.5 ms   | 31.4 ms  | 54.9 ms        | 197.5 ms |
 | Filter 4.49% | 8.0 ms   | 8.0 ms          | 3.2 ms   | 31.5 ms  | 55.0 ms        | 197.9 ms |
 | Reduce 0.18% | 1.8 ms   | 1.8 ms          | 0.1 ms   | 33.3 ms  | 54.5 ms        | 197.2 ms |
+| Reduce 4.49% | 2.5 ms   | 2.4 ms          | 0.6 ms   | 33.1 ms  | 54.7 ms        | 202.1 ms |
 
 - Full-fidelity size is tied between PcoPack and Vortex
 - Lossy time rounding reduces size by 40%
@@ -33,6 +34,7 @@ NYC taxi trips (also seen in the upstream pcodec benchmarks). All four timestamp
 | Text eq 73.12% | 3.6 s    | 3.4 s           | 7.2 s    | 2.6 s    | 5.0 s          | 10.1 s   |
 | Text eq 73.1%  | 3.6 s    | 3.4 s           | 7.2 s    | 2.6 s    | 5.0 s          | 10.1 s   |
 | Reduce 4.05%   | 118.6 ms | 102.5 ms        | 81.5 ms  | 2.5 s    | 4.9 s          | 10.0 s   |
+| Reduce 73.12%  | 1.9 s    | 1.7 s           | 263.7 ms | 2.6 s    | 5.0 s          | 9.7 s    |
 
 - PcoPack is the smallest by a wide margin
 - For filtering, hour window favors Vortex (finer row-group pruning) and day window favors PcoPack
@@ -52,6 +54,7 @@ Geofabrik Austria PBF. Filters are padded boxes on the centroid: cross-border ge
 | Filter 0.18% | 714.8 ms | 755.9 ms        | 513.1 ms | 2.2 s    | 3.1 s          | 6.4 s   |
 | Filter 4.66% | 1.1 s    | 1.2 s           | 2.1 s    | 2.2 s    | 3.1 s          | 6.4 s   |
 | Reduce 0.18% | 463.9 ms | 502.3 ms        | 379.6 ms | 2.2 s    | 3.1 s          | 6.4 s   |
+| Reduce 4.66% | 632.3 ms | 646.1 ms        | 684.2 ms | 2.4 s    | 3.1 s          | 6.2 s   |
 
 - Vortex automatically converts limited-precision floats into integers, which is why it outperforms PcoPack by default
 - PcoPack (lossy) uses `float_round = 7`, cutting node size ~59% and only drops sub-centimeter coordinate precision
@@ -63,6 +66,7 @@ Geofabrik Austria PBF. Filters are padded boxes on the centroid: cross-border ge
 | Size        | 195.2 MB | 208.1 MB | 384.8 MB | 448.2 MB       | 478.4 MB |
 | Serialize   | 6.6 s    | 13.2 s   | 4.0 s    | 3.4 s          | 4.0 s    |
 | Deserialize | 4.1 s    | 4.1 s    | 1.5 s    | 3.2 s          | 3.5 s    |
+| Reduce 100% | 872.6 ms | 1.0 s    | 1.5 s    | 3.1 s          | 3.9 s    |
 
 #### Relation (175564 rows)
 
@@ -71,6 +75,7 @@ Geofabrik Austria PBF. Filters are padded boxes on the centroid: cross-border ge
 | Size        | 17.8 MB  | 18.4 MB  | 19.5 MB  | 16.6 MB        | 19.1 MB  |
 | Serialize   | 289.9 ms | 652.3 ms | 179.2 ms | 203.5 ms       | 188.1 ms |
 | Deserialize | 197.8 ms | 274.8 ms | 56.6 ms  | 175.6 ms       | 236.7 ms |
+| Reduce 100% | 84.0 ms  | 176.2 ms | 56.0 ms  | 173.2 ms       | 253.7 ms |
 
 ### openalex (632276 works)
 
@@ -86,6 +91,7 @@ OpenAlex `works` snapshot: deeply nested JSON flattened to typed structs.
 | Text eq 85.13% | 5.2 s    | 5.3 s           | 4.7 s    | 1.6 s    | 5.2 s          | 4.6 s    |
 | Text eq <0.01% | 462.2 ms | 462.8 ms        | 69.2 ms  | 1.6 s    | 5.2 s          | 4.6 s    |
 | Reduce 85.13%  | 88.0 ms  | 75.5 ms         | 11.3 ms  | 1.6 s    | 5.2 s          | 4.6 s    |
+| Reduce 2.96%   | 10.3 ms  | 10.0 ms         | 4.0 ms   | 1.5 s    | 5.1 s          | 4.6 s    |
 
 - PcoPack (lossy) `float_round = 4` saves 2% because `fwci` and scores carry ~15-digit model noise
 - Vortex filters fastest (row-group pruning + predicate pushdown)

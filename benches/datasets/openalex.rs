@@ -302,6 +302,26 @@ pub fn bench() {
         }
         acc
     };
+    // Second reduce: `work_type` equality on the moderate pick (Preprint),
+    // the few-rows point on the same year => average citations fold.
+    let disc1 = work_type_u8(&picks[1].0);
+    let mut preprint_truth: std::collections::HashMap<i32, (i64, u64)> = Default::default();
+    for w in data.iter().filter(|w| w.work_type == picks[1].0) {
+        if let Some(y) = w.publication_year {
+            let e = preprint_truth.entry(y).or_default();
+            e.0 += w.cited_by_count as i64;
+            e.1 += 1;
+        }
+    }
+    let fold_pairs = |pairs: Vec<(i32, i64)>| -> HashMap<i32, (i64, u64)> {
+        let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+        for (y, c) in pairs {
+            let e = acc.entry(y).or_default();
+            e.0 += c;
+            e.1 += 1;
+        }
+        acc
+    };
     if crate::enabled("pco_pack") {
         let (ms, map) = common::bench_pco_pack_projected::<Work, _>(
             &pco_bytes,
@@ -311,7 +331,16 @@ pub fn bench() {
             fold,
         );
         assert_eq!(map, proj_truth, "openalex projected reduce");
-        pco.project_ms = Some(ms);
+        pco.project_ms.push(Some(ms));
+        let (ms_pt, map_pt) = common::bench_pco_pack_projected::<Work, _>(
+            &pco_bytes,
+            &queries[1],
+            &["publication_year", "cited_by_count"],
+            exps[1],
+            fold,
+        );
+        assert_eq!(map_pt, preprint_truth, "openalex work_type projected reduce");
+        pco.project_ms.push(Some(ms_pt));
         drop(pco_bytes);
         let (msf, _) = common::bench_pco_pack_projected::<WorkF, _>(
             &pcof_bytes,
@@ -320,7 +349,15 @@ pub fn bench() {
             lang_exp,
             |rows| rows.len(),
         );
-        pcof.project_ms = Some(msf);
+        pcof.project_ms.push(Some(msf));
+        let (msf_pt, _) = common::bench_pco_pack_projected::<WorkF, _>(
+            &pcof_bytes,
+            &queries[1],
+            &["publication_year", "cited_by_count"],
+            exps[1],
+            |rows| rows.len(),
+        );
+        pcof.project_ms.push(Some(msf_pt));
         drop(pcof_bytes);
     }
 
@@ -346,14 +383,35 @@ pub fn bench() {
     );
     if crate::enabled("columnar") {
         // Honest reduce: full indexed decode, fold survivors of the language eq.
-        col.project_ms = Some(common::reduce_columnar::<WorkCol, String, (i32, i64), HashMap<i32, (i64, u64)>, _, _>(
+        col.project_ms.push(Some(
+            common::reduce_columnar::<WorkCol, String, (i32, i64), HashMap<i32, (i64, u64)>, _, _>(
+                &col_buf,
+                &lang,
+                |decoded: &columnar::BorrowedOf<'_, WorkCol>, l: &String| {
+                    (0..columnar::Len::len(decoded))
+                        .filter_map(|i| {
+                            let r = columnar::Index::get(decoded, i);
+                            if r.language == Some(l.as_bytes()) {
+                                r.publication_year.map(|y| (*y, *r.cited_by_count as i64))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                },
+                |pairs, _l| fold_pairs(pairs),
+                &proj_truth,
+            ),
+        ));
+        // Work-type eq second reduce: discriminant key, same fold.
+        col.project_ms.push(Some(common::reduce_columnar::<WorkCol, u8, (i32, i64), HashMap<i32, (i64, u64)>, _, _>(
             &col_buf,
-            &lang,
-            |decoded: &columnar::BorrowedOf<'_, WorkCol>, l: &String| {
+            &disc1,
+            |decoded: &columnar::BorrowedOf<'_, WorkCol>, disc: &u8| {
                 (0..columnar::Len::len(decoded))
                     .filter_map(|i| {
                         let r = columnar::Index::get(decoded, i);
-                        if r.language == Some(l.as_bytes()) {
+                        if *r.work_type == *disc {
                             r.publication_year.map(|y| (*y, *r.cited_by_count as i64))
                         } else {
                             None
@@ -361,17 +419,9 @@ pub fn bench() {
                     })
                     .collect()
             },
-            |pairs, _l| {
-                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
-                for (y, c) in pairs {
-                    let e = acc.entry(y).or_default();
-                    e.0 += c;
-                    e.1 += 1;
-                }
-                acc
-            },
-            &proj_truth,
-        ));
+            |pairs, _disc| fold_pairs(pairs),
+            &preprint_truth,
+        )));
     }
     drop(col_buf);
 
@@ -392,27 +442,34 @@ pub fn bench() {
         },
     );
     if crate::enabled("serde_columnar") {
-        sc.project_ms = Some(common::reduce_serde_columnar::<openalex_sc::WorkScStore, String, (i32, i64), _, _, _>(
+        sc.project_ms.push(Some(
+            common::reduce_serde_columnar::<openalex_sc::WorkScStore, String, (i32, i64), _, _, _>(
+                &sc_buf,
+                &lang,
+                |s: &openalex_sc::WorkScStore, l: &String| {
+                    s.data
+                        .iter()
+                        .filter(|r| r.language.as_deref() == Some(l.as_str()))
+                        .filter_map(|r| r.publication_year.map(|y| (y, r.cited_by_count as i64)))
+                        .collect()
+                },
+                |pairs, _l| fold_pairs(pairs),
+                &proj_truth,
+            ),
+        ));
+        sc.project_ms.push(Some(common::reduce_serde_columnar::<openalex_sc::WorkScStore, u8, (i32, i64), _, _, _>(
             &sc_buf,
-            &lang,
-            |s: &openalex_sc::WorkScStore, l: &String| {
+            &disc1,
+            |s: &openalex_sc::WorkScStore, disc: &u8| {
                 s.data
                     .iter()
-                    .filter(|r| r.language.as_deref() == Some(l.as_str()))
+                    .filter(|r| r.work_type == *disc)
                     .filter_map(|r| r.publication_year.map(|y| (y, r.cited_by_count as i64)))
                     .collect()
             },
-            |pairs, _l| {
-                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
-                for (y, c) in pairs {
-                    let e = acc.entry(y).or_default();
-                    e.0 += c;
-                    e.1 += 1;
-                }
-                acc
-            },
-            &proj_truth,
-        ));
+            |pairs, _disc| fold_pairs(pairs),
+            &preprint_truth,
+        )));
     }
     drop(sc_buf);
 
@@ -422,7 +479,7 @@ pub fn bench() {
         Okk::Title(t) => w.title.as_deref() == Some(t.as_str()),
     });
     if crate::enabled("msgpack") {
-        mp.project_ms = Some(common::reduce_msgpack::<Work, String, (i32, i64), _, _, _>(
+        mp.project_ms.push(Some(common::reduce_msgpack::<Work, String, (i32, i64), _, _, _>(
             &mp_buf,
             &lang,
             |rows: &[Work], l: &String| {
@@ -431,17 +488,21 @@ pub fn bench() {
                     .filter_map(|r| r.publication_year.map(|y| (y, r.cited_by_count as i64)))
                     .collect()
             },
-            |pairs, _l| {
-                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
-                for (y, c) in pairs {
-                    let e = acc.entry(y).or_default();
-                    e.0 += c;
-                    e.1 += 1;
-                }
-                acc
-            },
+            |pairs, _l| fold_pairs(pairs),
             &proj_truth,
-        ));
+        )));
+        mp.project_ms.push(Some(common::reduce_msgpack::<Work, u8, (i32, i64), _, _, _>(
+            &mp_buf,
+            &disc1,
+            |rows: &[Work], disc: &u8| {
+                rows.iter()
+                    .filter(|w| work_type_u8(&w.work_type) == *disc)
+                    .filter_map(|r| r.publication_year.map(|y| (y, r.cited_by_count as i64)))
+                    .collect()
+            },
+            |pairs, _disc| fold_pairs(pairs),
+            &preprint_truth,
+        )));
     }
     drop(mp_buf);
 
@@ -458,11 +519,11 @@ pub fn bench() {
         // Vortex's filter + projection pushdown is its native partial read:
         // survivors only, and only the fold columns materialize through Arrow.
         // The pushed language eq is exact, so the fold only skips null years.
-        vx.project_ms = common::reduce_vortex_ds::<(Option<i32>, i32), String, _, _, _>(
+        vx.project_ms.push(common::reduce_vortex_ds::<(Option<i32>, i32), String, _, _, _>(
             &vx_buf,
             &lang,
             |l: &String| {
-                vortex::array::expr::eq(vortex::array::expr::col("language"), vortex::array::expr::lit(l.clone()))
+                Some(vortex::array::expr::eq(vortex::array::expr::col("language"), vortex::array::expr::lit(l.clone())))
             },
             &["publication_year", "cited_by_count"],
             |rows: Vec<(Option<i32>, i32)>, _: &String| {
@@ -477,12 +538,35 @@ pub fn bench() {
                 acc
             },
             &proj_truth,
-        );
+        ));
+        // Work-type eq second reduce; the pushed eq is verified by the
+        // filter cells, so the fold only skips null years.
+        vx.project_ms.push(common::reduce_vortex_ds::<(Option<i32>, i32), &'static str, _, _, _>(
+            &vx_buf,
+            &picks[1].1,
+            |name: &&'static str| {
+                Some(vortex::array::expr::eq(vortex::array::expr::col("work_type"), vortex::array::expr::lit(*name)))
+            },
+            &["publication_year", "cited_by_count"],
+            |rows: Vec<(Option<i32>, i32)>, _: &&'static str| {
+                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+                for (y, c) in rows {
+                    if let Some(y) = y {
+                        let e = acc.entry(y).or_default();
+                        e.0 += c as i64;
+                        e.1 += 1;
+                    }
+                }
+                acc
+            },
+            &preprint_truth,
+        ));
     }
     drop(data_vx);
     drop(vx_buf);
 
-    let reduce_label = common::reduce_label(lang_exp, n);
+    let reduce_labels: Vec<String> = vec![common::reduce_label(lang_exp, n), common::reduce_label(exps[1], n)];
+    let reduce_refs: Vec<&str> = reduce_labels.iter().map(String::as_str).collect();
 
     CodecResults {
         pco_pack: pco,
@@ -492,7 +576,7 @@ pub fn bench() {
         msgpack: mp,
         vortex: vx,
     }
-    .print(&label_refs, Some(&reduce_label));
+    .print(&label_refs, &reduce_refs);
 }
 
 // ---- lossy mirror: `float_round = 4` on structs owning floats;
