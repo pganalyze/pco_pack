@@ -126,6 +126,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
         /// (index, timestamp bounds) uncompressed and payload columns
         /// stored as compressed ByteBuf. One instance per logical group.
         #[derive(pco_pack::serde::Serialize, pco_pack::serde::Deserialize, Default, Clone)]
+        #[serde(crate = "pco_pack::serde")]
         pub struct Chunk { #(#chunk_fields)* }
         #[derive(Clone, Default)]
         pub struct Reader { #(#reader_fields)* }

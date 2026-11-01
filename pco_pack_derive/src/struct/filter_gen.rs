@@ -92,7 +92,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
     quote! {
         /// Typed filter struct for [`#name`].
         #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
+        #[serde(crate = "pco_pack::serde", deny_unknown_fields)]
         pub struct Filter {
             #(#typed_fields)*
             #[serde(flatten)]
