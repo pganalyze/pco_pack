@@ -12,6 +12,7 @@ const _: () = {
     /// (index, timestamp bounds) uncompressed and payload columns
     /// stored as compressed ByteBuf. One instance per logical group.
     #[derive(pco_pack::serde::Serialize, pco_pack::serde::Deserialize, Default, Clone)]
+    #[serde(crate = "pco_pack::serde")]
     pub struct Chunk {
         #[serde(default)]
         pub id: pco_pack::serde_bytes::ByteBuf,
@@ -38,7 +39,7 @@ const _: () = {
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
+    #[serde(crate = "pco_pack::serde", deny_unknown_fields)]
     pub struct Filter {
         pub id: Option<pco_pack::I64Filter>,
         pub value: Option<pco_pack::F64Filter>,
