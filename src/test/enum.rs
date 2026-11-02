@@ -62,6 +62,23 @@ fn enum_unit_only_roundtrip() {
 }
 
 #[test]
+fn enum_chunk_envelope_roundtrip() {
+    let data: Vec<Event> = (0..100)
+        .map(|i| match i % 4 {
+            0 => Event::Click(Click { x: i, y: i * 2 }),
+            1 => Event::Resize,
+            2 => Event::Unknown,
+            _ => Event::KeyPress(KeyPress { key: format!("key_{i}") }),
+        })
+        .collect();
+
+    let chunks = Event::write(data.clone()).unwrap();
+    let bytes = Event::to_bytes(&chunks).unwrap();
+    let decoded = Event::from_bytes(&bytes).unwrap();
+    assert_eq!(chunks, decoded);
+}
+
+#[test]
 fn enum_mixed_variants_roundtrip() {
     let data: Vec<Event> = vec![
         Event::Click(Click { x: 10, y: 20 }),
