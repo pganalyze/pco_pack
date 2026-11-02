@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct VecU8Row {
     data: Vec<u8>,
 }
@@ -93,7 +93,7 @@ fn vec_u8_filter_no_match() {
     assert!(result.is_empty());
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 #[pco_pack(chunk_size = 5)]
 struct SmallChunkVecU8Row {
     data: Vec<u8>,

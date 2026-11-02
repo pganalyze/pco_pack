@@ -2,19 +2,19 @@ use crate as pco_pack;
 use crate::PcoPack;
 use std::collections::{BTreeMap, HashMap};
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct BTreeMapI32U64 {
     field: BTreeMap<i32, u64>,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct BTreeMapU32I32 {
     field: BTreeMap<u32, i32>,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct HashMapI32U64 {
     field: HashMap<i32, u64>,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct HashMapU32I32 {
     field: HashMap<u32, i32>,
 }
@@ -149,7 +149,7 @@ fn empty_hashmap_column() {
     assert!(result.is_empty());
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct VecBTreeMapStringU64 {
     field: Vec<BTreeMap<String, u64>>,
 }
@@ -348,12 +348,12 @@ fn hashmap_filter_matches_btreemap_filter() {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct BTreeMapStringU64 {
     field: BTreeMap<String, u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct HashMapStringU64 {
     field: HashMap<String, u64>,
 }

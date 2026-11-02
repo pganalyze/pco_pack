@@ -55,14 +55,14 @@ fn resolve_fields_rejects_nested_path_in_fields() {
     assert!(err_msg.contains("Nested field path 'meta.name' is not supported; use 'meta' instead"));
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct SimpleRecord {
     id: i64,
     name: String,
     score: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct NestedRecord {
     id: i64,
     name: String,
@@ -232,7 +232,7 @@ fn schema_hashmap_key_filter_nested_rejected() {
 
 #[test]
 fn filter_tuple_field() {
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct TupleRecord {
         id: i64,
         pair: (i64, String),
@@ -288,7 +288,7 @@ fn filter_nested_numeric_type_error_includes_full_path() {
 
 #[test]
 fn filter_bool_type_error_includes_field_name_and_passed_type() {
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct BoolRow {
         active: bool,
     }

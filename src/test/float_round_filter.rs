@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct FilterRecord {
     id: i64,
@@ -32,7 +32,7 @@ fn float_round_filter_f64_no_match() {
 
 #[test]
 fn float_round_filter_f32_exact_match() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 3)]
     struct F32Record {
         id: i64,
@@ -75,7 +75,7 @@ fn float_round_filter_float_range() {
 
 #[test]
 fn float_round_filter_option_f64() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct OptRecord {
         id: i64,

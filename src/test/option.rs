@@ -1,11 +1,11 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct OptI32 {
     field: Option<i32>,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct OptU64 {
     field: Option<u64>,
 }
@@ -64,13 +64,13 @@ fn filtered_reader_option_i32() {
     assert_eq!(result, vec![OptI32 { field: Some(42) }, OptI32 { field: Some(42) }]);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct InnerRecord {
     id: i64,
     name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct OuterRecord {
     label: String,
     inner: Option<InnerRecord>,

@@ -18,19 +18,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
     let has_ts = sg.has_timestamp;
     let has_index = !sg.index_fields().is_empty();
 
-    // JSON columns move out of the row instead of deep-cloning the tree as a performance optimization.
-    let take_json = !has_timeline_ts && sg.has_json_move_field();
-    let rec_bind = if take_json {
-        quote! { &mut data[idx] }
-    } else {
-        quote! { &data[idx] }
-    };
-    let data_arg = if take_json {
-        quote! { mut data }
-    } else {
-        quote! { data }
-    };
-    let col_vectors_push = sg.col_vectors_push(take_json);
+    let col_vectors_push = sg.col_vectors_push();
 
     let group_enum_loop = if has_index {
         quote! {
@@ -81,7 +69,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
                 for group_indices in indices.chunks(#name::CHUNK_SIZE) {
                     #(#col_vectors_init)*
                     for &idx in group_indices {
-                        let rec = #rec_bind;
+                        let rec = &data[idx];
                         #(#col_vectors_push)*
                     }
                     #(#compress_payload)*
@@ -102,7 +90,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
                 for group_indices in indices.chunks(#name::CHUNK_SIZE) {
                     #(#col_vectors_init)*
                     for &idx in group_indices {
-                        let rec = #rec_bind;
+                        let rec = &data[idx];
                         #(#col_vectors_push)*
                     }
                     #(#compress_payload)*
@@ -143,8 +131,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
             type Chunk = Chunk;
             type Filter = Filter;
 
-            fn write(#data_arg : Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
-                // Group by index key using indices instead of moving Self.
+            fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
                 let mut groups: pco_pack::ahash::HashMap<#group_key_type, Vec<usize>> = Default::default();
                 #group_enum_loop
                 let mut result: Vec<Chunk> = Vec::new();

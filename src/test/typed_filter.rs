@@ -2,7 +2,7 @@ use crate as pco_pack;
 use crate::{BoolFilter, F64Filter, I64Filter, PcoFilter, PcoPack, StringFilter, TimeFilter, UuidFilter};
 use chrono::{DateTime, Duration, Utc};
 
-#[derive(PcoPack, Debug, PartialEq)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(index = [device_id], timestamp = collected_at)]
 struct Sensor {
     device_id: i64,
@@ -10,7 +10,7 @@ struct Sensor {
     temperature: f64,
 }
 
-#[derive(PcoPack, Debug, PartialEq)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(index = [db_id, granularity])]
 struct QueryStat {
     db_id: i64,
@@ -19,7 +19,7 @@ struct QueryStat {
 }
 
 // Matches query_stats.rs from pco_pack_derive - timestamp + multi-index fields.
-#[derive(PcoPack, Debug, PartialEq)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(timestamp = collected_at, index = [database_id, granularity])]
 struct QueryStatWithTimestamp {
     database_id: i64,
@@ -29,7 +29,7 @@ struct QueryStatWithTimestamp {
 }
 type QueryStatWithTimestampFilter = <QueryStatWithTimestamp as PcoPack>::Filter;
 
-#[derive(PcoPack, Debug, PartialEq)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(timestamp = ts)]
 struct Event {
     ts: DateTime<Utc>,
@@ -37,14 +37,14 @@ struct Event {
     value: f64,
 }
 
-#[derive(PcoPack, Debug, PartialEq)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(index = [name])]
 struct NamedItem {
     name: String,
     count: i32,
 }
 
-#[derive(PcoPack, Debug, PartialEq)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(index = [id], timestamp = created_at)]
 struct UuidRecord {
     id: uuid::Uuid,
@@ -750,7 +750,7 @@ fn timestamp_filter_integration() {
     assert_eq!(results.len(), 1);
 }
 
-#[derive(PcoPack, Debug, PartialEq)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(index = [flagged])]
 struct FlaggedItem {
     flagged: bool,

@@ -2,7 +2,8 @@ use super::*;
 
 include!("lazy_msgpack.rs");
 
-impl_lazy_msgpack!(StringReader; (); String;);
+// A String clone is a fresh heap allocation, so stage references.
+impl_lazy_msgpack!(StringReader; (); String; false);
 
 impl FallbackReader for StringReader {
     fn read_fallback(raw: &[u8]) -> anyhow::Result<Self>
@@ -106,7 +107,9 @@ impl PcoFilter for String {
     }
 }
 
-impl_lazy_msgpack!(SmolStrReader; (); smol_str::SmolStr;);
+// SmolStr clones are memcpy or a short heap copy; owned staging
+// compresses measurably faster for it (taxi bench), so it stays cheap.
+impl_lazy_msgpack!(SmolStrReader; (); smol_str::SmolStr; true);
 
 impl FallbackReader for SmolStrReader {
     fn read_fallback(raw: &[u8]) -> anyhow::Result<Self>

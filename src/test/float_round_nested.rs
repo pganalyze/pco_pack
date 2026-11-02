@@ -1,14 +1,14 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct InnerFloatRounded {
     id: i64,
     value: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 3)]
 struct OuterFloatRounded {
     label: String,
@@ -31,14 +31,14 @@ fn float_round_nested_struct_roundtrip() {
     assert_eq!(result[2].inner.value, 1.41);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct InnerF32FloatRounded {
     id: i64,
     value: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 3)]
 struct OuterMixedNested {
     label: String,
@@ -61,14 +61,14 @@ fn float_round_nested_struct_f32_inner() {
     assert_eq!(result[1].inner.value, 2.72);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct InnerVecFloatRounded {
     id: i64,
     values: Vec<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 3)]
 struct OuterWithVecInner {
     label: String,
@@ -97,13 +97,13 @@ fn float_round_nested_struct_vec_inner() {
     assert_eq!(result[1].inner.values[1], 2.72);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct InnerNoFloatRound {
     id: i64,
     value: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct OuterWithFloatRoundOnly {
     label: String,
@@ -127,12 +127,12 @@ fn float_round_does_not_inherit_into_nested_struct() {
     assert_eq!(result[0].inner.value, 2.718281828);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct InnerNoFloatRoundF32 {
     value: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 1)]
 struct OuterWithFloatRoundOnlyF32 {
     outer_value: f32,

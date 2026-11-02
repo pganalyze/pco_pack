@@ -2,19 +2,19 @@ use crate as pco_pack;
 use crate::PcoPack;
 use std::collections::{BTreeMap, HashMap};
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecI64 {
     values: Vec<i64>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecI8 {
     values: Vec<i8>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecU32 {
     values: Vec<u32>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecU8 {
     values: Vec<u8>,
 }
@@ -52,19 +52,19 @@ fn vec_multiple_rows_coercion() {
     assert_eq!(result, vec![VecI8 { values: vec![1i8, 2] }, VecI8 { values: vec![3, 4, 5] },]);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecOptI64 {
     values: Vec<Option<i64>>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecOptI8 {
     values: Vec<Option<i8>>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecOptF64 {
     values: Vec<Option<f64>>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecOptF32 {
     values: Vec<Option<f32>>,
 }
@@ -85,19 +85,19 @@ fn option_f64_to_f32_coercion() {
     assert_eq!(result, vec![VecOptF32 { values: vec![Some(1.5f32), Some(2.5f32), None] }]);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct BTreeMapI64I64 {
     map: BTreeMap<i64, i64>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct BTreeMapI8I8 {
     map: BTreeMap<i8, i8>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct BTreeMapU64U64 {
     map: BTreeMap<u64, u64>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct BTreeMapU8U8 {
     map: BTreeMap<u8, u8>,
 }
@@ -125,11 +125,11 @@ fn btreemap_u64_to_u8_coercion() {
     assert_eq!(result[0].map.get(&100), Some(&200));
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct HashMapI64I64 {
     map: HashMap<i64, i64>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct HashMapI8I8 {
     map: HashMap<i8, i8>,
 }
@@ -148,13 +148,13 @@ fn hashmap_i64_to_i8_coercion() {
 
 #[test]
 fn struct_i64_field_coerced_to_i8() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct TestRecord {
         id: i64,
         score: f64,
         label: String,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct TestRecordSmall {
         id: i8,
         score: f64,
@@ -176,13 +176,13 @@ fn struct_i64_field_coerced_to_i8() {
 
 #[test]
 fn struct_f64_field_coerced_to_f32() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct TestRecord {
         id: i64,
         score: f64,
         label: String,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct TestRecordSmall {
         id: i64,
         score: f32,
@@ -208,12 +208,12 @@ fn vec_option_i64_to_vec_option_i8() {
 
 #[test]
 fn struct_vec_i64_field_coerced_to_vec_i8() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct VecRecord {
         id: i64,
         values: Vec<i64>,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct VecRecordSmall {
         id: i64,
         values: Vec<i8>,
@@ -229,12 +229,12 @@ fn struct_vec_i64_field_coerced_to_vec_i8() {
 
 #[test]
 fn struct_option_f64_field_coerced_to_option_f32() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct OptRecord {
         id: i64,
         score: Option<f64>,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct OptRecordSmall {
         id: i64,
         score: Option<f32>,
@@ -250,12 +250,12 @@ fn struct_option_f64_field_coerced_to_option_f32() {
 
 #[test]
 fn struct_btreemap_i64_field_coerced_to_btreemap_i8() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MapRecord {
         id: i64,
         tags: BTreeMap<i64, i64>,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MapRecordSmall {
         id: i64,
         tags: BTreeMap<i8, i8>,
@@ -275,12 +275,12 @@ fn struct_btreemap_i64_field_coerced_to_btreemap_i8() {
     assert_eq!(results[1].tags.get(&3), Some(&30));
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct TupleI64 {
     a: i64,
     b: i64,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct TupleI8 {
     a: i8,
     b: i8,

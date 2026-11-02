@@ -52,7 +52,7 @@ fn merge_preserves_multiple_incoming_coalesced_ranges() {
     );
 }
 
-#[derive(Debug, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct Row {
     coverage: Timeline,
 }

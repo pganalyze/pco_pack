@@ -2,7 +2,7 @@ use crate as pco_pack;
 use crate::PcoPack;
 use std::collections::{BTreeMap, HashMap};
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(chunk_size = 3)]
 struct ChunkBoundaryRow {
     id: i64,
@@ -52,7 +52,7 @@ fn filter_string_across_chunk_boundary() {
 
 #[test]
 fn filter_i64_across_chunk_boundary() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(chunk_size = 3)]
     struct RowI64 {
         id: i64,
@@ -78,7 +78,7 @@ fn filter_i64_across_chunk_boundary() {
 
 #[test]
 fn filter_f64_across_chunk_boundary() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(chunk_size = 3)]
     struct RowF64 {
         id: i64,
@@ -104,7 +104,7 @@ fn filter_f64_across_chunk_boundary() {
 
 #[test]
 fn filter_bool_across_chunk_boundary() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(chunk_size = 3)]
     struct RowBool {
         id: i64,
@@ -130,7 +130,7 @@ fn filter_bool_across_chunk_boundary() {
 
 #[test]
 fn range_filter_across_chunk_boundary() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(chunk_size = 3)]
     struct RowRange {
         id: i64,
@@ -154,7 +154,7 @@ fn range_filter_across_chunk_boundary() {
     assert_eq!(result[2].id, 4);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(index = [group_id], chunk_size = 2)]
 struct IndexedRow {
     group_id: i64,
@@ -224,7 +224,7 @@ fn range_filter_across_index_groups() {
     assert_eq!(result[1].group_id, 1);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(chunk_size = 2)]
 struct RowWithVec {
     id: i64,
@@ -274,7 +274,7 @@ fn filter_multiple_rows_preserves_vec_contents() {
 
 #[test]
 fn filter_preserves_vec_across_index_groups() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(index = [group_id], chunk_size = 2)]
     struct IndexedRowWithVec {
         group_id: i64,
@@ -326,7 +326,7 @@ fn filter_vec_contains_across_chunks() {
     assert_eq!(result[1].id, 3);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(chunk_size = 2)]
 struct RowWithBTreeMap {
     id: i64,
@@ -419,7 +419,7 @@ fn filter_btreemap_contains_key_across_chunks() {
 
 #[test]
 fn filter_preserves_hashmap_across_index_groups() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(index = [group_id], chunk_size = 2)]
     struct IndexedRowWithHashMap {
         group_id: i64,
@@ -462,7 +462,7 @@ fn filter_preserves_hashmap_across_index_groups() {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(chunk_size = 2)]
 struct RowWithOption {
     id: i64,
@@ -491,14 +491,14 @@ fn filter_preserves_option_across_chunks() {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(chunk_size = 2)]
 struct OuterRow {
     id: i64,
     inner: InnerStruct,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct InnerStruct {
     x: i32,
     y: String,
@@ -521,7 +521,7 @@ fn filter_nested_field_across_chunks() {
     assert_eq!(result[1].id, 3);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(chunk_size = 2)]
 struct RowWithVecString {
     id: i64,
@@ -543,7 +543,7 @@ fn filter_preserves_vec_string_across_chunks() {
     assert_eq!(result[0].names, vec!["charlie", "dave", "eve"]);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(chunk_size = 2)]
 struct RowWithNestedVec {
     id: i64,
@@ -565,7 +565,7 @@ fn filter_preserves_nested_vec_across_chunks() {
     assert_eq!(result[0].matrix, vec![vec![4, 5, 6], vec![7, 8], vec![9]]);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(chunk_size = 2)]
 struct RowWithComplexMap {
     id: i64,
@@ -597,7 +597,7 @@ fn filter_preserves_complex_map_across_chunks() {
     assert_eq!(result[0].groups.get("z"), Some(&vec![40]));
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(index = [group_id], chunk_size = 2)]
 struct MultiFieldRow {
     group_id: i64,
@@ -630,7 +630,7 @@ fn multi_field_filter_across_index_groups() {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(chunk_size = 2)]
 struct ManyChunksRow {
     id: i64,
@@ -651,7 +651,7 @@ fn filter_across_many_chunks() {
 
 #[test]
 fn filter_across_many_chunks_and_groups() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(index = [group_id], chunk_size = 2)]
     struct ManyChunksIndexedRow {
         group_id: i64,

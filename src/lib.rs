@@ -121,11 +121,27 @@ pub trait PcoPack: PcoFilter + Sized {
 }
 
 /// Basic columnar write and read for a single type.
-pub trait PcoSerde: Sized {
+pub trait PcoSerde: Sized + Clone {
     type Writer: Default;
     type Reader: Clone;
 
     fn write(data: Vec<Self>, float_round: u32, time_round: chrono::Duration) -> Result<Vec<u8>>;
+
+    /// Whether deep-cloning one value is a bounded shallow copy.
+    ///
+    /// Struct writes clone cheap columns into compact owned staging and
+    /// stage expensive columns as references into the rows. Containers
+    /// forward the element's answer, since cloning `Vec<String>` fans out
+    /// per element. Expensive types override the default.
+    const CHEAP_TO_CLONE: bool = true;
+
+    /// Write a column over borrowed values. The default clones and
+    /// delegates to `write`; expensive types override to encode from the
+    /// references, which is what lets struct writes skip payload clones.
+    fn write_borrowed(values: &[&Self], float_round: u32, time_round: chrono::Duration) -> Result<Vec<u8>> {
+        let owned: Vec<Self> = values.iter().map(|v| (*v).clone()).collect();
+        Self::write(owned, float_round, time_round)
+    }
 
     fn read(src: &mut Cursor<&[u8]>, float_round: u32, time_round: chrono::Duration) -> Result<Self::Reader>;
 

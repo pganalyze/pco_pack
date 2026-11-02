@@ -1,10 +1,27 @@
 use super::*;
+use serde::ser::{SerializeMap, SerializeSeq};
 use std::io::Cursor;
 
 /// Chunk size for batched serialization/deserialization.
 pub(crate) const CHUNK_SIZE: usize = 128;
 /// Format version indicating chunked msgpack arrays.
 pub(crate) const FORMAT_VERSION_CHUNKED: u8 = 1;
+
+/// The `Number` that rounding stores for `n`: floats collapse via `scale`,
+/// integers pass through, non-finite results degrade to `0` (matching
+/// `Number::from_f64`). Shared by the in-place mutator and the borrowed
+/// encoder so both paths round identically.
+fn rounded_number(n: &serde_json::Number, scale: f64) -> serde_json::Number {
+    let integral = n.as_i64().is_some() && n.as_f64().unwrap_or(0.0).fract().abs() <= f64::EPSILON;
+    if integral {
+        n.clone()
+    } else if let Some(f) = n.as_f64() {
+        let rounded = ((f * scale).round()) / scale;
+        serde_json::Number::from_f64(rounded).unwrap_or_else(|| serde_json::Number::from(0))
+    } else {
+        n.clone()
+    }
+}
 
 /// Rounds every float in the tree in place.
 fn round_json_value(value: &mut serde_json::Value, decimals: u32) {
@@ -14,11 +31,7 @@ fn round_json_value(value: &mut serde_json::Value, decimals: u32) {
     let scale = 10i64.pow(decimals) as f64;
     match value {
         serde_json::Value::Number(n) => {
-            let integral = n.as_i64().is_some() && n.as_f64().unwrap_or(0.0).fract().abs() <= f64::EPSILON;
-            if !integral && let Some(f) = n.as_f64() {
-                let rounded = ((f * scale).round()) / scale;
-                *n = serde_json::Number::from_f64(rounded).unwrap_or_else(|| serde_json::Number::from(0));
-            }
+            *n = rounded_number(n, scale);
         }
         serde_json::Value::Object(map) => {
             for v in map.values_mut() {
@@ -31,6 +44,37 @@ fn round_json_value(value: &mut serde_json::Value, decimals: u32) {
             }
         }
         _ => (),
+    }
+}
+
+/// Serializes a borrowed tree with floats rounded exactly as
+/// `round_json_value` would, avoiding the deep clone.
+struct RoundedValue<'a> {
+    value: &'a serde_json::Value,
+    scale: f64,
+}
+
+impl serde::Serialize for RoundedValue<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self.value {
+            serde_json::Value::Number(n) => rounded_number(n, self.scale).serialize(s),
+            serde_json::Value::Array(items) => {
+                let mut seq = s.serialize_seq(Some(items.len()))?;
+                for item in items {
+                    seq.serialize_element(&RoundedValue { value: item, scale: self.scale })?;
+                }
+                seq.end()
+            }
+            serde_json::Value::Object(entries) => {
+                let mut map = s.serialize_map(Some(entries.len()))?;
+                for (key, entry) in entries {
+                    map.serialize_entry(key, &RoundedValue { value: entry, scale: self.scale })?;
+                }
+                map.end()
+            }
+            // Null, bools, and strings are untouched by rounding.
+            other => other.serialize(s),
+        }
     }
 }
 
@@ -97,6 +141,9 @@ impl super::PcoSerde for serde_json::Value {
     type Writer = ();
     type Reader = JsonValueReader;
 
+    // Deep tree clone: one allocation per node.
+    const CHEAP_TO_CLONE: bool = false;
+
     fn write(data: Vec<Self>, float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let mut rounded = data;
         if float_round > 0 {
@@ -109,6 +156,30 @@ impl super::PcoSerde for serde_json::Value {
         raw_buffer.push(FORMAT_VERSION_CHUNKED);
         for chunk in rounded.chunks(CHUNK_SIZE) {
             rmp_serde::encode::write(&mut raw_buffer, chunk)?;
+        }
+        let compressed = zstd::encode_all(raw_buffer.as_slice(), 3)?;
+        let mut out = Vec::with_capacity(16 + compressed.len());
+        out.extend_from_slice(&(len as u64).to_le_bytes());
+        out.extend_from_slice(&(compressed.len() as u64).to_le_bytes());
+        out.extend_from_slice(&compressed);
+        Ok(out)
+    }
+
+    /// Encodes `&[&Self]` chunks directly; serde forwards `Serialize`
+    /// through references so bytes match owned `write`. With rounding,
+    /// values are wrapped in `RoundedValue` instead of cloned.
+    fn write_borrowed(values: &[&Self], float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let scale = if float_round > 0 { 10i64.pow(float_round) as f64 } else { 0.0 };
+        let len = values.len();
+        let mut raw_buffer = Vec::with_capacity(len * 64);
+        raw_buffer.push(FORMAT_VERSION_CHUNKED);
+        for chunk in values.chunks(CHUNK_SIZE) {
+            if float_round == 0 {
+                rmp_serde::encode::write(&mut raw_buffer, chunk)?;
+            } else {
+                let rounded: Vec<RoundedValue> = chunk.iter().map(|v| RoundedValue { value: v, scale }).collect();
+                rmp_serde::encode::write(&mut raw_buffer, &rounded)?;
+            }
         }
         let compressed = zstd::encode_all(raw_buffer.as_slice(), 3)?;
         let mut out = Vec::with_capacity(16 + compressed.len());

@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct TupleFloatRounded {
     id: i64,
@@ -31,7 +31,7 @@ fn float_round_on_tuple() {
     assert_eq!(result[2].coords.2, 1.0);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 3)]
 struct TupleFloatRoundedF32 {
     id: i64,
@@ -55,7 +55,7 @@ fn float_round_on_tuple_f32() {
     assert_eq!(result[1].data.1, 1.0);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct TupleMixedWithGroupBy {
     group: i64,
@@ -81,7 +81,7 @@ fn float_round_on_tuple_with_index() {
     assert_eq!(result[2].values.1, 0.0);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct TupleAllFloats {
     id: i64,
@@ -99,7 +99,7 @@ fn float_round_on_tuple_all_floats() {
     assert_eq!(result[0].point.1, 2.44);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct TupleWithTimestamp {
     #[pco_pack(timestamp)]
@@ -129,7 +129,7 @@ fn float_round_on_tuple_with_timestamp() {
     assert_eq!(result[1].measurement.1, 99);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct MapTupleValues {
     id: i64,
@@ -174,7 +174,7 @@ fn float_round_on_map_tuple_values() {
     assert_eq!(result[2].metrics["humidity"].2, 1.0);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct MapTupleAllFloats {
     id: i64,
@@ -202,7 +202,7 @@ fn float_round_on_map_tuple_all_floats() {
     assert_eq!(result[0].points["point_a"].1, 2.44);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct OptionMapTupleValues {
     id: i64,
@@ -231,7 +231,7 @@ fn float_round_on_option_map_tuple_values() {
     assert!(result[1].metrics.is_none());
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct VecMapTupleValues {
     id: i64,
@@ -265,7 +265,7 @@ fn float_round_on_vec_map_tuple_values() {
     assert_eq!(result[0].batches[1]["b"].1, 20);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2, index = [device_id])]
 struct GroupByMapTupleValues {
     device_id: i64,

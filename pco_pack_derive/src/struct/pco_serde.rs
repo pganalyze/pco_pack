@@ -24,19 +24,8 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
     let has_ts = sg.has_timestamp;
     let has_index = !sg.index_fields().is_empty();
 
-    // JSON columns move out of the row instead of deep-cloning the tree as a performance optimization.
-    let take_json = !has_timeline_ts && sg.has_json_move_field();
-    let rec_bind = if take_json {
-        quote! { &mut data[idx] }
-    } else {
-        quote! { &data[idx] }
-    };
-    let data_arg = if take_json {
-        quote! { mut data }
-    } else {
-        quote! { data }
-    };
-    let col_vectors_push = sg.col_vectors_push(take_json);
+    let col_vectors_push = sg.col_vectors_push();
+    let cheap_to_clone = sg.cheap_to_clone_expr();
 
     let group_enum_loop = if has_index {
         quote! {
@@ -85,7 +74,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
                 #timestamp_sort_indices
                 #(#col_vectors_init)*
                 for &idx in indices.iter() {
-                    let rec = #rec_bind;
+                    let rec = &data[idx];
                     #(#col_vectors_push)*
                 }
                 #(#compress_payload)*
@@ -104,7 +93,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
             for (#key_pat, indices) in groups {
                 #(#col_vectors_init)*
                 for &idx in indices.iter() {
-                    let rec = #rec_bind;
+                    let rec = &data[idx];
                     #(#col_vectors_push)*
                 }
                 #(#compress_payload)*
@@ -113,22 +102,33 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
         }
     };
 
+    // One body spliced into both `write` and `write_borrowed`. It
+    // compiles against either row shape: field access auto-derefs, and
+    // the staging push decides clone-or-borrow per field type.
+    let write_fn_body = quote! {
+        let mut groups: pco_pack::ahash::HashMap<#group_key_type, Vec<usize>> = Default::default();
+        #group_enum_loop
+        #pco_serde_write_body
+        let mut out = Vec::new();
+        for rec in records {
+            let mut msgpack = Vec::new();
+            rec.serialize(&mut pco_pack::rmp_serde::Serializer::new(&mut msgpack).with_struct_map())?;
+            out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+            out.extend_from_slice(&msgpack);
+        }
+        Ok(out)
+    };
+
     let pco_serde = quote! {
         impl pco_pack::PcoSerde for #name {
             type Writer = Writer;
             type Reader = Reader;
-            fn write(#data_arg : Vec<Self>, _float_round: u32, _time_round: pco_pack::chrono::Duration) -> pco_pack::anyhow::Result<Vec<u8>> {
-                let mut groups: pco_pack::ahash::HashMap<#group_key_type, Vec<usize>> = Default::default();
-                #group_enum_loop
-                #pco_serde_write_body
-                let mut out = Vec::new();
-                for rec in records {
-                    let mut msgpack = Vec::new();
-                    rec.serialize(&mut pco_pack::rmp_serde::Serializer::new(&mut msgpack).with_struct_map())?;
-                    out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
-                    out.extend_from_slice(&msgpack);
-                }
-                Ok(out)
+            const CHEAP_TO_CLONE: bool = #cheap_to_clone;
+            fn write(data: Vec<Self>, _float_round: u32, _time_round: pco_pack::chrono::Duration) -> pco_pack::anyhow::Result<Vec<u8>> {
+                #write_fn_body
+            }
+            fn write_borrowed(data: &[&Self], _float_round: u32, _time_round: pco_pack::chrono::Duration) -> pco_pack::anyhow::Result<Vec<u8>> {
+                #write_fn_body
             }
             fn read(
                 src: &mut std::io::Cursor<&[u8]>, _float_round: u32, _time_round: pco_pack::chrono::Duration,

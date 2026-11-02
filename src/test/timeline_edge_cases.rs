@@ -6,7 +6,7 @@ fn dt(us: i64) -> DateTime<Utc> {
     DateTime::from_timestamp_micros(us).unwrap()
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct TimelineRow {
     seen_at: Timeline,
     value: i32,
@@ -114,7 +114,7 @@ fn timeline_adjacent_ranges_merge() {
     assert_eq!(result[0].seen_at.ranges(), &[(1_000i64, 9_000i64)]);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(chunk_size = 10)]
 struct ChunkedTimelineRow {
     seen_at: Timeline,

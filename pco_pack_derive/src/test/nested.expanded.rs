@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct Outer {
     name: String,
     inner: Inner,
@@ -85,6 +86,8 @@ const _: () = {
     impl pco_pack::PcoSerde for Outer {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <Inner as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -97,22 +100,120 @@ const _: () = {
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
             for (_key, indices) in groups {
                 let mut col_name: Vec<String> = Vec::new();
+                let mut colr_name: Vec<&String> = Vec::new();
                 let mut col_inner: Vec<Inner> = Vec::new();
+                let mut colr_inner: Vec<&Inner> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_name.push(rec.name.clone());
-                    col_inner.push(rec.inner.clone());
+                    if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_name.push(rec.name.clone());
+                    } else {
+                        colr_name.push(&rec.name);
+                    }
+                    if <Inner as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_inner.push(rec.inner.clone());
+                    } else {
+                        colr_inner.push(&rec.inner);
+                    }
                 }
-                let cb_name = <String as pco_pack::PcoSerde>::write(
-                    col_name,
-                    0u32,
-                    Default::default(),
+                let cb_name = if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <String as pco_pack::PcoSerde>::write(
+                        col_name,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <String as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_name,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_inner = if <Inner as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <Inner as pco_pack::PcoSerde>::write(
+                        col_inner,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <Inner as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_inner,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                records
+                    .push(Chunk {
+                        name: cb_name.into(),
+                        inner: cb_inner.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
                 )?;
-                let cb_inner = <Inner as pco_pack::PcoSerde>::write(
-                    col_inner,
-                    0u32,
-                    Default::default(),
-                )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
+            for (i, _) in data.iter().enumerate() {
+                groups.entry(()).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (_key, indices) in groups {
+                let mut col_name: Vec<String> = Vec::new();
+                let mut colr_name: Vec<&String> = Vec::new();
+                let mut col_inner: Vec<Inner> = Vec::new();
+                let mut colr_inner: Vec<&Inner> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_name.push(rec.name.clone());
+                    } else {
+                        colr_name.push(&rec.name);
+                    }
+                    if <Inner as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_inner.push(rec.inner.clone());
+                    } else {
+                        colr_inner.push(&rec.inner);
+                    }
+                }
+                let cb_name = if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <String as pco_pack::PcoSerde>::write(
+                        col_name,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <String as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_name,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_inner = if <Inner as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <Inner as pco_pack::PcoSerde>::write(
+                        col_inner,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <Inner as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_inner,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
                 records
                     .push(Chunk {
                         name: cb_name.into(),
@@ -305,22 +406,48 @@ const _: () = {
             for (_key, indices) in groups {
                 for group_indices in indices.chunks(Outer::CHUNK_SIZE) {
                     let mut col_name: Vec<String> = Vec::new();
+                    let mut colr_name: Vec<&String> = Vec::new();
                     let mut col_inner: Vec<Inner> = Vec::new();
+                    let mut colr_inner: Vec<&Inner> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_name.push(rec.name.clone());
-                        col_inner.push(rec.inner.clone());
+                        if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_name.push(rec.name.clone());
+                        } else {
+                            colr_name.push(&rec.name);
+                        }
+                        if <Inner as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_inner.push(rec.inner.clone());
+                        } else {
+                            colr_inner.push(&rec.inner);
+                        }
                     }
-                    let cb_name = <String as pco_pack::PcoSerde>::write(
-                        col_name,
-                        0u32,
-                        Default::default(),
-                    )?;
-                    let cb_inner = <Inner as pco_pack::PcoSerde>::write(
-                        col_inner,
-                        0u32,
-                        Default::default(),
-                    )?;
+                    let cb_name = if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <String as pco_pack::PcoSerde>::write(
+                            col_name,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <String as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_name,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_inner = if <Inner as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <Inner as pco_pack::PcoSerde>::write(
+                            col_inner,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <Inner as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_inner,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
                     let rec = Chunk {
                         name: cb_name.into(),
                         inner: cb_inner.into(),
@@ -657,6 +784,8 @@ const _: () = {
     impl pco_pack::PcoSerde for Inner {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <i32 as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -669,22 +798,112 @@ const _: () = {
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
             for (_key, indices) in groups {
                 let mut col_x: Vec<i32> = Vec::new();
+                let mut colr_x: Vec<&i32> = Vec::new();
                 let mut col_label: Vec<String> = Vec::new();
+                let mut colr_label: Vec<&String> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_x.push(rec.x);
-                    col_label.push(rec.label.clone());
+                    if <i32 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_x.push(rec.x);
+                    } else {
+                        colr_x.push(&rec.x);
+                    }
+                    if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_label.push(rec.label.clone());
+                    } else {
+                        colr_label.push(&rec.label);
+                    }
                 }
-                let cb_x = <i32 as pco_pack::PcoSerde>::write(
-                    col_x,
-                    0u32,
-                    Default::default(),
+                let cb_x = if <i32 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i32 as pco_pack::PcoSerde>::write(col_x, 0u32, Default::default())?
+                } else {
+                    <i32 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_x,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_label = if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <String as pco_pack::PcoSerde>::write(
+                        col_label,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <String as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_label,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                records
+                    .push(Chunk {
+                        x: cb_x.into(),
+                        label: cb_label.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
                 )?;
-                let cb_label = <String as pco_pack::PcoSerde>::write(
-                    col_label,
-                    0u32,
-                    Default::default(),
-                )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
+            for (i, _) in data.iter().enumerate() {
+                groups.entry(()).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (_key, indices) in groups {
+                let mut col_x: Vec<i32> = Vec::new();
+                let mut colr_x: Vec<&i32> = Vec::new();
+                let mut col_label: Vec<String> = Vec::new();
+                let mut colr_label: Vec<&String> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <i32 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_x.push(rec.x);
+                    } else {
+                        colr_x.push(&rec.x);
+                    }
+                    if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_label.push(rec.label.clone());
+                    } else {
+                        colr_label.push(&rec.label);
+                    }
+                }
+                let cb_x = if <i32 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i32 as pco_pack::PcoSerde>::write(col_x, 0u32, Default::default())?
+                } else {
+                    <i32 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_x,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_label = if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <String as pco_pack::PcoSerde>::write(
+                        col_label,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <String as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_label,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
                 records
                     .push(Chunk {
                         x: cb_x.into(),
@@ -873,22 +1092,48 @@ const _: () = {
             for (_key, indices) in groups {
                 for group_indices in indices.chunks(Inner::CHUNK_SIZE) {
                     let mut col_x: Vec<i32> = Vec::new();
+                    let mut colr_x: Vec<&i32> = Vec::new();
                     let mut col_label: Vec<String> = Vec::new();
+                    let mut colr_label: Vec<&String> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_x.push(rec.x);
-                        col_label.push(rec.label.clone());
+                        if <i32 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_x.push(rec.x);
+                        } else {
+                            colr_x.push(&rec.x);
+                        }
+                        if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_label.push(rec.label.clone());
+                        } else {
+                            colr_label.push(&rec.label);
+                        }
                     }
-                    let cb_x = <i32 as pco_pack::PcoSerde>::write(
-                        col_x,
-                        0u32,
-                        Default::default(),
-                    )?;
-                    let cb_label = <String as pco_pack::PcoSerde>::write(
-                        col_label,
-                        0u32,
-                        Default::default(),
-                    )?;
+                    let cb_x = if <i32 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i32 as pco_pack::PcoSerde>::write(
+                            col_x,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i32 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_x,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_label = if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <String as pco_pack::PcoSerde>::write(
+                            col_label,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <String as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_label,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
                     let rec = Chunk {
                         x: cb_x.into(),
                         label: cb_label.into(),

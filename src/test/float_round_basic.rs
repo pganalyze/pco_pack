@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct FloatRounded {
     id: i64,
@@ -49,7 +49,7 @@ fn float_round_zero_value() {
 
 #[test]
 fn float_round_f32() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 3)]
     struct FloatRoundedF32 {
         id: i64,
@@ -66,7 +66,7 @@ fn float_round_f32() {
 
 #[test]
 fn float_round_with_index() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(index = [category], float_round = 2)]
     struct GroupedFloat {
         category: i64,
@@ -95,7 +95,7 @@ fn float_round_with_index() {
 
 #[test]
 fn float_round_f16() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct FloatRoundedF16 {
         id: i64,

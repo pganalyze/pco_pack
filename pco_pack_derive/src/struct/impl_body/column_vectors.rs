@@ -1,51 +1,75 @@
-// Column vector helpers used in the generated write() loop.
+// Staging columns for the generated write loop.
 
-use super::super::parse::{FieldRole, StructGen};
-use super::super::type_helpers::{is_copy_scalar, is_json_move_type, is_timeline_type};
+use super::super::parse::StructGen;
+use super::super::type_helpers::is_copy_scalar;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
 impl StructGen {
-    /// Generate `let mut col_<field>: Vec<FieldType> = vec![];` declarations.
+    /// Generate the staging declarations for one field: an owned column
+    /// and a reference column. The `CHEAP_TO_CLONE` guard folds per
+    /// monomorphized type, so the unused column stays empty and allocates
+    /// nothing.
     pub fn col_vectors_init(&self) -> Vec<TokenStream2> {
         self.all_payload()
             .iter()
             .map(|fi| {
                 let ident = &fi.ident;
+                let ty = &fi.ty;
                 let ci = syn::Ident::new(&format!("col_{}", ident), ident.span());
-                if fi.role == FieldRole::Timestamp && is_timeline_type(&fi.ty) {
-                    quote! { let mut #ci: Vec<pco_pack::Timeline> = Vec::new(); }
-                } else {
-                    let ty = &fi.ty;
-                    quote! { let mut #ci: Vec<#ty> = Vec::new(); }
+                let cr = syn::Ident::new(&format!("colr_{}", ident), ident.span());
+                quote! {
+                    let mut #ci: Vec<#ty> = Vec::new();
+                    let mut #cr: Vec<& #ty> = Vec::new();
                 }
             })
             .collect()
     }
 
-    /// True when any payload column holds JSON that `write()` can move out
-    /// of the row instead of cloning (see `col_vectors_push`).
-    pub fn has_json_move_field(&self) -> bool {
-        self.all_payload().iter().any(|fi| is_json_move_type(&fi.ty))
-    }
-
-    /// Generate `col_<field>.push(rec.<field>.clone());` calls, or
-    /// `std::mem::take` for JSON columns when `take_json` is set.
-    pub fn col_vectors_push(&self, take_json: bool) -> Vec<TokenStream2> {
+    /// Generate the per-field staging push. Cheap types land by value
+    /// (copy scalars, clone the rest); expensive types stage only a
+    /// reference into the row. The const guard folds at compile time.
+    pub fn col_vectors_push(&self) -> Vec<TokenStream2> {
         self.all_payload()
             .iter()
             .map(|fi| {
                 let ident = &fi.ident;
+                let ty = &fi.ty;
                 let ci = syn::Ident::new(&format!("col_{}", ident), ident.span());
-                if take_json && is_json_move_type(&fi.ty) {
-                    quote! { #ci.push(std::mem::take(&mut rec .#ident)); }
-                } else if is_copy_scalar(&fi.ty) {
-                    quote! { #ci.push(rec .#ident); }
+                let cr = syn::Ident::new(&format!("colr_{}", ident), ident.span());
+                let owned_value = if is_copy_scalar(ty) {
+                    quote! { rec .#ident }
                 } else {
-                    quote! { #ci.push(rec .#ident.clone()); }
+                    quote! { rec .#ident .clone() }
+                };
+                quote! {
+                    if <#ty as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        #ci.push(#owned_value);
+                    } else {
+                        #cr.push(&rec .#ident);
+                    }
                 }
             })
             .collect()
+    }
+
+    /// Generate the conjunction of per-field `CHEAP_TO_CLONE` constants,
+    /// so a struct with an expensive field is itself expensive. Repeated
+    /// types collapse to one term (clippy's eq_op rejects duplicates).
+    pub fn cheap_to_clone_expr(&self) -> TokenStream2 {
+        let mut seen = std::collections::HashSet::new();
+        let mut terms = self
+            .field_infos
+            .iter()
+            .map(|fi| {
+                let ty = &fi.ty;
+                quote! { <#ty as pco_pack::PcoSerde>::CHEAP_TO_CLONE }
+            })
+            .filter(|term| seen.insert(term.to_string()));
+        match terms.next() {
+            Some(first) => quote! { #first #(&& #terms)* },
+            None => quote! { true },
+        }
     }
 
     /// Generate the group-key tuple expression from a reference: `&rec`.

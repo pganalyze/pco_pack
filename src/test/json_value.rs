@@ -1,8 +1,8 @@
 use crate as pco_pack;
-use crate::PcoPack;
+use crate::{PcoPack, PcoSerde};
 use serde_json::json;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct JsonRecord {
     val: serde_json::Value,
 }
@@ -16,6 +16,28 @@ fn json_filter_null_query_error_includes_field() {
     let err = result.unwrap_err().to_string();
     assert!(err.contains("Failed to resolve filter for field 'val'"), "error message: {err}");
     assert!(err.contains("Cannot filter JSON Value column with null query value"), "error message: {err}");
+}
+
+#[test]
+fn json_value_write_borrowed_matches_owned_bytes() {
+    let mut values: Vec<serde_json::Value> = vec![
+        json!({"a": [1.234, 2.0, -3, "x", null, true], "b": {"c": 5.6789, "d": [0.005, -0.0051]}}),
+        json!([42, 3.14159, "s", {"k": [false, {"deep": 9.999999}]}]),
+        json!(null),
+        json!(42),
+        // (f * scale) overflows to infinity here; both paths must coerce to 0.
+        json!([1e308, -1e308]),
+    ];
+    for i in 0..300 {
+        values.push(json!([i as f64 / 3.0, i]));
+    }
+    for float_round in [0u32, 1, 2, 5] {
+        let owned = values.clone();
+        let refs: Vec<&serde_json::Value> = values.iter().collect();
+        let a = <serde_json::Value as PcoSerde>::write(owned, float_round, Default::default()).unwrap();
+        let b = <serde_json::Value as PcoSerde>::write_borrowed(&refs, float_round, Default::default()).unwrap();
+        assert_eq!(a, b, "owned and borrowed bytes differ for float_round={float_round}");
+    }
 }
 
 #[test]

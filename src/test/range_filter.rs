@@ -2,7 +2,7 @@ use crate as pco_pack;
 use crate::PcoPack;
 use chrono::{DateTime, Duration, Utc};
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(timestamp = collected_at, index = [database_id])]
 struct QueryStat {
     database_id: i64,
@@ -12,7 +12,7 @@ struct QueryStat {
     rows: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(timestamp = collected_at)]
 struct TimeSeries {
     collected_at: i64,
@@ -54,7 +54,7 @@ fn range_filter_basic() {
 
 #[test]
 fn range_filter_skips_groups() {
-    #[derive(Debug, Clone, PcoPack)]
+    #[derive(Clone, Debug, PcoPack)]
     #[pco_pack(timestamp = collected_at)]
     struct TimeSeriesData {
         collected_at: DateTime<Utc>,
@@ -81,7 +81,7 @@ fn range_filter_skips_groups() {
 
 #[test]
 fn range_filter_prunes_groups() {
-    #[derive(Debug, Clone, PcoPack)]
+    #[derive(Clone, Debug, PcoPack)]
     #[pco_pack(timestamp = collected_at, index = [device_id])]
     struct GroupedTimeSeries {
         device_id: i64,
@@ -110,7 +110,7 @@ fn range_filter_prunes_groups() {
 
 #[test]
 fn range_with_float_round() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(timestamp = timestamp, float_round = 2)]
     struct TimeSeriesRounded {
         timestamp: i64,
@@ -136,7 +136,7 @@ fn range_with_float_round() {
 
 #[test]
 fn range_filter_start_equals_end_i64() {
-    #[derive(Debug, Clone, PcoPack)]
+    #[derive(Clone, Debug, PcoPack)]
     struct SingleValRow {
         id: i64,
         value: i32,
@@ -159,7 +159,7 @@ fn range_filter_start_equals_end_i64() {
 
 #[test]
 fn range_filter_start_equals_end_f64() {
-    #[derive(Debug, Clone, PcoPack)]
+    #[derive(Clone, Debug, PcoPack)]
     struct FloatRow {
         id: i64,
         score: f32,
@@ -177,7 +177,7 @@ fn range_filter_start_equals_end_f64() {
 
 #[test]
 fn range_filter_start_equals_end_no_match() {
-    #[derive(Debug, Clone, PcoPack)]
+    #[derive(Clone, Debug, PcoPack)]
     struct Row {
         id: i64,
         value: i32,
@@ -192,7 +192,7 @@ fn range_filter_start_equals_end_no_match() {
 
 #[test]
 fn range_filter_start_greater_than_end_returns_nothing() {
-    #[derive(Debug, Clone, PcoPack)]
+    #[derive(Clone, Debug, PcoPack)]
     struct Row {
         id: i64,
         value: i32,
@@ -208,7 +208,7 @@ fn range_filter_start_greater_than_end_returns_nothing() {
 
 #[test]
 fn range_filter_start_greater_than_end_float_returns_nothing() {
-    #[derive(Debug, Clone, PcoPack)]
+    #[derive(Clone, Debug, PcoPack)]
     struct Row {
         id: i64,
         score: f32,
@@ -221,7 +221,7 @@ fn range_filter_start_greater_than_end_float_returns_nothing() {
     assert!(result.is_empty());
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(timestamp = ts)]
 struct TimestampedRow {
     ts: i64,
@@ -283,7 +283,7 @@ fn timestamp_chunk_metadata_multiple_chunks() {
 #[test]
 fn timestamp_chunk_metadata_with_index() {
     // With index + timestamp: each group gets its own chunk(s); verify per-group bounds.
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(timestamp = ts, index = [group_id])]
     struct GroupedRow {
         group_id: i64,
@@ -362,7 +362,7 @@ fn timestamp_chunk_metadata_all_same_timestamp() {
 /// rows whose stored value lies outside the query range.
 #[test]
 fn time_round_chunk_bounds_match_stored_values() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(timestamp = ts, chunk_size = 2, time_round = Duration::seconds(1))]
     struct TimeRoundRow {
         id: i64,

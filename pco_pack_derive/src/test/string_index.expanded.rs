@@ -1,4 +1,5 @@
 use smol_str::SmolStr;
+#[derive(Clone)]
 pub struct StringIndex {
     device_id: String,
     temperature: i64,
@@ -95,6 +96,8 @@ const _: () = {
     impl pco_pack::PcoSerde for StringIndex {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -108,15 +111,81 @@ const _: () = {
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
             for (key, indices) in groups {
                 let mut col_temperature: Vec<i64> = Vec::new();
+                let mut colr_temperature: Vec<&i64> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_temperature.push(rec.temperature);
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_temperature.push(rec.temperature);
+                    } else {
+                        colr_temperature.push(&rec.temperature);
+                    }
                 }
-                let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
-                    col_temperature,
-                    0u32,
-                    Default::default(),
+                let cb_temperature = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                records
+                    .push(Chunk {
+                        device_id: key.0.clone(),
+                        temperature: cb_temperature.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
                 )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(String,), Vec<usize>> = Default::default();
+            for (i, rec) in data.iter().enumerate() {
+                let key = (rec.device_id.clone(),);
+                groups.entry(key).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (key, indices) in groups {
+                let mut col_temperature: Vec<i64> = Vec::new();
+                let mut colr_temperature: Vec<&i64> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_temperature.push(rec.temperature);
+                    } else {
+                        colr_temperature.push(&rec.temperature);
+                    }
+                }
+                let cb_temperature = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
                 records
                     .push(Chunk {
                         device_id: key.0.clone(),
@@ -343,15 +412,28 @@ const _: () = {
             for (key, indices) in groups {
                 for group_indices in indices.chunks(StringIndex::CHUNK_SIZE) {
                     let mut col_temperature: Vec<i64> = Vec::new();
+                    let mut colr_temperature: Vec<&i64> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_temperature.push(rec.temperature);
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_temperature.push(rec.temperature);
+                        } else {
+                            colr_temperature.push(&rec.temperature);
+                        }
                     }
-                    let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
-                        col_temperature,
-                        0u32,
-                        Default::default(),
-                    )?;
+                    let cb_temperature = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_temperature,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_temperature,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
                     let rec = Chunk {
                         device_id: key.0.clone(),
                         temperature: cb_temperature.into(),
@@ -565,6 +647,7 @@ const _: () = {
         }
     }
 };
+#[derive(Clone)]
 pub struct SmolStrIndex {
     device_id: SmolStr,
     temperature: i64,
@@ -661,6 +744,8 @@ const _: () = {
     impl pco_pack::PcoSerde for SmolStrIndex {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <SmolStr as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -674,15 +759,81 @@ const _: () = {
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
             for (key, indices) in groups {
                 let mut col_temperature: Vec<i64> = Vec::new();
+                let mut colr_temperature: Vec<&i64> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_temperature.push(rec.temperature);
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_temperature.push(rec.temperature);
+                    } else {
+                        colr_temperature.push(&rec.temperature);
+                    }
                 }
-                let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
-                    col_temperature,
-                    0u32,
-                    Default::default(),
+                let cb_temperature = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                records
+                    .push(Chunk {
+                        device_id: key.0.clone(),
+                        temperature: cb_temperature.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
                 )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(SmolStr,), Vec<usize>> = Default::default();
+            for (i, rec) in data.iter().enumerate() {
+                let key = (rec.device_id.clone(),);
+                groups.entry(key).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (key, indices) in groups {
+                let mut col_temperature: Vec<i64> = Vec::new();
+                let mut colr_temperature: Vec<&i64> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_temperature.push(rec.temperature);
+                    } else {
+                        colr_temperature.push(&rec.temperature);
+                    }
+                }
+                let cb_temperature = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
                 records
                     .push(Chunk {
                         device_id: key.0.clone(),
@@ -909,15 +1060,28 @@ const _: () = {
             for (key, indices) in groups {
                 for group_indices in indices.chunks(SmolStrIndex::CHUNK_SIZE) {
                     let mut col_temperature: Vec<i64> = Vec::new();
+                    let mut colr_temperature: Vec<&i64> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_temperature.push(rec.temperature);
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_temperature.push(rec.temperature);
+                        } else {
+                            colr_temperature.push(&rec.temperature);
+                        }
                     }
-                    let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
-                        col_temperature,
-                        0u32,
-                        Default::default(),
-                    )?;
+                    let cb_temperature = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_temperature,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_temperature,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
                     let rec = Chunk {
                         device_id: key.0.clone(),
                         temperature: cb_temperature.into(),

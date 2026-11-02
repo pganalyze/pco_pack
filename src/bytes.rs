@@ -2,7 +2,7 @@ use super::*;
 
 include!("lazy_msgpack.rs");
 
-impl_lazy_msgpack!(ByteBufReader; (); serde_bytes::ByteBuf;);
+impl_lazy_msgpack!(ByteBufReader; (); serde_bytes::ByteBuf; false);
 
 impl FallbackReader for ByteBufReader {
     fn read_fallback(raw: &[u8]) -> anyhow::Result<Self>

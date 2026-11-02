@@ -2,7 +2,7 @@ use crate as pco_pack;
 use crate::PcoPack;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(index = [device_id])]
 struct DeviceTelemetry {
     device_id: i64,
@@ -57,7 +57,7 @@ fn index_each_row_different_group() {
     assert_eq!(result.len(), 3);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(timestamp = collected_at, index = [database_id])]
 struct QueryStat {
     database_id: i64,
@@ -115,7 +115,7 @@ fn combined_empty() {
     assert!(result.is_empty());
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(index = [region])]
 struct RegionMetric {
     region: String,
@@ -171,7 +171,7 @@ fn index_string_field_empty_value() {
     assert_eq!(result.len(), 2);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(index = [device_id, region])]
 struct MultiIndexMetric {
     device_id: i64,
@@ -248,7 +248,7 @@ fn index_multi_field_empty() {
     assert!(result.is_empty());
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(index = [tenant_id])]
 struct TenantMetric {
     tenant_id: Uuid,

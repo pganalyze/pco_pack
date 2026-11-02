@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 struct VecOptionI32 {
     values: Vec<Option<i32>>,
 }

@@ -1,4 +1,4 @@
-#[derive(PcoPack)]
+#[derive(Clone, PcoPack)]
 #[pco_pack(timestamp = collected_at, index = [database_id, granularity])]
 pub struct QueryStat {
     pub database_id: i64,

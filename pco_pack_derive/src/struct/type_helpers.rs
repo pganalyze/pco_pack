@@ -40,29 +40,6 @@ pub fn is_datetime_type(ty: &syn::Type) -> bool {
     type_last_segment_matches(ty, "DateTime").unwrap_or(false)
 }
 
-/// Check if the type is a `serde_json::Value` column.
-pub fn is_json_type(ty: &syn::Type) -> bool {
-    type_last_segment_matches(ty, "Value").unwrap_or(false)
-}
-
-/// Check if the type is a JSON column whose payload `write()` may take
-/// instead of deep-clone: bare `Value`, `Option<Value>`, or `Vec<Value>`.
-/// Other shapes (maps, nested wrappers) fall back to cloning.
-pub fn is_json_move_type(ty: &syn::Type) -> bool {
-    if is_json_type(ty) {
-        return true;
-    }
-    if let syn::Type::Path(tp) = ty
-        && let Some(seg) = tp.path.segments.last()
-        && matches!(seg.ident.to_string().as_str(), "Option" | "Vec")
-        && let syn::PathArguments::AngleBracketed(args) = &seg.arguments
-        && let Some(syn::GenericArgument::Type(inner)) = args.args.first()
-    {
-        return is_json_type(inner);
-    }
-    false
-}
-
 /// Check if the type is a `Copy` scalar. Templates use this to read such fields
 /// by value instead of emitting a `.clone()`. Unknown shapes conservatively
 /// fall back to `false` so cloning stays available for real `Clone` types.

@@ -1,12 +1,12 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct FloatRow {
     value: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct F32Row {
     value: f32,
 }
@@ -155,7 +155,7 @@ fn f64_filter_nan_not_in_range() {
     assert_eq!(result[0].value, 50.0);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct VecFloatRow {
     values: Vec<f64>,
 }

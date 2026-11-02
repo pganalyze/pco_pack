@@ -289,9 +289,17 @@ impl PcoSerde for Timeline {
     type Writer = vec_number::VecNumberWriter<(i64, i64)>;
     type Reader = vec_number::VecNumberReader<(i64, i64)>;
 
+    // One range vector per row, unbounded in length.
+    const CHEAP_TO_CLONE: bool = false;
+
     fn write(data: Vec<Self>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let inner: Vec<Vec<(i64, i64)>> = data.into_iter().map(|tl| tl.ranges).collect();
         Vec::<(i64, i64)>::write(inner, float_round, time_round)
+    }
+
+    fn write_borrowed(values: &[&Self], float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let inner: Vec<&Vec<(i64, i64)>> = values.iter().map(|tl| &tl.ranges).collect();
+        Vec::<(i64, i64)>::write_borrowed(&inner, float_round, time_round)
     }
 
     fn read(src: &mut Cursor<&[u8]>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Self::Reader> {

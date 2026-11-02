@@ -10,6 +10,11 @@ impl PcoSerde for chrono::DateTime<chrono::Utc> {
         i64::write(micros, 0, time_round)
     }
 
+    fn write_borrowed(values: &[&Self], _float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let micros: Vec<i64> = values.iter().map(|dt| round_timestamp_us(dt.timestamp_micros(), time_round)).collect();
+        i64::write(micros, 0, time_round)
+    }
+
     fn read(src: &mut Cursor<&[u8]>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Self::Reader> {
         i64::read(src, float_round, time_round)
     }

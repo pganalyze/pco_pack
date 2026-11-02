@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 #[pco_pack(timestamp = ts)]
 struct DateTimeRecord {
     ts: chrono::DateTime<chrono::Utc>,

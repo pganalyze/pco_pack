@@ -2,27 +2,27 @@ use crate as pco_pack;
 use crate::PcoPack;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct InnerFloatRounded {
     id: i64,
     value: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct MetricV1 {
     id: i64,
     value: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct MetricV2 {
     id: i64,
     value: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 3)]
 struct MetricV3 {
     id: i64,
@@ -83,7 +83,7 @@ fn float_round_cross_version_higher_to_lower_precision() {
 
     let bytes = MetricV2::serialize(data_v2.clone()).unwrap();
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 1)]
     struct MetricV1Precision {
         id: i64,
@@ -96,13 +96,13 @@ fn float_round_cross_version_higher_to_lower_precision() {
     assert!((result[1].value - 2.72).abs() < 1e-10);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct OuterNoFloatRound {
     device_id: i64,
     inner: InnerFloatRounded,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 3)]
 struct OuterWithFloatRound {
     device_id: i64,
@@ -125,14 +125,14 @@ fn float_round_cross_version_nested_outer_no_float_round() {
     assert!((result[1].inner.value - 2.72).abs() < 1e-10);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct VecMetricV2 {
     id: i64,
     values: Vec<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 3)]
 struct VecMetricV3 {
     id: i64,
@@ -156,14 +156,14 @@ fn float_round_cross_version_vec_different_precision() {
     assert!((result[1].values[1] - 2.72).abs() < 1e-10);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct MapMetricV2 {
     id: i64,
     metrics: HashMap<String, f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 3)]
 struct MapMetricV3 {
     id: i64,
@@ -185,14 +185,14 @@ fn float_round_cross_version_map_different_precision() {
     assert!((result[0].metrics["humidity"] - 65.43).abs() < 1e-10);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 2)]
 struct OptMetricV2 {
     id: i64,
     value: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(float_round = 3)]
 struct OptMetricV3 {
     id: i64,
@@ -220,13 +220,13 @@ fn float_round_cross_version_option_different_precision() {
 
 #[test]
 fn float_round_coerce_f64_to_f32() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct F64R2 {
         id: i64,
         value: f64,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct F32P {
         id: i64,
         value: f32,
@@ -243,13 +243,13 @@ fn float_round_coerce_f64_to_f32() {
 
 #[test]
 fn float_round_coerce_f64_to_f32_both_rounded() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct F64R2B {
         id: i64,
         value: f64,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 3)]
     struct F32R3 {
         id: i64,
@@ -266,13 +266,13 @@ fn float_round_coerce_f64_to_f32_both_rounded() {
 
 #[test]
 fn float_round_coerce_f32_to_f64() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 3)]
     struct F32R3B {
         id: i64,
         value: f32,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct F64P {
         id: i64,
         value: f64,
@@ -288,13 +288,13 @@ fn float_round_coerce_f32_to_f64() {
 
 #[test]
 fn float_round_coerce_f64_to_f16() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct F64R2C {
         id: i64,
         value: f64,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct F16P {
         id: i64,
         value: half::f16,
@@ -311,13 +311,13 @@ fn float_round_coerce_f64_to_f16() {
 
 #[test]
 fn float_round_coerce_f32_to_f16_both_rounded() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct F32R2 {
         id: i64,
         value: f32,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 3)]
     struct F16R3 {
         id: i64,
@@ -334,13 +334,13 @@ fn float_round_coerce_f32_to_f16_both_rounded() {
 
 #[test]
 fn float_round_coerce_f16_to_f32() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct F16R2 {
         id: i64,
         value: half::f16,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct F32PB {
         id: i64,
         value: f32,
@@ -359,13 +359,13 @@ fn float_round_coerce_f16_to_f32() {
 
 #[test]
 fn float_round_coerce_f16_to_f64() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct F16R2B {
         id: i64,
         value: half::f16,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct F64PB {
         id: i64,
         value: f64,
@@ -385,13 +385,13 @@ fn float_round_coerce_f16_to_f64() {
 /// Verifies float->int truncation works through the FloatRoundStorage layer.
 #[test]
 fn float_round_coerce_f64_to_i32() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct F64R2D {
         id: i64,
         value: f64,
     }
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct I32P {
         id: i64,
         value: i32,

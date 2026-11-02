@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(index = [id])]
 struct SensorRecord {
     id: i64,
@@ -167,7 +167,7 @@ fn test_project_empty_fields_keeps_all() {
     assert_eq!(results[0].label, "a");
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(timestamp = ts, index = [device_id])]
 struct TelemetryRecord {
     device_id: i64,

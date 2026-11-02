@@ -74,7 +74,7 @@ Note: `float_round` and `time_round` are applied to nested types (e.g. collectio
 use pco_pack::PcoPack;
 use chrono::{DateTime, Duration, Utc};
 
-#[derive(PcoPack)]
+#[derive(Clone, PcoPack)]
 #[pco_pack(index = [device_id], timestamp = collected_at, float_round = 2, time_round = Duration::minutes(1))]
 struct DeviceMetric {
     // device_id, start_at, and end_at are stored once per chunk
@@ -91,7 +91,7 @@ struct DeviceMetric {
 ```rust
 use pco_pack::PcoPack;
 
-#[derive(PcoPack, Debug, PartialEq, Default)]
+#[derive(Clone, PcoPack, Debug, PartialEq, Default)]
 #[pco_pack(float_round = 2)]
 enum Metric {
     #[default]
@@ -113,7 +113,7 @@ assert_eq!(rows, vec![Temperature(24.0), Count(42), Temperature(19.46), Null]);
 ```rust
 use pco_pack::PcoPack;
 
-#[derive(PcoPack, Debug, PartialEq)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 struct Event { id: i64, name: String, score: f32 }
 
 let data = vec![
@@ -137,7 +137,7 @@ PcoPack exposes an intermediate compressed form as `PcoPack::Chunk` that stores 
 use pco_pack::PcoPack;
 use chrono::{DateTime, Utc};
 
-#[derive(Default, Debug, PartialEq, PcoPack)]
+#[derive(Clone, Default, Debug, PartialEq, PcoPack)]
 #[pco_pack(index = [device_id], timestamp = collected_at)]
 struct Sensor {
     device_id: i64,
@@ -195,7 +195,7 @@ When a struct has a `timestamp` field, the filter struct also provides range hel
 use pco_pack::PcoPack;
 use chrono::{DateTime, Duration, Utc};
 
-#[derive(PcoPack)]
+#[derive(Clone, PcoPack)]
 #[pco_pack(index = [device_id], timestamp = collected_at)]
 struct Sensor {
     device_id: i64,
@@ -231,7 +231,7 @@ Filters can be expressed as JSON objects mapping field paths to filter values:
 ```rust
 use pco_pack::PcoPack;
 
-#[derive(PcoPack)]
+#[derive(Clone, PcoPack)]
 struct MyStruct { id: i64, name: String, score: f32, status: String }
 
 let data = vec![
@@ -272,7 +272,7 @@ The `fields` parameter controls which fields are decompressed after filtering. F
 ```rust
 use pco_pack::PcoPack;
 
-#[derive(PcoPack)]
+#[derive(Clone, PcoPack)]
 struct MyStruct { id: i64, name: String, score: f32 }
 
 let data = vec![
@@ -309,7 +309,7 @@ Note: `time_round` on the struct does not affect Timeline fields. Resolution is 
 use chrono::{DateTime, Utc};
 use pco_pack::{PcoPack, Timeline};
 
-#[derive(PcoPack)]
+#[derive(Clone, PcoPack)]
 #[pco_pack(timestamp = seen_at)]
 struct DeviceReading {
     seen_at: Timeline,

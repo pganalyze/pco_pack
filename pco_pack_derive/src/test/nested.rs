@@ -1,4 +1,4 @@
-#[derive(PcoPack)]
+#[derive(Clone, PcoPack)]
 pub struct Outer {
     name: String,
     inner: Inner,

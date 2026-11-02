@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct QueryStat {
     pub database_id: i64,
     pub granularity: i32,
@@ -166,6 +167,9 @@ const _: () = {
     impl pco_pack::PcoSerde for QueryStat {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <i32 as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <chrono::DateTime<chrono::Utc> as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -184,24 +188,160 @@ const _: () = {
                             .cmp(&timestamp_to_i64(&data[b].collected_at))
                     });
                 let mut col_collected_at: Vec<chrono::DateTime<chrono::Utc>> = Vec::new();
+                let mut colr_collected_at: Vec<&chrono::DateTime<chrono::Utc>> = Vec::new();
                 let mut col_fingerprint: Vec<i64> = Vec::new();
+                let mut colr_fingerprint: Vec<&i64> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_collected_at.push(rec.collected_at);
-                    col_fingerprint.push(rec.fingerprint);
+                    if <chrono::DateTime<
+                        chrono::Utc,
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_collected_at.push(rec.collected_at);
+                    } else {
+                        colr_collected_at.push(&rec.collected_at);
+                    }
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_fingerprint.push(rec.fingerprint);
+                    } else {
+                        colr_fingerprint.push(&rec.fingerprint);
+                    }
                 }
-                let cb_collected_at = <chrono::DateTime<
+                let cb_collected_at = if <chrono::DateTime<
                     chrono::Utc,
-                > as pco_pack::PcoSerde>::write(
-                    col_collected_at,
-                    0u32,
-                    Default::default(),
+                > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <chrono::DateTime<
+                        chrono::Utc,
+                    > as pco_pack::PcoSerde>::write(
+                        col_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <chrono::DateTime<
+                        chrono::Utc,
+                    > as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_fingerprint = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_fingerprint,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_fingerprint,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let (g_start, g_end) = if !indices.is_empty() {
+                    (
+                        timestamp_to_i64(&data[indices[0]].collected_at),
+                        timestamp_to_i64(&data[indices[indices.len() - 1]].collected_at),
+                    )
+                } else {
+                    (0i64, 0i64)
+                };
+                records
+                    .push(Chunk {
+                        database_id: key.0,
+                        granularity: key.1,
+                        start_at: pco_pack::chrono::DateTime::<
+                            pco_pack::chrono::Utc,
+                        >::from_timestamp_micros(g_start)
+                            .expect("valid timestamp"),
+                        end_at: pco_pack::chrono::DateTime::<
+                            pco_pack::chrono::Utc,
+                        >::from_timestamp_micros(g_end)
+                            .expect("valid timestamp"),
+                        collected_at: cb_collected_at.into(),
+                        fingerprint: cb_fingerprint.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
                 )?;
-                let cb_fingerprint = <i64 as pco_pack::PcoSerde>::write(
-                    col_fingerprint,
-                    0u32,
-                    Default::default(),
-                )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(i64, i32), Vec<usize>> = Default::default();
+            for (i, rec) in data.iter().enumerate() {
+                let key = (rec.database_id, rec.granularity);
+                groups.entry(key).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (key, mut indices) in groups {
+                indices
+                    .sort_by(|&a, &b| {
+                        timestamp_to_i64(&data[a].collected_at)
+                            .cmp(&timestamp_to_i64(&data[b].collected_at))
+                    });
+                let mut col_collected_at: Vec<chrono::DateTime<chrono::Utc>> = Vec::new();
+                let mut colr_collected_at: Vec<&chrono::DateTime<chrono::Utc>> = Vec::new();
+                let mut col_fingerprint: Vec<i64> = Vec::new();
+                let mut colr_fingerprint: Vec<&i64> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <chrono::DateTime<
+                        chrono::Utc,
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_collected_at.push(rec.collected_at);
+                    } else {
+                        colr_collected_at.push(&rec.collected_at);
+                    }
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_fingerprint.push(rec.fingerprint);
+                    } else {
+                        colr_fingerprint.push(&rec.fingerprint);
+                    }
+                }
+                let cb_collected_at = if <chrono::DateTime<
+                    chrono::Utc,
+                > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <chrono::DateTime<
+                        chrono::Utc,
+                    > as pco_pack::PcoSerde>::write(
+                        col_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <chrono::DateTime<
+                        chrono::Utc,
+                    > as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_fingerprint = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_fingerprint,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_fingerprint,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
                 let (g_start, g_end) = if !indices.is_empty() {
                     (
                         timestamp_to_i64(&data[indices[0]].collected_at),
@@ -563,24 +703,56 @@ const _: () = {
                     });
                 for group_indices in indices.chunks(QueryStat::CHUNK_SIZE) {
                     let mut col_collected_at: Vec<chrono::DateTime<chrono::Utc>> = Vec::new();
+                    let mut colr_collected_at: Vec<&chrono::DateTime<chrono::Utc>> = Vec::new();
                     let mut col_fingerprint: Vec<i64> = Vec::new();
+                    let mut colr_fingerprint: Vec<&i64> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_collected_at.push(rec.collected_at);
-                        col_fingerprint.push(rec.fingerprint);
+                        if <chrono::DateTime<
+                            chrono::Utc,
+                        > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_collected_at.push(rec.collected_at);
+                        } else {
+                            colr_collected_at.push(&rec.collected_at);
+                        }
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_fingerprint.push(rec.fingerprint);
+                        } else {
+                            colr_fingerprint.push(&rec.fingerprint);
+                        }
                     }
-                    let cb_collected_at = <chrono::DateTime<
+                    let cb_collected_at = if <chrono::DateTime<
                         chrono::Utc,
-                    > as pco_pack::PcoSerde>::write(
-                        col_collected_at,
-                        0u32,
-                        Default::default(),
-                    )?;
-                    let cb_fingerprint = <i64 as pco_pack::PcoSerde>::write(
-                        col_fingerprint,
-                        0u32,
-                        Default::default(),
-                    )?;
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <chrono::DateTime<
+                            chrono::Utc,
+                        > as pco_pack::PcoSerde>::write(
+                            col_collected_at,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <chrono::DateTime<
+                            chrono::Utc,
+                        > as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_collected_at,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_fingerprint = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_fingerprint,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_fingerprint,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
                     let (g_start, g_end) = if !group_indices.is_empty() {
                         (
                             timestamp_to_i64(&data[group_indices[0]].collected_at),

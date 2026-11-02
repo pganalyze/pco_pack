@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Default, PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, Default, PcoPack, Debug, PartialEq)]
 #[pco_pack(float_round = 2)]
 enum FloatEnum {
     #[default]
@@ -9,7 +9,7 @@ enum FloatEnum {
     Value(f64),
 }
 
-#[derive(Default, PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, Default, PcoPack, Debug, PartialEq)]
 #[pco_pack(float_round = 3)]
 enum FloatEnumMixed {
     #[default]
@@ -18,7 +18,7 @@ enum FloatEnumMixed {
     Other(i32),
 }
 
-#[derive(Default, PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, Default, PcoPack, Debug, PartialEq)]
 #[pco_pack(float_round = 2)]
 enum FloatEnumJson {
     #[default]
