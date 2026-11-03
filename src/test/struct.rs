@@ -1,41 +1,41 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct CompactRecord {
     id: i64,
     name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct ExpandedRecord {
     id: i64,
     name: String,
     score: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct Example {
     id: i64,
     name: String,
     score: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct Address {
     street: String,
     city: String,
     zip: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct Person {
     name: String,
     age: i32,
     address: Address,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum OldStatus {
     #[default]
     Active,
@@ -43,7 +43,7 @@ enum OldStatus {
     Pending,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum NewStatus {
     #[default]
     Active,
@@ -52,19 +52,19 @@ enum NewStatus {
     Suspended,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
 struct ClickPayload {
     x: i32,
     y: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
 struct ScrollPayload {
     dx: i32,
     dy: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum OldEvent {
     #[default]
     Unknown,
@@ -72,7 +72,7 @@ enum OldEvent {
     Resize,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum NewEvent {
     #[default]
     Unknown,
@@ -81,27 +81,27 @@ enum NewEvent {
     Scroll(ScrollPayload),
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct OldMessage {
     id: i64,
     text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct NewMessage {
     id: i64,
     text: String,
     priority: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum OldAction {
     #[default]
     Create,
     Update,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum NewAction {
     #[default]
     Create,
@@ -181,12 +181,12 @@ fn struct_field_removed_cross_schema() {
 
 #[test]
 fn struct_field_order_independent_roundtrip() {
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct OrderA {
         a: i64,
         b: String,
     }
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct OrderB {
         b: String,
         a: i64,
@@ -203,13 +203,13 @@ fn struct_field_order_independent_roundtrip() {
 
 #[test]
 fn struct_middle_field_removed_cross_schema() {
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct FullRecord {
         id: i64,
         name: String,
         score: f32,
     }
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct CompactMiddle {
         id: i64,
         score: f32,
@@ -228,12 +228,12 @@ fn struct_middle_field_removed_cross_schema() {
 
 #[test]
 fn struct_middle_field_added_cross_schema() {
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct OldMid {
         id: i64,
         name: String,
     }
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct NewMid {
         id: i64,
         title: String,
@@ -417,13 +417,13 @@ fn struct_nested_filter() {
     assert_eq!(result[0].name, "Alice");
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct OldPoint2D {
     id: i64,
     coords: (i64, i64),
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct NewPoint3D {
     id: i64,
     coords: (i64, i64, i64),

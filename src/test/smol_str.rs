@@ -2,7 +2,7 @@ use crate as pco_pack;
 use crate::PcoPack;
 use smol_str::SmolStr;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct SmolStrRecord {
     val: SmolStr,
 }

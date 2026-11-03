@@ -82,7 +82,7 @@ pub(crate) mod helpers {
 /// - `$ty`: Type implementing PcoSerde; caller provides separate PcoFilter impl and FallbackReader impl
 #[allow(unused_macros)]
 macro_rules! impl_lazy_msgpack {
-    ($reader:ident; $writer_ty:ty; $ty:ty;) => {
+    ($reader:ident; $writer_ty:ty; $ty:ty; $cheap_to_clone:expr) => {
         pub struct $reader {
             pub msgpack_bytes: std::sync::Arc<[u8]>,
             pub total_rows: usize,
@@ -131,12 +131,34 @@ macro_rules! impl_lazy_msgpack {
             type Writer = $writer_ty;
             type Reader = $reader;
 
+            const CHEAP_TO_CLONE: bool = $cheap_to_clone;
+
             fn write(data: Vec<Self>, _float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
                 use self::{CHUNK_SIZE, FORMAT_VERSION_CHUNKED};
                 let len = data.len();
                 let mut raw_buffer = Vec::with_capacity(len * 64);
                 raw_buffer.push(FORMAT_VERSION_CHUNKED);
                 for chunk in data.chunks(CHUNK_SIZE) {
+                    rmp_serde::encode::write(&mut raw_buffer, chunk)?;
+                }
+                let compressed = zstd::encode_all(raw_buffer.as_slice(), 3)?;
+                let mut out = Vec::with_capacity(16 + compressed.len());
+                out.extend_from_slice(&(len as u64).to_le_bytes());
+                out.extend_from_slice(&(compressed.len() as u64).to_le_bytes());
+                out.extend_from_slice(&compressed);
+                Ok(out)
+            }
+
+            /// Encodes `&[&Self]` chunks directly; serde forwards through
+            /// references, so the msgpack bytes match owned `write`.
+            fn write_borrowed(
+                values: &[&Self], _float_round: u32, _time_round: chrono::Duration,
+            ) -> anyhow::Result<Vec<u8>> {
+                use self::{CHUNK_SIZE, FORMAT_VERSION_CHUNKED};
+                let len = values.len();
+                let mut raw_buffer = Vec::with_capacity(len * 64);
+                raw_buffer.push(FORMAT_VERSION_CHUNKED);
+                for chunk in values.chunks(CHUNK_SIZE) {
                     rmp_serde::encode::write(&mut raw_buffer, chunk)?;
                 }
                 let compressed = zstd::encode_all(raw_buffer.as_slice(), 3)?;

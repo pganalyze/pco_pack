@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct Task {
     id: i64,
     value: f64,
@@ -103,6 +104,10 @@ const _: () = {
     impl pco_pack::PcoSerde for Task {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <State as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -115,36 +120,194 @@ const _: () = {
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
             for (_key, indices) in groups {
                 let mut col_id: Vec<i64> = Vec::new();
+                let mut colr_id: Vec<&i64> = Vec::new();
                 let mut col_value: Vec<f64> = Vec::new();
+                let mut colr_value: Vec<&f64> = Vec::new();
                 let mut col_label: Vec<String> = Vec::new();
+                let mut colr_label: Vec<&String> = Vec::new();
                 let mut col_state: Vec<State> = Vec::new();
+                let mut colr_state: Vec<&State> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_id.push(rec.id);
-                    col_value.push(rec.value);
-                    col_label.push(rec.label.clone());
-                    col_state.push(rec.state.clone());
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_id.push(rec.id);
+                    } else {
+                        colr_id.push(&rec.id);
+                    }
+                    if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_value.push(rec.value);
+                    } else {
+                        colr_value.push(&rec.value);
+                    }
+                    if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_label.push(rec.label.clone());
+                    } else {
+                        colr_label.push(&rec.label);
+                    }
+                    if <State as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_state.push(rec.state.clone());
+                    } else {
+                        colr_state.push(&rec.state);
+                    }
                 }
-                let cb_id = <i64 as pco_pack::PcoSerde>::write(
-                    col_id,
-                    0u32,
-                    Default::default(),
+                let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(col_id, 0u32, Default::default())?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_id,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_value = if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <f64 as pco_pack::PcoSerde>::write(
+                        col_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <f64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_label = if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <String as pco_pack::PcoSerde>::write(
+                        col_label,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <String as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_label,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_state = if <State as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <State as pco_pack::PcoSerde>::write(
+                        col_state,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <State as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_state,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                records
+                    .push(Chunk {
+                        id: cb_id.into(),
+                        value: cb_value.into(),
+                        label: cb_label.into(),
+                        state: cb_state.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
                 )?;
-                let cb_value = <f64 as pco_pack::PcoSerde>::write(
-                    col_value,
-                    0u32,
-                    Default::default(),
-                )?;
-                let cb_label = <String as pco_pack::PcoSerde>::write(
-                    col_label,
-                    0u32,
-                    Default::default(),
-                )?;
-                let cb_state = <State as pco_pack::PcoSerde>::write(
-                    col_state,
-                    0u32,
-                    Default::default(),
-                )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
+            for (i, _) in data.iter().enumerate() {
+                groups.entry(()).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (_key, indices) in groups {
+                let mut col_id: Vec<i64> = Vec::new();
+                let mut colr_id: Vec<&i64> = Vec::new();
+                let mut col_value: Vec<f64> = Vec::new();
+                let mut colr_value: Vec<&f64> = Vec::new();
+                let mut col_label: Vec<String> = Vec::new();
+                let mut colr_label: Vec<&String> = Vec::new();
+                let mut col_state: Vec<State> = Vec::new();
+                let mut colr_state: Vec<&State> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_id.push(rec.id);
+                    } else {
+                        colr_id.push(&rec.id);
+                    }
+                    if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_value.push(rec.value);
+                    } else {
+                        colr_value.push(&rec.value);
+                    }
+                    if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_label.push(rec.label.clone());
+                    } else {
+                        colr_label.push(&rec.label);
+                    }
+                    if <State as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_state.push(rec.state.clone());
+                    } else {
+                        colr_state.push(&rec.state);
+                    }
+                }
+                let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(col_id, 0u32, Default::default())?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_id,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_value = if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <f64 as pco_pack::PcoSerde>::write(
+                        col_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <f64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_label = if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <String as pco_pack::PcoSerde>::write(
+                        col_label,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <String as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_label,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_state = if <State as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <State as pco_pack::PcoSerde>::write(
+                        col_state,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <State as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_state,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
                 records
                     .push(Chunk {
                         id: cb_id.into(),
@@ -383,36 +546,88 @@ const _: () = {
             for (_key, indices) in groups {
                 for group_indices in indices.chunks(Task::CHUNK_SIZE) {
                     let mut col_id: Vec<i64> = Vec::new();
+                    let mut colr_id: Vec<&i64> = Vec::new();
                     let mut col_value: Vec<f64> = Vec::new();
+                    let mut colr_value: Vec<&f64> = Vec::new();
                     let mut col_label: Vec<String> = Vec::new();
+                    let mut colr_label: Vec<&String> = Vec::new();
                     let mut col_state: Vec<State> = Vec::new();
+                    let mut colr_state: Vec<&State> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_id.push(rec.id);
-                        col_value.push(rec.value);
-                        col_label.push(rec.label.clone());
-                        col_state.push(rec.state.clone());
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_id.push(rec.id);
+                        } else {
+                            colr_id.push(&rec.id);
+                        }
+                        if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_value.push(rec.value);
+                        } else {
+                            colr_value.push(&rec.value);
+                        }
+                        if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_label.push(rec.label.clone());
+                        } else {
+                            colr_label.push(&rec.label);
+                        }
+                        if <State as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_state.push(rec.state.clone());
+                        } else {
+                            colr_state.push(&rec.state);
+                        }
                     }
-                    let cb_id = <i64 as pco_pack::PcoSerde>::write(
-                        col_id,
-                        0u32,
-                        Default::default(),
-                    )?;
-                    let cb_value = <f64 as pco_pack::PcoSerde>::write(
-                        col_value,
-                        0u32,
-                        Default::default(),
-                    )?;
-                    let cb_label = <String as pco_pack::PcoSerde>::write(
-                        col_label,
-                        0u32,
-                        Default::default(),
-                    )?;
-                    let cb_state = <State as pco_pack::PcoSerde>::write(
-                        col_state,
-                        0u32,
-                        Default::default(),
-                    )?;
+                    let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_id,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_id,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_value = if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <f64 as pco_pack::PcoSerde>::write(
+                            col_value,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <f64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_value,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_label = if <String as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <String as pco_pack::PcoSerde>::write(
+                            col_label,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <String as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_label,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_state = if <State as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <State as pco_pack::PcoSerde>::write(
+                            col_state,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <State as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_state,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
                     let rec = Chunk {
                         id: cb_id.into(),
                         value: cb_value.into(),
@@ -751,6 +966,7 @@ const _: () = {
     impl pco_pack::PcoSerde for State {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <i32 as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             float_round: u32,

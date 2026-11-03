@@ -1,6 +1,6 @@
 use pco_pack::Timeline;
 
-#[derive(PcoPack)]
+#[derive(Clone, PcoPack)]
 #[pco_pack(timestamp = collected_at, index = [database_id])]
 pub struct TimeSeriesCompact {
     database_id: i64,

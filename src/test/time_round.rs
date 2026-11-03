@@ -2,21 +2,21 @@ use crate as pco_pack;
 use crate::PcoPack;
 use chrono::{DateTime, Duration, Utc};
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(timestamp = ts, time_round = chrono::Duration::seconds(60))]
 struct DateTimeMinuteRound {
     ts: DateTime<Utc>,
     value: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(timestamp = ts, time_round = chrono::Duration::seconds(3600))]
 struct DateTimeHourRound {
     ts: DateTime<Utc>,
     value: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(time_round = chrono::Duration::seconds(60))]
 struct DateTimePayloadRound {
     id: i64,
@@ -97,7 +97,7 @@ fn datetime_payload_round_applied() {
     assert_eq!(result[2].ts, rounded_next);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(timestamp = ts)]
 struct DateTimeNoRound {
     ts: DateTime<Utc>,
@@ -119,14 +119,14 @@ fn datetime_no_round_preserves_precision() {
     assert_eq!(result[1].ts, data[1].ts);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 #[pco_pack(time_round = chrono::Duration::seconds(60))]
 struct InnerWithTime {
     ts: DateTime<Utc>,
     value: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct OuterNoTimeRound {
     id: i64,
     inner: InnerWithTime,
@@ -150,7 +150,7 @@ fn nested_struct_time_round_propagates() {
     assert_eq!(result[1].inner.ts, rounded_next);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(index = [device_id], timestamp = ts, time_round = chrono::Duration::seconds(60))]
 struct GroupedDateTimeRound {
     device_id: i64,
@@ -182,7 +182,7 @@ fn grouped_datetime_round_applied() {
     assert_eq!(dev2[0].ts, rounded_next);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(time_round = chrono::Duration::seconds(60))]
 struct VecDateTimeRound {
     id: i64,
@@ -209,7 +209,7 @@ fn vec_datetime_round_applied() {
     assert_eq!(result[0].timestamps[2], rounded_next);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(time_round = chrono::Duration::seconds(60))]
 struct OptDateTimeRound {
     id: i64,
@@ -236,7 +236,7 @@ fn opt_datetime_round_applied() {
     assert_eq!(result[2].ts, Some(rounded_next));
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(time_round = chrono::Duration::seconds(60))]
 struct MapDateTimeRound {
     id: i64,
@@ -262,7 +262,7 @@ fn map_datetime_round_applied() {
     assert_eq!(result[0].events["end"], rounded_next);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(time_round = chrono::Duration::seconds(60))]
 struct TupleDateTimeRound {
     id: i64,
@@ -284,7 +284,7 @@ fn tuple_datetime_round_applied() {
     assert_eq!(result[0].range.1, rounded_next);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(time_round = chrono::Duration::seconds(60))]
 struct JsonValueWithTimestamp {
     id: i64,
@@ -304,7 +304,7 @@ fn json_value_timestamp_no_round_applied() {
     assert_eq!(result[0].data["ts"], serde_json::json!(original_micros));
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(time_round = chrono::Duration::seconds(86400))]
 struct DailyRound {
     id: i64,
@@ -327,7 +327,7 @@ fn daily_round_applied() {
     assert_eq!(result[1].ts, rounded_12h);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 #[pco_pack(time_round = chrono::Duration::seconds(60))]
 enum EventWithTime {
     #[default]

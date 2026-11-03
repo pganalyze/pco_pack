@@ -7,7 +7,7 @@ fn dt_us(us: i64) -> chrono::DateTime<chrono::Utc> {
 }
 
 /// A struct exercising every field type supported by PcoPack.
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct SnapshotStruct {
     // Integer types
     pub i8_val: i8,
@@ -65,14 +65,14 @@ struct SnapshotStruct {
     pub enum_val: SnapshotEnum,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct SnapshotNestedStruct {
     pub x: i32,
     pub y: f64,
     pub label: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum SnapshotEnum {
     #[default]
     None,

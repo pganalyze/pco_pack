@@ -2,45 +2,45 @@ use crate as pco_pack;
 use crate::PcoPack;
 use serde::{Deserialize, Serialize};
 
-#[derive(PcoPack, Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
+#[derive(Clone, PcoPack, Serialize, Deserialize, Debug, PartialEq, Default)]
 struct Child {
     id: i32,
     name: String,
 }
 
-#[derive(PcoPack, Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Serialize, Deserialize, Debug, PartialEq)]
 struct Parent {
     label: String,
     children: Vec<Child>,
 }
 
-#[derive(PcoPack, Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Serialize, Deserialize, Debug, PartialEq)]
 struct Grandparent {
     name: String,
     parents: Vec<Parent>,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecChild {
     values: Vec<Child>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecParent {
     values: Vec<Parent>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecGrandparent {
     values: Vec<Grandparent>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecOptionChild {
     values: Vec<Option<Child>>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecString {
     values: Vec<String>,
 }
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct VecOptionString {
     values: Vec<Option<String>>,
 }

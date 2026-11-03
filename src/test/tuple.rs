@@ -1,15 +1,15 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct Tuple2 {
     field: (i32, u64),
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct Tuple3 {
     field: (i64, f32, bool),
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct Tuple4 {
     field: (u8, u16, u32, u64),
 }
@@ -52,7 +52,7 @@ fn tuple_4_roundtrip() {
     assert_eq!(data, result);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct VecTupleNumStr {
     field: Vec<(u32, String)>,
 }
@@ -78,12 +78,12 @@ fn vec_tuple_num_str_empty_tail_roundtrip() {
 
 #[test]
 fn tuple_add_field_at_end() {
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct PointV1 {
         coord: (i32, i32),
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct PointV2 {
         coord: (i32, i32, i32),
     }
@@ -104,12 +104,12 @@ fn tuple_add_field_at_end() {
 
 #[test]
 fn tuple_remove_field_at_end() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct ReadingV1 {
         value: (i64, f64, String), // (id, temp, unit)
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct ReadingV2 {
         value: (i64, f64), // (id, temp)
     }
@@ -125,13 +125,13 @@ fn tuple_remove_field_at_end() {
 
 #[test]
 fn tuple_add_multiple_fields_at_end() {
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct VecV1 {
         data: (u8, u16), // version, length
     }
 
     /// v2 adds two more fields at the end.
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct VecV2 {
         data: (u8, u16, bool, String), // version, length, compressed, format_name
     }
@@ -149,13 +149,13 @@ fn tuple_add_multiple_fields_at_end() {
 
 #[test]
 fn tuple_remove_multiple_fields_at_end() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct EventV1 {
         detail: (i64, u32, f64, bool), // id, priority, score, important
     }
 
     /// v2 keeps only the first two fields.
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct EventV2 {
         detail: (i64, u32), // just id and priority
     }
@@ -171,13 +171,13 @@ fn tuple_remove_multiple_fields_at_end() {
 
 #[test]
 fn tuple_add_field_and_struct_field() {
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct SampleV1 {
         id: i64,
         coord: (i32, i32),
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct SampleV2 {
         id: i64,
         coord: (i32, i32, u64), // added timestamp_ms
@@ -198,13 +198,13 @@ fn tuple_add_field_and_struct_field() {
 
 #[test]
 fn tuple_remove_non_tail_field_errors() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct RecV1 {
         t: (i32, u64, String), // positions: 0=i32, 1=u64, 2=String
     }
 
     /// Reader removes the middle field. This is UNSAFE.
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct RecV2Bad {
         t: (i32, String), // reader pos 0->writer col 0=i32 OK; reader pos 1 tries to read writer col 1=u64 as String
     }

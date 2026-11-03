@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct DoubleOptRow {
     value: Option<Option<i32>>,
 }
@@ -79,12 +79,12 @@ fn option_option_filter_no_match() {
     assert!(result.is_empty());
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct InnerRecord {
     id: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct DoubleOptStructRow {
     label: String,
     inner: Option<Option<InnerRecord>>,
@@ -123,7 +123,7 @@ fn option_option_struct_filter_multiple_matches() {
     assert_eq!(result[1].label, "d");
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct NestedVecOptRow {
     values: Vec<Option<Vec<i32>>>,
 }
@@ -158,7 +158,7 @@ fn vec_option_vec_mixed() {
 
 #[test]
 fn vec_option_vec_large() {
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     #[pco_pack(chunk_size = 5)]
     struct SmallChunkRow {
         values: Vec<Option<Vec<i32>>>,

@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct MetricRecord {
     id: i64,
     metrics: HashMap<String, f64>,
@@ -85,6 +86,8 @@ const _: () = {
     impl pco_pack::PcoSerde for MetricRecord {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <HashMap<String, f64> as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -97,21 +100,130 @@ const _: () = {
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
             for (_key, indices) in groups {
                 let mut col_id: Vec<i64> = Vec::new();
+                let mut colr_id: Vec<&i64> = Vec::new();
                 let mut col_metrics: Vec<HashMap<String, f64>> = Vec::new();
+                let mut colr_metrics: Vec<&HashMap<String, f64>> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_id.push(rec.id);
-                    col_metrics.push(rec.metrics.clone());
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_id.push(rec.id);
+                    } else {
+                        colr_id.push(&rec.id);
+                    }
+                    if <HashMap<String, f64> as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_metrics.push(rec.metrics.clone());
+                    } else {
+                        colr_metrics.push(&rec.metrics);
+                    }
                 }
-                let cb_id = <i64 as pco_pack::PcoSerde>::write(
-                    col_id,
-                    2u32,
-                    Default::default(),
-                )?;
-                let cb_metrics = <HashMap<
+                let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(col_id, 2u32, Default::default())?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_id,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_metrics = if <HashMap<
                     String,
                     f64,
-                > as pco_pack::PcoSerde>::write(col_metrics, 2u32, Default::default())?;
+                > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <HashMap<
+                        String,
+                        f64,
+                    > as pco_pack::PcoSerde>::write(
+                        col_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <HashMap<
+                        String,
+                        f64,
+                    > as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                records
+                    .push(Chunk {
+                        id: cb_id.into(),
+                        metrics: cb_metrics.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
+                )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
+            for (i, _) in data.iter().enumerate() {
+                groups.entry(()).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (_key, indices) in groups {
+                let mut col_id: Vec<i64> = Vec::new();
+                let mut colr_id: Vec<&i64> = Vec::new();
+                let mut col_metrics: Vec<HashMap<String, f64>> = Vec::new();
+                let mut colr_metrics: Vec<&HashMap<String, f64>> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_id.push(rec.id);
+                    } else {
+                        colr_id.push(&rec.id);
+                    }
+                    if <HashMap<String, f64> as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_metrics.push(rec.metrics.clone());
+                    } else {
+                        colr_metrics.push(&rec.metrics);
+                    }
+                }
+                let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(col_id, 2u32, Default::default())?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_id,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_metrics = if <HashMap<
+                    String,
+                    f64,
+                > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <HashMap<
+                        String,
+                        f64,
+                    > as pco_pack::PcoSerde>::write(
+                        col_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <HashMap<
+                        String,
+                        f64,
+                    > as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
                 records
                     .push(Chunk {
                         id: cb_id.into(),
@@ -304,25 +416,57 @@ const _: () = {
             for (_key, indices) in groups {
                 for group_indices in indices.chunks(MetricRecord::CHUNK_SIZE) {
                     let mut col_id: Vec<i64> = Vec::new();
+                    let mut colr_id: Vec<&i64> = Vec::new();
                     let mut col_metrics: Vec<HashMap<String, f64>> = Vec::new();
+                    let mut colr_metrics: Vec<&HashMap<String, f64>> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_id.push(rec.id);
-                        col_metrics.push(rec.metrics.clone());
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_id.push(rec.id);
+                        } else {
+                            colr_id.push(&rec.id);
+                        }
+                        if <HashMap<String, f64> as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_metrics.push(rec.metrics.clone());
+                        } else {
+                            colr_metrics.push(&rec.metrics);
+                        }
                     }
-                    let cb_id = <i64 as pco_pack::PcoSerde>::write(
-                        col_id,
-                        2u32,
-                        Default::default(),
-                    )?;
-                    let cb_metrics = <HashMap<
+                    let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_id,
+                            2u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_id,
+                            2u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_metrics = if <HashMap<
                         String,
                         f64,
-                    > as pco_pack::PcoSerde>::write(
-                        col_metrics,
-                        2u32,
-                        Default::default(),
-                    )?;
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <HashMap<
+                            String,
+                            f64,
+                        > as pco_pack::PcoSerde>::write(
+                            col_metrics,
+                            2u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <HashMap<
+                            String,
+                            f64,
+                        > as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_metrics,
+                            2u32,
+                            Default::default(),
+                        )?
+                    };
                     let rec = Chunk {
                         id: cb_id.into(),
                         metrics: cb_metrics.into(),
@@ -572,6 +716,7 @@ const _: () = {
         }
     }
 };
+#[derive(Clone)]
 pub struct MapTupleRecord {
     id: i64,
     metrics: HashMap<String, (f64, i32)>,
@@ -659,6 +804,8 @@ const _: () = {
     impl pco_pack::PcoSerde for MapTupleRecord {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <HashMap<String, (f64, i32)> as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -671,21 +818,136 @@ const _: () = {
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
             for (_key, indices) in groups {
                 let mut col_id: Vec<i64> = Vec::new();
+                let mut colr_id: Vec<&i64> = Vec::new();
                 let mut col_metrics: Vec<HashMap<String, (f64, i32)>> = Vec::new();
+                let mut colr_metrics: Vec<&HashMap<String, (f64, i32)>> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_id.push(rec.id);
-                    col_metrics.push(rec.metrics.clone());
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_id.push(rec.id);
+                    } else {
+                        colr_id.push(&rec.id);
+                    }
+                    if <HashMap<
+                        String,
+                        (f64, i32),
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_metrics.push(rec.metrics.clone());
+                    } else {
+                        colr_metrics.push(&rec.metrics);
+                    }
                 }
-                let cb_id = <i64 as pco_pack::PcoSerde>::write(
-                    col_id,
-                    2u32,
-                    Default::default(),
-                )?;
-                let cb_metrics = <HashMap<
+                let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(col_id, 2u32, Default::default())?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_id,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_metrics = if <HashMap<
                     String,
                     (f64, i32),
-                > as pco_pack::PcoSerde>::write(col_metrics, 2u32, Default::default())?;
+                > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <HashMap<
+                        String,
+                        (f64, i32),
+                    > as pco_pack::PcoSerde>::write(
+                        col_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <HashMap<
+                        String,
+                        (f64, i32),
+                    > as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                records
+                    .push(Chunk {
+                        id: cb_id.into(),
+                        metrics: cb_metrics.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
+                )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
+            for (i, _) in data.iter().enumerate() {
+                groups.entry(()).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (_key, indices) in groups {
+                let mut col_id: Vec<i64> = Vec::new();
+                let mut colr_id: Vec<&i64> = Vec::new();
+                let mut col_metrics: Vec<HashMap<String, (f64, i32)>> = Vec::new();
+                let mut colr_metrics: Vec<&HashMap<String, (f64, i32)>> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_id.push(rec.id);
+                    } else {
+                        colr_id.push(&rec.id);
+                    }
+                    if <HashMap<
+                        String,
+                        (f64, i32),
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_metrics.push(rec.metrics.clone());
+                    } else {
+                        colr_metrics.push(&rec.metrics);
+                    }
+                }
+                let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(col_id, 2u32, Default::default())?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_id,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_metrics = if <HashMap<
+                    String,
+                    (f64, i32),
+                > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <HashMap<
+                        String,
+                        (f64, i32),
+                    > as pco_pack::PcoSerde>::write(
+                        col_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <HashMap<
+                        String,
+                        (f64, i32),
+                    > as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
                 records
                     .push(Chunk {
                         id: cb_id.into(),
@@ -878,25 +1140,60 @@ const _: () = {
             for (_key, indices) in groups {
                 for group_indices in indices.chunks(MapTupleRecord::CHUNK_SIZE) {
                     let mut col_id: Vec<i64> = Vec::new();
+                    let mut colr_id: Vec<&i64> = Vec::new();
                     let mut col_metrics: Vec<HashMap<String, (f64, i32)>> = Vec::new();
+                    let mut colr_metrics: Vec<&HashMap<String, (f64, i32)>> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_id.push(rec.id);
-                        col_metrics.push(rec.metrics.clone());
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_id.push(rec.id);
+                        } else {
+                            colr_id.push(&rec.id);
+                        }
+                        if <HashMap<
+                            String,
+                            (f64, i32),
+                        > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_metrics.push(rec.metrics.clone());
+                        } else {
+                            colr_metrics.push(&rec.metrics);
+                        }
                     }
-                    let cb_id = <i64 as pco_pack::PcoSerde>::write(
-                        col_id,
-                        2u32,
-                        Default::default(),
-                    )?;
-                    let cb_metrics = <HashMap<
+                    let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_id,
+                            2u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_id,
+                            2u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_metrics = if <HashMap<
                         String,
                         (f64, i32),
-                    > as pco_pack::PcoSerde>::write(
-                        col_metrics,
-                        2u32,
-                        Default::default(),
-                    )?;
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <HashMap<
+                            String,
+                            (f64, i32),
+                        > as pco_pack::PcoSerde>::write(
+                            col_metrics,
+                            2u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <HashMap<
+                            String,
+                            (f64, i32),
+                        > as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_metrics,
+                            2u32,
+                            Default::default(),
+                        )?
+                    };
                     let rec = Chunk {
                         id: cb_id.into(),
                         metrics: cb_metrics.into(),
@@ -1149,6 +1446,7 @@ const _: () = {
         }
     }
 };
+#[derive(Clone)]
 pub struct OptionMapTupleRecord {
     id: i64,
     metrics: Option<HashMap<String, (f32, i32)>>,
@@ -1236,6 +1534,10 @@ const _: () = {
     impl pco_pack::PcoSerde for OptionMapTupleRecord {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <Option<
+                HashMap<String, (f32, i32)>,
+            > as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -1248,20 +1550,128 @@ const _: () = {
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
             for (_key, indices) in groups {
                 let mut col_id: Vec<i64> = Vec::new();
+                let mut colr_id: Vec<&i64> = Vec::new();
                 let mut col_metrics: Vec<Option<HashMap<String, (f32, i32)>>> = Vec::new();
+                let mut colr_metrics: Vec<&Option<HashMap<String, (f32, i32)>>> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_id.push(rec.id);
-                    col_metrics.push(rec.metrics.clone());
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_id.push(rec.id);
+                    } else {
+                        colr_id.push(&rec.id);
+                    }
+                    if <Option<
+                        HashMap<String, (f32, i32)>,
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_metrics.push(rec.metrics.clone());
+                    } else {
+                        colr_metrics.push(&rec.metrics);
+                    }
                 }
-                let cb_id = <i64 as pco_pack::PcoSerde>::write(
-                    col_id,
-                    2u32,
-                    Default::default(),
-                )?;
-                let cb_metrics = <Option<
+                let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(col_id, 2u32, Default::default())?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_id,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_metrics = if <Option<
                     HashMap<String, (f32, i32)>,
-                > as pco_pack::PcoSerde>::write(col_metrics, 2u32, Default::default())?;
+                > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <Option<
+                        HashMap<String, (f32, i32)>,
+                    > as pco_pack::PcoSerde>::write(
+                        col_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <Option<
+                        HashMap<String, (f32, i32)>,
+                    > as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                records
+                    .push(Chunk {
+                        id: cb_id.into(),
+                        metrics: cb_metrics.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
+                )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
+            for (i, _) in data.iter().enumerate() {
+                groups.entry(()).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (_key, indices) in groups {
+                let mut col_id: Vec<i64> = Vec::new();
+                let mut colr_id: Vec<&i64> = Vec::new();
+                let mut col_metrics: Vec<Option<HashMap<String, (f32, i32)>>> = Vec::new();
+                let mut colr_metrics: Vec<&Option<HashMap<String, (f32, i32)>>> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_id.push(rec.id);
+                    } else {
+                        colr_id.push(&rec.id);
+                    }
+                    if <Option<
+                        HashMap<String, (f32, i32)>,
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_metrics.push(rec.metrics.clone());
+                    } else {
+                        colr_metrics.push(&rec.metrics);
+                    }
+                }
+                let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(col_id, 2u32, Default::default())?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_id,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_metrics = if <Option<
+                    HashMap<String, (f32, i32)>,
+                > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <Option<
+                        HashMap<String, (f32, i32)>,
+                    > as pco_pack::PcoSerde>::write(
+                        col_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <Option<
+                        HashMap<String, (f32, i32)>,
+                    > as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_metrics,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
                 records
                     .push(Chunk {
                         id: cb_id.into(),
@@ -1453,24 +1863,56 @@ const _: () = {
             for (_key, indices) in groups {
                 for group_indices in indices.chunks(OptionMapTupleRecord::CHUNK_SIZE) {
                     let mut col_id: Vec<i64> = Vec::new();
+                    let mut colr_id: Vec<&i64> = Vec::new();
                     let mut col_metrics: Vec<Option<HashMap<String, (f32, i32)>>> = Vec::new();
+                    let mut colr_metrics: Vec<&Option<HashMap<String, (f32, i32)>>> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_id.push(rec.id);
-                        col_metrics.push(rec.metrics.clone());
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_id.push(rec.id);
+                        } else {
+                            colr_id.push(&rec.id);
+                        }
+                        if <Option<
+                            HashMap<String, (f32, i32)>,
+                        > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_metrics.push(rec.metrics.clone());
+                        } else {
+                            colr_metrics.push(&rec.metrics);
+                        }
                     }
-                    let cb_id = <i64 as pco_pack::PcoSerde>::write(
-                        col_id,
-                        2u32,
-                        Default::default(),
-                    )?;
-                    let cb_metrics = <Option<
+                    let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_id,
+                            2u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_id,
+                            2u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_metrics = if <Option<
                         HashMap<String, (f32, i32)>,
-                    > as pco_pack::PcoSerde>::write(
-                        col_metrics,
-                        2u32,
-                        Default::default(),
-                    )?;
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <Option<
+                            HashMap<String, (f32, i32)>,
+                        > as pco_pack::PcoSerde>::write(
+                            col_metrics,
+                            2u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <Option<
+                            HashMap<String, (f32, i32)>,
+                        > as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_metrics,
+                            2u32,
+                            Default::default(),
+                        )?
+                    };
                     let rec = Chunk {
                         id: cb_id.into(),
                         metrics: cb_metrics.into(),
@@ -1723,6 +2165,7 @@ const _: () = {
         }
     }
 };
+#[derive(Clone)]
 pub struct VecMapTupleRecord {
     id: i64,
     batches: Vec<HashMap<String, (half::f16, i32)>>,
@@ -1810,6 +2253,10 @@ const _: () = {
     impl pco_pack::PcoSerde for VecMapTupleRecord {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <Vec<
+                HashMap<String, (half::f16, i32)>,
+            > as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -1822,20 +2269,128 @@ const _: () = {
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
             for (_key, indices) in groups {
                 let mut col_id: Vec<i64> = Vec::new();
+                let mut colr_id: Vec<&i64> = Vec::new();
                 let mut col_batches: Vec<Vec<HashMap<String, (half::f16, i32)>>> = Vec::new();
+                let mut colr_batches: Vec<&Vec<HashMap<String, (half::f16, i32)>>> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_id.push(rec.id);
-                    col_batches.push(rec.batches.clone());
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_id.push(rec.id);
+                    } else {
+                        colr_id.push(&rec.id);
+                    }
+                    if <Vec<
+                        HashMap<String, (half::f16, i32)>,
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_batches.push(rec.batches.clone());
+                    } else {
+                        colr_batches.push(&rec.batches);
+                    }
                 }
-                let cb_id = <i64 as pco_pack::PcoSerde>::write(
-                    col_id,
-                    2u32,
-                    Default::default(),
-                )?;
-                let cb_batches = <Vec<
+                let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(col_id, 2u32, Default::default())?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_id,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_batches = if <Vec<
                     HashMap<String, (half::f16, i32)>,
-                > as pco_pack::PcoSerde>::write(col_batches, 2u32, Default::default())?;
+                > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <Vec<
+                        HashMap<String, (half::f16, i32)>,
+                    > as pco_pack::PcoSerde>::write(
+                        col_batches,
+                        2u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <Vec<
+                        HashMap<String, (half::f16, i32)>,
+                    > as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_batches,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                records
+                    .push(Chunk {
+                        id: cb_id.into(),
+                        batches: cb_batches.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
+                )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
+            for (i, _) in data.iter().enumerate() {
+                groups.entry(()).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (_key, indices) in groups {
+                let mut col_id: Vec<i64> = Vec::new();
+                let mut colr_id: Vec<&i64> = Vec::new();
+                let mut col_batches: Vec<Vec<HashMap<String, (half::f16, i32)>>> = Vec::new();
+                let mut colr_batches: Vec<&Vec<HashMap<String, (half::f16, i32)>>> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_id.push(rec.id);
+                    } else {
+                        colr_id.push(&rec.id);
+                    }
+                    if <Vec<
+                        HashMap<String, (half::f16, i32)>,
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_batches.push(rec.batches.clone());
+                    } else {
+                        colr_batches.push(&rec.batches);
+                    }
+                }
+                let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(col_id, 2u32, Default::default())?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_id,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_batches = if <Vec<
+                    HashMap<String, (half::f16, i32)>,
+                > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <Vec<
+                        HashMap<String, (half::f16, i32)>,
+                    > as pco_pack::PcoSerde>::write(
+                        col_batches,
+                        2u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <Vec<
+                        HashMap<String, (half::f16, i32)>,
+                    > as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_batches,
+                        2u32,
+                        Default::default(),
+                    )?
+                };
                 records
                     .push(Chunk {
                         id: cb_id.into(),
@@ -2027,24 +2582,56 @@ const _: () = {
             for (_key, indices) in groups {
                 for group_indices in indices.chunks(VecMapTupleRecord::CHUNK_SIZE) {
                     let mut col_id: Vec<i64> = Vec::new();
+                    let mut colr_id: Vec<&i64> = Vec::new();
                     let mut col_batches: Vec<Vec<HashMap<String, (half::f16, i32)>>> = Vec::new();
+                    let mut colr_batches: Vec<&Vec<HashMap<String, (half::f16, i32)>>> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_id.push(rec.id);
-                        col_batches.push(rec.batches.clone());
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_id.push(rec.id);
+                        } else {
+                            colr_id.push(&rec.id);
+                        }
+                        if <Vec<
+                            HashMap<String, (half::f16, i32)>,
+                        > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_batches.push(rec.batches.clone());
+                        } else {
+                            colr_batches.push(&rec.batches);
+                        }
                     }
-                    let cb_id = <i64 as pco_pack::PcoSerde>::write(
-                        col_id,
-                        2u32,
-                        Default::default(),
-                    )?;
-                    let cb_batches = <Vec<
+                    let cb_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_id,
+                            2u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_id,
+                            2u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_batches = if <Vec<
                         HashMap<String, (half::f16, i32)>,
-                    > as pco_pack::PcoSerde>::write(
-                        col_batches,
-                        2u32,
-                        Default::default(),
-                    )?;
+                    > as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <Vec<
+                            HashMap<String, (half::f16, i32)>,
+                        > as pco_pack::PcoSerde>::write(
+                            col_batches,
+                            2u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <Vec<
+                            HashMap<String, (half::f16, i32)>,
+                        > as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_batches,
+                            2u32,
+                            Default::default(),
+                        )?
+                    };
                     let rec = Chunk {
                         id: cb_id.into(),
                         batches: cb_batches.into(),

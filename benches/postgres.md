@@ -48,7 +48,7 @@ This data model is dominated by large Postgres EXPLAIN plans represented as JSON
 | Metric        | text     | JSON     | JSON lossy | arena    | arena lossy |
 |---------------|----------|----------|------------|----------|-------------|
 | Size          | 91.7 MB  | 82.0 MB  | 76.0 MB    | 57.7 MB  | 55.6 MB     |
-| Serialize     | 1.3 s    | 3.5 s    | 4.1 s      | 4.5 s    | 4.4 s       |
+| Serialize     | 1.3 s    | 3.1 s    | 3.0 s      | 4.0 s    | 3.8 s       |
 | Deserialize   | 749.8 ms | 8.5 s    | 8.3 s      | 1.9 s    | 1.9 s       |
 | Filter 0.55%  | 567.0 ms | 1.7 s    | 1.7 s      | 522.7 ms | 514.9 ms    |
 | Filter 12.48% | 572.8 ms | 4.6 s    | 4.6 s      | 763.8 ms | 757.2 ms    |

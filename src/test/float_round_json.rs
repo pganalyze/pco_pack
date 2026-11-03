@@ -2,35 +2,35 @@ use crate as pco_pack;
 use crate::PcoPack;
 use serde_json::json;
 
-#[derive(PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(float_round = 2)]
 struct JsonRecord {
     id: i32,
     data: serde_json::Value,
 }
 
-#[derive(PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(float_round = 3)]
 struct JsonRecordNested {
     id: i32,
     data: serde_json::Value,
 }
 
-#[derive(PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(float_round = 2)]
 struct JsonRecordOption {
     id: i32,
     data: Option<serde_json::Value>,
 }
 
-#[derive(PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(float_round = 2)]
 struct JsonRecordVec {
     id: i32,
     data: Vec<serde_json::Value>,
 }
 
-#[derive(PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 #[pco_pack(float_round = 2)]
 struct JsonRecordMap {
     id: i32,

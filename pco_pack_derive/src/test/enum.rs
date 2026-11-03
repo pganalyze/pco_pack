@@ -1,4 +1,4 @@
-#[derive(PcoPack)]
+#[derive(Clone, PcoPack)]
 pub struct Task {
     id: i64,
     value: f64,

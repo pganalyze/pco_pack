@@ -1,4 +1,5 @@
 use pco_pack::Timeline;
+#[derive(Clone)]
 pub struct TimeSeriesCompact {
     database_id: i64,
     collected_at: Timeline,
@@ -151,6 +152,9 @@ const _: () = {
     impl pco_pack::PcoSerde for TimeSeriesCompact {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <Timeline as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -186,22 +190,177 @@ const _: () = {
                             value: data[idx].value,
                         });
                 }
-                let mut col_collected_at: Vec<pco_pack::Timeline> = Vec::new();
+                let mut col_collected_at: Vec<Timeline> = Vec::new();
+                let mut colr_collected_at: Vec<&Timeline> = Vec::new();
                 let mut col_value: Vec<f64> = Vec::new();
+                let mut colr_value: Vec<&f64> = Vec::new();
                 for rec in &group_rows {
-                    col_collected_at.push(rec.collected_at.clone());
-                    col_value.push(rec.value);
+                    if <Timeline as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_collected_at.push(rec.collected_at.clone());
+                    } else {
+                        colr_collected_at.push(&rec.collected_at);
+                    }
+                    if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_value.push(rec.value);
+                    } else {
+                        colr_value.push(&rec.value);
+                    }
                 }
-                let cb_collected_at = <Timeline as pco_pack::PcoSerde>::write(
-                    col_collected_at,
-                    0u32,
-                    Default::default(),
+                let cb_collected_at = if <Timeline as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <Timeline as pco_pack::PcoSerde>::write(
+                        col_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <Timeline as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_value = if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <f64 as pco_pack::PcoSerde>::write(
+                        col_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <f64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let (g_start, g_end) = if !group_rows.is_empty() {
+                    let mut g_start = i64::MAX;
+                    let mut g_end = i64::MIN;
+                    for row in group_rows.iter() {
+                        if row.collected_at.is_empty() {
+                            return Err(
+                                pco_pack::anyhow::anyhow!(
+                                    "empty Timeline in timestamp field `{}` is not allowed",
+                                    stringify!(collected_at)
+                                ),
+                            );
+                        }
+                        for &(s, e) in row.collected_at.ranges() {
+                            if s < g_start {
+                                g_start = s;
+                            }
+                            if e > g_end {
+                                g_end = e;
+                            }
+                        }
+                    }
+                    (g_start, g_end)
+                } else {
+                    (0i64, 0i64)
+                };
+                records
+                    .push(Chunk {
+                        database_id: key.0,
+                        start_at: pco_pack::chrono::DateTime::<
+                            pco_pack::chrono::Utc,
+                        >::from_timestamp_micros(g_start)
+                            .expect("valid timestamp"),
+                        end_at: pco_pack::chrono::DateTime::<
+                            pco_pack::chrono::Utc,
+                        >::from_timestamp_micros(g_end)
+                            .expect("valid timestamp"),
+                        collected_at: cb_collected_at.into(),
+                        value: cb_value.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
                 )?;
-                let cb_value = <f64 as pco_pack::PcoSerde>::write(
-                    col_value,
-                    0u32,
-                    Default::default(),
-                )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(i64,), Vec<usize>> = Default::default();
+            for (i, rec) in data.iter().enumerate() {
+                let key = (rec.database_id,);
+                groups.entry(key).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (key, mut indices) in groups {
+                indices
+                    .sort_by(|&a, &b| {
+                        timestamp_to_i64(&data[a].collected_at)
+                            .cmp(&timestamp_to_i64(&data[b].collected_at))
+                    });
+                let mut group_rows: Vec<Self> = Vec::new();
+                for &idx in indices.iter() {
+                    if let Some(last) = group_rows.last_mut() {
+                        let same = last.value == data[idx].value;
+                        if same {
+                            last.collected_at.merge(&data[idx].collected_at);
+                            continue;
+                        }
+                    }
+                    let mut ts_timeline = pco_pack::Timeline::default();
+                    ts_timeline.merge(&data[idx].collected_at);
+                    group_rows
+                        .push(Self {
+                            collected_at: ts_timeline,
+                            database_id: data[idx].database_id,
+                            value: data[idx].value,
+                        });
+                }
+                let mut col_collected_at: Vec<Timeline> = Vec::new();
+                let mut colr_collected_at: Vec<&Timeline> = Vec::new();
+                let mut col_value: Vec<f64> = Vec::new();
+                let mut colr_value: Vec<&f64> = Vec::new();
+                for rec in &group_rows {
+                    if <Timeline as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_collected_at.push(rec.collected_at.clone());
+                    } else {
+                        colr_collected_at.push(&rec.collected_at);
+                    }
+                    if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_value.push(rec.value);
+                    } else {
+                        colr_value.push(&rec.value);
+                    }
+                }
+                let cb_collected_at = if <Timeline as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <Timeline as pco_pack::PcoSerde>::write(
+                        col_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <Timeline as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_value = if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <f64 as pco_pack::PcoSerde>::write(
+                        col_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <f64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
                 let (g_start, g_end) = if !group_rows.is_empty() {
                     let mut g_start = i64::MAX;
                     let mut g_end = i64::MIN;
@@ -533,22 +692,48 @@ const _: () = {
                         });
                 }
                 for group_rows in group_rows.chunks(TimeSeriesCompact::CHUNK_SIZE) {
-                    let mut col_collected_at: Vec<pco_pack::Timeline> = Vec::new();
+                    let mut col_collected_at: Vec<Timeline> = Vec::new();
+                    let mut colr_collected_at: Vec<&Timeline> = Vec::new();
                     let mut col_value: Vec<f64> = Vec::new();
+                    let mut colr_value: Vec<&f64> = Vec::new();
                     for rec in group_rows {
-                        col_collected_at.push(rec.collected_at.clone());
-                        col_value.push(rec.value);
+                        if <Timeline as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_collected_at.push(rec.collected_at.clone());
+                        } else {
+                            colr_collected_at.push(&rec.collected_at);
+                        }
+                        if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_value.push(rec.value);
+                        } else {
+                            colr_value.push(&rec.value);
+                        }
                     }
-                    let cb_collected_at = <Timeline as pco_pack::PcoSerde>::write(
-                        col_collected_at,
-                        0u32,
-                        Default::default(),
-                    )?;
-                    let cb_value = <f64 as pco_pack::PcoSerde>::write(
-                        col_value,
-                        0u32,
-                        Default::default(),
-                    )?;
+                    let cb_collected_at = if <Timeline as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <Timeline as pco_pack::PcoSerde>::write(
+                            col_collected_at,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <Timeline as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_collected_at,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_value = if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <f64 as pco_pack::PcoSerde>::write(
+                            col_value,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <f64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_value,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
                     let (g_start, g_end) = if !group_rows.is_empty() {
                         let mut g_start = i64::MAX;
                         let mut g_end = i64::MIN;

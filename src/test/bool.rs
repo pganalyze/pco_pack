@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::{PcoPack, PcoSerde};
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct BoolRow {
     value: bool,
 }

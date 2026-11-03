@@ -8,6 +8,10 @@ where
     type Writer = <T as VecPackable>::VecWriter;
     type Reader = <T as VecPackable>::VecReader;
 
+    // One allocation plus a contiguous copy when the elements are
+    // shallow, so cheapness is inherited from the element type.
+    const CHEAP_TO_CLONE: bool = T::CHEAP_TO_CLONE;
+
     fn write(data: Vec<Vec<T>>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let mut writer = <T as VecPackable>::VecWriter::default();
         for v in data {

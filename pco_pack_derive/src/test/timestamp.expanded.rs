@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct TimeSeries {
     database_id: i64,
     collected_at: i64,
@@ -147,6 +148,8 @@ const _: () = {
     impl pco_pack::PcoSerde for TimeSeries {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE
+            && <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -164,29 +167,182 @@ const _: () = {
                             .cmp(&timestamp_to_i64(&data[b].collected_at))
                     });
                 let mut col_collected_at: Vec<i64> = Vec::new();
+                let mut colr_collected_at: Vec<&i64> = Vec::new();
                 let mut col_database_id: Vec<i64> = Vec::new();
+                let mut colr_database_id: Vec<&i64> = Vec::new();
                 let mut col_value: Vec<f64> = Vec::new();
+                let mut colr_value: Vec<&f64> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_collected_at.push(rec.collected_at);
-                    col_database_id.push(rec.database_id);
-                    col_value.push(rec.value);
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_collected_at.push(rec.collected_at);
+                    } else {
+                        colr_collected_at.push(&rec.collected_at);
+                    }
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_database_id.push(rec.database_id);
+                    } else {
+                        colr_database_id.push(&rec.database_id);
+                    }
+                    if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_value.push(rec.value);
+                    } else {
+                        colr_value.push(&rec.value);
+                    }
                 }
-                let cb_collected_at = <i64 as pco_pack::PcoSerde>::write(
-                    col_collected_at,
-                    0u32,
-                    Default::default(),
+                let cb_collected_at = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_database_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_database_id,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_database_id,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_value = if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <f64 as pco_pack::PcoSerde>::write(
+                        col_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <f64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let (g_start, g_end) = if !indices.is_empty() {
+                    (
+                        timestamp_to_i64(&data[indices[0]].collected_at),
+                        timestamp_to_i64(&data[indices[indices.len() - 1]].collected_at),
+                    )
+                } else {
+                    (0i64, 0i64)
+                };
+                records
+                    .push(Chunk {
+                        start_at: pco_pack::chrono::DateTime::<
+                            pco_pack::chrono::Utc,
+                        >::from_timestamp_micros(g_start)
+                            .expect("valid timestamp"),
+                        end_at: pco_pack::chrono::DateTime::<
+                            pco_pack::chrono::Utc,
+                        >::from_timestamp_micros(g_end)
+                            .expect("valid timestamp"),
+                        collected_at: cb_collected_at.into(),
+                        database_id: cb_database_id.into(),
+                        value: cb_value.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
                 )?;
-                let cb_database_id = <i64 as pco_pack::PcoSerde>::write(
-                    col_database_id,
-                    0u32,
-                    Default::default(),
-                )?;
-                let cb_value = <f64 as pco_pack::PcoSerde>::write(
-                    col_value,
-                    0u32,
-                    Default::default(),
-                )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
+            for (i, _) in data.iter().enumerate() {
+                groups.entry(()).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (_key, mut indices) in groups {
+                indices
+                    .sort_by(|&a, &b| {
+                        timestamp_to_i64(&data[a].collected_at)
+                            .cmp(&timestamp_to_i64(&data[b].collected_at))
+                    });
+                let mut col_collected_at: Vec<i64> = Vec::new();
+                let mut colr_collected_at: Vec<&i64> = Vec::new();
+                let mut col_database_id: Vec<i64> = Vec::new();
+                let mut colr_database_id: Vec<&i64> = Vec::new();
+                let mut col_value: Vec<f64> = Vec::new();
+                let mut colr_value: Vec<&f64> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_collected_at.push(rec.collected_at);
+                    } else {
+                        colr_collected_at.push(&rec.collected_at);
+                    }
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_database_id.push(rec.database_id);
+                    } else {
+                        colr_database_id.push(&rec.database_id);
+                    }
+                    if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_value.push(rec.value);
+                    } else {
+                        colr_value.push(&rec.value);
+                    }
+                }
+                let cb_collected_at = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_collected_at,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_database_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_database_id,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_database_id,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_value = if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <f64 as pco_pack::PcoSerde>::write(
+                        col_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <f64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_value,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
                 let (g_start, g_end) = if !indices.is_empty() {
                     (
                         timestamp_to_i64(&data[indices[0]].collected_at),
@@ -442,29 +598,68 @@ const _: () = {
                     });
                 for group_indices in indices.chunks(TimeSeries::CHUNK_SIZE) {
                     let mut col_collected_at: Vec<i64> = Vec::new();
+                    let mut colr_collected_at: Vec<&i64> = Vec::new();
                     let mut col_database_id: Vec<i64> = Vec::new();
+                    let mut colr_database_id: Vec<&i64> = Vec::new();
                     let mut col_value: Vec<f64> = Vec::new();
+                    let mut colr_value: Vec<&f64> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_collected_at.push(rec.collected_at);
-                        col_database_id.push(rec.database_id);
-                        col_value.push(rec.value);
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_collected_at.push(rec.collected_at);
+                        } else {
+                            colr_collected_at.push(&rec.collected_at);
+                        }
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_database_id.push(rec.database_id);
+                        } else {
+                            colr_database_id.push(&rec.database_id);
+                        }
+                        if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_value.push(rec.value);
+                        } else {
+                            colr_value.push(&rec.value);
+                        }
                     }
-                    let cb_collected_at = <i64 as pco_pack::PcoSerde>::write(
-                        col_collected_at,
-                        0u32,
-                        Default::default(),
-                    )?;
-                    let cb_database_id = <i64 as pco_pack::PcoSerde>::write(
-                        col_database_id,
-                        0u32,
-                        Default::default(),
-                    )?;
-                    let cb_value = <f64 as pco_pack::PcoSerde>::write(
-                        col_value,
-                        0u32,
-                        Default::default(),
-                    )?;
+                    let cb_collected_at = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_collected_at,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_collected_at,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_database_id = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_database_id,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_database_id,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_value = if <f64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <f64 as pco_pack::PcoSerde>::write(
+                            col_value,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <f64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_value,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
                     let (g_start, g_end) = if !group_indices.is_empty() {
                         (
                             timestamp_to_i64(&data[group_indices[0]].collected_at),

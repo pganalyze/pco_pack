@@ -226,6 +226,24 @@ pub fn generate_enum_tokens(
         .collect();
 
     let non_unit_variants: Vec<_> = variant_infos.iter().filter(|v| !v.is_unit).collect();
+    // Cheap only when every variant payload is. Repeated payload types
+    // collapse to one term (clippy's eq_op rejects duplicates).
+    let mut cheap_seen = std::collections::HashSet::new();
+    let cheap_terms: Vec<proc_macro2::TokenStream> = non_unit_variants
+        .iter()
+        .map(|v| {
+            let ty = v.payload_ty.as_ref().expect("non-unit variant has a payload type");
+            quote! { <#ty as pco_pack::PcoSerde>::CHEAP_TO_CLONE }
+        })
+        .filter(|term| cheap_seen.insert(term.to_string()))
+        .collect();
+    let cheap_to_clone = if cheap_terms.is_empty() {
+        quote! { true }
+    } else {
+        let mut it = cheap_terms.into_iter();
+        let first = it.next().unwrap();
+        quote! { #first #(&& #it)* }
+    };
     // The variant count gates blocks past the first so older schemas with fewer
     // variants still parse. A single block is always readable, and read_exact has
     // already consumed the count, so only multi-block readers name it.
@@ -315,6 +333,8 @@ pub fn generate_enum_tokens(
             impl pco_pack::PcoSerde for #name {
                 type Writer = Writer;
                 type Reader = Reader;
+
+                const CHEAP_TO_CLONE: bool = #cheap_to_clone;
 
                 fn write(data: Vec<Self>, float_round: u32, time_round: pco_pack::chrono::Duration) -> pco_pack::anyhow::Result<Vec<u8>> {
                     let mut writer = Writer::default();

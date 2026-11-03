@@ -84,7 +84,7 @@ OpenAlex `works` snapshot: deeply nested JSON flattened to typed structs.
 | Metric         | PcoPack  | PcoPack (lossy) | Vortex   | columnar | serde_columnar | msgpack  |
 |----------------|----------|-----------------|----------|----------|----------------|----------|
 | Size           | 322.4 MB | 316.0 MB        | 334.7 MB | 450.0 MB | 394.5 MB       | 434.6 MB |
-| Serialize      | 9.1 s    | 9.4 s           | 12.2 s   | 4.8 s    | 5.7 s          | 4.1 s    |
+| Serialize      | 8.3 s    | 8.2 s           | 12.2 s   | 4.8 s    | 5.7 s          | 4.1 s    |
 | Deserialize    | 5.8 s    | 5.8 s           | 5.5 s    | 1.6 s    | 5.2 s          | 4.0 s    |
 | Filter <0.01%  | 1.4 s    | 1.4 s           | 121.5 ms | 1.6 s    | 5.1 s          | 4.6 s    |
 | Filter 2.96%   | 2.3 s    | 2.2 s           | 994.1 ms | 1.6 s    | 5.1 s          | 4.6 s    |

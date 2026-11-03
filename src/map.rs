@@ -97,6 +97,9 @@ where
     type Writer = MapWriter<K, V>;
     type Reader = MapReader<K, V>;
 
+    // Cloning a map rebuilds the tree node by node, not one memcpy like a Vec.
+    const CHEAP_TO_CLONE: bool = false;
+
     fn write(data: Vec<Self>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let mut entry_counts: Vec<u32> = Vec::with_capacity(data.len());
         let mut keys: Vec<K> = Vec::with_capacity(data.iter().map(|m| m.len()).sum());
@@ -112,6 +115,25 @@ where
         out.extend_from_slice(&u32::write(entry_counts, 0, time_round)?);
         out.extend_from_slice(&K::write(keys, float_round, time_round)?);
         out.extend_from_slice(&V::write(values, float_round, time_round)?);
+        Ok(out)
+    }
+
+    fn write_borrowed(values: &[&Self], float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let mut entry_counts: Vec<u32> = Vec::with_capacity(values.len());
+        let total_entries: usize = values.iter().map(|m| m.len()).sum();
+        let mut keys: Vec<&K> = Vec::with_capacity(total_entries);
+        let mut column_values: Vec<&V> = Vec::with_capacity(total_entries);
+        for map in values {
+            entry_counts.push(map.len() as u32);
+            for (key, value) in *map {
+                keys.push(key);
+                column_values.push(value);
+            }
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&u32::write(entry_counts, 0, time_round)?);
+        out.extend_from_slice(&K::write_borrowed(&keys, float_round, time_round)?);
+        out.extend_from_slice(&V::write_borrowed(&column_values, float_round, time_round)?);
         Ok(out)
     }
 
@@ -198,9 +220,32 @@ where
     type Writer = MapWriter<K, V>;
     type Reader = MapReader<K, V>;
 
+    const CHEAP_TO_CLONE: bool = false;
+
     fn write(data: Vec<Self>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let data: Vec<BTreeMap<K, V>> = data.into_iter().map(|map| map.into_iter().collect()).collect();
         BTreeMap::<K, V>::write(data, float_round, time_round)
+    }
+
+    fn write_borrowed(values: &[&Self], float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let mut entry_counts: Vec<u32> = Vec::with_capacity(values.len());
+        let total_entries: usize = values.iter().map(|m| m.len()).sum();
+        let mut keys: Vec<&K> = Vec::with_capacity(total_entries);
+        let mut column_values: Vec<&V> = Vec::with_capacity(total_entries);
+        for map in values {
+            // Owned write sorts keys via a BTreeMap; match that order for identical bytes.
+            let sorted: BTreeMap<&K, &V> = map.iter().collect();
+            entry_counts.push(map.len() as u32);
+            for (key, value) in sorted {
+                keys.push(key);
+                column_values.push(value);
+            }
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&u32::write(entry_counts, 0, time_round)?);
+        out.extend_from_slice(&K::write_borrowed(&keys, float_round, time_round)?);
+        out.extend_from_slice(&V::write_borrowed(&column_values, float_round, time_round)?);
+        Ok(out)
     }
 
     fn read(src: &mut Cursor<&[u8]>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Self::Reader> {

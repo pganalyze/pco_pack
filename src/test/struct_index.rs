@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(index = [sensor_id])]
 struct SensorReading {
     sensor_id: i64,
@@ -9,13 +9,13 @@ struct SensorReading {
     label: String,
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct SimpleRecord {
     id: i64,
     value: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum Status {
     #[default]
     Active = 0,

@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct DeviceTelemetry {
     device_id: i64,
     temperature: i64,
@@ -103,6 +104,7 @@ const _: () = {
     impl pco_pack::PcoSerde for DeviceTelemetry {
         type Writer = Writer;
         type Reader = Reader;
+        const CHEAP_TO_CLONE: bool = <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE;
         fn write(
             data: Vec<Self>,
             _float_round: u32,
@@ -116,22 +118,122 @@ const _: () = {
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
             for (key, indices) in groups {
                 let mut col_temperature: Vec<i64> = Vec::new();
+                let mut colr_temperature: Vec<&i64> = Vec::new();
                 let mut col_humidity: Vec<i64> = Vec::new();
+                let mut colr_humidity: Vec<&i64> = Vec::new();
                 for &idx in indices.iter() {
                     let rec = &data[idx];
-                    col_temperature.push(rec.temperature);
-                    col_humidity.push(rec.humidity);
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_temperature.push(rec.temperature);
+                    } else {
+                        colr_temperature.push(&rec.temperature);
+                    }
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_humidity.push(rec.humidity);
+                    } else {
+                        colr_humidity.push(&rec.humidity);
+                    }
                 }
-                let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
-                    col_temperature,
-                    0u32,
-                    Default::default(),
+                let cb_temperature = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_humidity = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_humidity,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_humidity,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                records
+                    .push(Chunk {
+                        device_id: key.0,
+                        temperature: cb_temperature.into(),
+                        humidity: cb_humidity.into(),
+                    });
+            }
+            let mut out = Vec::new();
+            for rec in records {
+                let mut msgpack = Vec::new();
+                rec.serialize(
+                    &mut pco_pack::rmp_serde::Serializer::new(&mut msgpack)
+                        .with_struct_map(),
                 )?;
-                let cb_humidity = <i64 as pco_pack::PcoSerde>::write(
-                    col_humidity,
-                    0u32,
-                    Default::default(),
-                )?;
+                out.extend_from_slice(&(msgpack.len() as u64).to_le_bytes());
+                out.extend_from_slice(&msgpack);
+            }
+            Ok(out)
+        }
+        fn write_borrowed(
+            data: &[&Self],
+            _float_round: u32,
+            _time_round: pco_pack::chrono::Duration,
+        ) -> pco_pack::anyhow::Result<Vec<u8>> {
+            let mut groups: pco_pack::ahash::HashMap<(i64,), Vec<usize>> = Default::default();
+            for (i, rec) in data.iter().enumerate() {
+                let key = (rec.device_id,);
+                groups.entry(key).or_default().push(i);
+            }
+            let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
+            for (key, indices) in groups {
+                let mut col_temperature: Vec<i64> = Vec::new();
+                let mut colr_temperature: Vec<&i64> = Vec::new();
+                let mut col_humidity: Vec<i64> = Vec::new();
+                let mut colr_humidity: Vec<&i64> = Vec::new();
+                for &idx in indices.iter() {
+                    let rec = &data[idx];
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_temperature.push(rec.temperature);
+                    } else {
+                        colr_temperature.push(&rec.temperature);
+                    }
+                    if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        col_humidity.push(rec.humidity);
+                    } else {
+                        colr_humidity.push(&rec.humidity);
+                    }
+                }
+                let cb_temperature = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_temperature,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
+                let cb_humidity = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                    <i64 as pco_pack::PcoSerde>::write(
+                        col_humidity,
+                        0u32,
+                        Default::default(),
+                    )?
+                } else {
+                    <i64 as pco_pack::PcoSerde>::write_borrowed(
+                        &colr_humidity,
+                        0u32,
+                        Default::default(),
+                    )?
+                };
                 records
                     .push(Chunk {
                         device_id: key.0,
@@ -389,22 +491,48 @@ const _: () = {
             for (key, indices) in groups {
                 for group_indices in indices.chunks(DeviceTelemetry::CHUNK_SIZE) {
                     let mut col_temperature: Vec<i64> = Vec::new();
+                    let mut colr_temperature: Vec<&i64> = Vec::new();
                     let mut col_humidity: Vec<i64> = Vec::new();
+                    let mut colr_humidity: Vec<&i64> = Vec::new();
                     for &idx in group_indices {
                         let rec = &data[idx];
-                        col_temperature.push(rec.temperature);
-                        col_humidity.push(rec.humidity);
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_temperature.push(rec.temperature);
+                        } else {
+                            colr_temperature.push(&rec.temperature);
+                        }
+                        if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                            col_humidity.push(rec.humidity);
+                        } else {
+                            colr_humidity.push(&rec.humidity);
+                        }
                     }
-                    let cb_temperature = <i64 as pco_pack::PcoSerde>::write(
-                        col_temperature,
-                        0u32,
-                        Default::default(),
-                    )?;
-                    let cb_humidity = <i64 as pco_pack::PcoSerde>::write(
-                        col_humidity,
-                        0u32,
-                        Default::default(),
-                    )?;
+                    let cb_temperature = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_temperature,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_temperature,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
+                    let cb_humidity = if <i64 as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <i64 as pco_pack::PcoSerde>::write(
+                            col_humidity,
+                            0u32,
+                            Default::default(),
+                        )?
+                    } else {
+                        <i64 as pco_pack::PcoSerde>::write_borrowed(
+                            &colr_humidity,
+                            0u32,
+                            Default::default(),
+                        )?
+                    };
                     let rec = Chunk {
                         device_id: key.0,
                         temperature: cb_temperature.into(),

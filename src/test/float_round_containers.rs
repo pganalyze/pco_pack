@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 
 #[test]
 fn float_round_on_hashmap() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct MetricRecord {
         id: i64,
@@ -48,7 +48,7 @@ fn float_round_on_hashmap() {
 
 #[test]
 fn float_round_on_hashmap_f32() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 3)]
     struct F32Metrics {
         id: i64,
@@ -73,7 +73,7 @@ fn float_round_on_hashmap_f32() {
 
 #[test]
 fn float_round_on_btreemap() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 1)]
     struct BTMapRecord {
         id: i64,
@@ -100,7 +100,7 @@ fn float_round_on_btreemap() {
 
 #[test]
 fn float_round_on_hashmap_with_index() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(index = [device_id], float_round = 2)]
     struct GroupedMetric {
         device_id: i64,
@@ -151,7 +151,7 @@ fn float_round_on_hashmap_with_index() {
 
 #[test]
 fn float_round_on_hashmap_with_timestamp() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(timestamp = ts, float_round = 3)]
     struct TimestampedMetric {
         ts: i64,
@@ -196,7 +196,7 @@ fn float_round_on_hashmap_with_timestamp() {
 
 #[test]
 fn float_round_on_hashmap_empty_map() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct WithEmptyMap {
         id: i64,
@@ -226,7 +226,7 @@ fn float_round_on_hashmap_empty_map() {
 
 #[test]
 fn float_round_on_option_f64() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct OptionRecord {
         id: i64,
@@ -255,7 +255,7 @@ fn float_round_on_option_f64() {
 
 #[test]
 fn float_round_on_option_f32() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 3)]
     struct OptionF32Record {
         id: i64,
@@ -277,7 +277,7 @@ fn float_round_on_option_f32() {
 
 #[test]
 fn float_round_on_option_with_index() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(index = [category], float_round = 2)]
     struct GroupedOption {
         category: i64,
@@ -308,7 +308,7 @@ fn float_round_on_option_with_index() {
 
 #[test]
 fn float_round_on_option_with_timestamp() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(timestamp = ts, float_round = 2)]
     struct TimestampedOption {
         ts: i64,
@@ -334,7 +334,7 @@ fn float_round_on_option_with_timestamp() {
 
 #[test]
 fn float_round_on_vec_f64() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct VecRecord {
         id: i64,
@@ -365,7 +365,7 @@ fn float_round_on_vec_f64() {
 
 #[test]
 fn float_round_on_vec_f32() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 3)]
     struct VecF32Record {
         id: i64,
@@ -385,7 +385,7 @@ fn float_round_on_vec_f32() {
 
 #[test]
 fn float_round_on_vec_with_index() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(index = [category], float_round = 2)]
     struct GroupedVec {
         category: i64,
@@ -414,7 +414,7 @@ fn float_round_on_vec_with_index() {
 
 #[test]
 fn float_round_on_vec_with_timestamp() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(timestamp = ts, float_round = 2)]
     struct TimestampedVec {
         ts: i64,
@@ -437,7 +437,7 @@ fn float_round_on_vec_with_timestamp() {
 
 #[test]
 fn float_round_on_option_vec_mixed() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct MixedContainerRecord {
         id: i64,
@@ -463,7 +463,7 @@ fn float_round_on_option_vec_mixed() {
 
 #[test]
 fn float_round_on_option_map_mixed() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct OptionMapMixed {
         id: i64,
@@ -496,7 +496,7 @@ fn float_round_on_option_map_mixed() {
 
 #[test]
 fn float_round_on_vec_map_mixed() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     #[pco_pack(float_round = 2)]
     struct VecMapMixed {
         id: i64,

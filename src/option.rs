@@ -53,6 +53,8 @@ where
     type Writer = ();
     type Reader = OptionReader<T>;
 
+    const CHEAP_TO_CLONE: bool = T::CHEAP_TO_CLONE;
+
     fn write(data: Vec<Option<T>>, float_round: u32, time_round: chrono::Duration) -> Result<Vec<u8>> {
         let total_rows = data.len();
         let mut presence_indices = Vec::with_capacity(data.len());
@@ -69,6 +71,26 @@ where
         out.extend_from_slice(&(total_rows as u64).to_le_bytes());
         out.extend_from_slice(&presence_bytes);
         let inner_bytes = T::write(inner_values, float_round, time_round)?;
+        out.extend_from_slice(&inner_bytes);
+        Ok(out)
+    }
+
+    fn write_borrowed(values: &[&Self], float_round: u32, time_round: chrono::Duration) -> Result<Vec<u8>> {
+        let total_rows = values.len();
+        let mut presence_indices = Vec::with_capacity(values.len());
+        let mut inner_values: Vec<&T> = Vec::with_capacity(values.len());
+        for (i, v) in values.iter().enumerate() {
+            if let Some(inner) = *v {
+                presence_indices.push(i as u32);
+                inner_values.push(inner);
+            }
+        }
+        let config = pco_util::config();
+        let presence_bytes = pco::standalone::simple_compress::<u32>(&presence_indices, &config)?;
+        let mut out = Vec::new();
+        out.extend_from_slice(&(total_rows as u64).to_le_bytes());
+        out.extend_from_slice(&presence_bytes);
+        let inner_bytes = T::write_borrowed(&inner_values, float_round, time_round)?;
         out.extend_from_slice(&inner_bytes);
         Ok(out)
     }

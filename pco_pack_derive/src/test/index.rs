@@ -1,4 +1,4 @@
-#[derive(PcoPack)]
+#[derive(Clone, PcoPack)]
 #[pco_pack(index = [device_id])]
 pub struct DeviceTelemetry {
     device_id: i64,

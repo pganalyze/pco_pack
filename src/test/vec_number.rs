@@ -1,23 +1,23 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 struct VecI32 {
     values: Vec<i32>,
 }
 
-#[derive(PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 struct VecF64 {
     values: Vec<f64>,
 }
 
-#[derive(PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 struct NestedRow {
     id: u32,
     label: String,
 }
 
-#[derive(PcoPack, Debug, PartialEq, Clone)]
+#[derive(Clone, PcoPack, Debug, PartialEq)]
 struct VecNestedRow {
     items: Vec<NestedRow>,
 }

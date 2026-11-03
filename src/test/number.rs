@@ -1,47 +1,47 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct U8 {
     field: u8,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct U16 {
     field: u16,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct U32 {
     field: u32,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct U64 {
     field: u64,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct I8 {
     field: i8,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct I16 {
     field: i16,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct I32 {
     field: i32,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct I64 {
     field: i64,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct F16 {
     field: half::f16,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct F32 {
     field: f32,
 }
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct F64 {
     field: f64,
 }
@@ -398,7 +398,7 @@ fn coerce_f64_to_i32_overflow() {
     coerce_roundtrip(data, expected);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct F32Record {
     id: i64,
     value: f32,
@@ -453,7 +453,7 @@ fn f32_float_range_no_match() {
 
 #[test]
 fn f32_float_range_with_float_round() {
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     #[pco_pack(float_round = 1)]
     struct RoundedF32Record {
         id: i64,

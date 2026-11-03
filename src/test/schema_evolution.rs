@@ -3,13 +3,13 @@ use crate::PcoPack;
 
 #[test]
 fn coerce_i32_to_f64() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct EventI32 {
         id: i64,
         count: i32,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct EventF64 {
         id: i64,
         count: f64,
@@ -27,13 +27,13 @@ fn coerce_i32_to_f64() {
 
 #[test]
 fn coerce_u64_to_f64() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU64 {
         id: i64,
         value: u64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricF64 {
         id: i64,
         value: f64,
@@ -52,13 +52,13 @@ fn coerce_u64_to_f64() {
 
 #[test]
 fn coerce_i64_to_i32() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct EventI64 {
         id: i64,
         value: i64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct EventI32 {
         id: i64,
         value: i32,
@@ -77,13 +77,13 @@ fn coerce_i64_to_i32() {
 
 #[test]
 fn coerce_f64_to_i32_no_float_round() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricF64 {
         id: i64,
         value: f64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricI32 {
         id: i64,
         value: i32,
@@ -102,13 +102,13 @@ fn coerce_f64_to_i32_no_float_round() {
 
 #[test]
 fn coerce_i32_to_u64() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct CountI32 {
         id: i64,
         value: i32,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct CountU64 {
         id: i64,
         value: u64,
@@ -125,13 +125,13 @@ fn coerce_i32_to_u64() {
 
 #[test]
 fn coerce_u64_to_i64_clamps_max() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU64 {
         id: i64,
         value: u64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricI64 {
         id: i64,
         value: i64,
@@ -153,13 +153,13 @@ fn coerce_u64_to_i64_clamps_max() {
 
 #[test]
 fn coerce_i64_to_u64_clamps_min() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricI64 {
         id: i64,
         value: i64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU64 {
         id: i64,
         value: u64,
@@ -183,13 +183,13 @@ fn coerce_i64_to_u64_clamps_min() {
 
 #[test]
 fn coerce_u64_to_f64_no_wrap() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU64 {
         id: i64,
         value: u64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricF64 {
         id: i64,
         value: f64,
@@ -211,13 +211,13 @@ fn coerce_u64_to_f64_no_wrap() {
 
 #[test]
 fn coerce_u64_to_f32_no_wrap() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU64 {
         id: i64,
         value: u64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricF32 {
         id: i64,
         value: f32,
@@ -235,13 +235,13 @@ fn coerce_u64_to_f32_no_wrap() {
 fn coerce_u64_to_f16_no_wrap() {
     use half::f16;
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU64 {
         id: i64,
         value: u64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricF16 {
         id: i64,
         value: f16,
@@ -259,13 +259,13 @@ fn coerce_u64_to_f16_no_wrap() {
 fn coerce_i64_to_f16_succeeds() {
     use half::f16;
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricI64 {
         id: i64,
         value: i64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricF16 {
         id: i64,
         value: f16,
@@ -282,13 +282,13 @@ fn coerce_i64_to_f16_succeeds() {
 
 #[test]
 fn coerce_u64_to_u32_clamps_max_not_min() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU64 {
         id: i64,
         value: u64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU32 {
         id: i64,
         value: u32,
@@ -310,13 +310,13 @@ fn coerce_u64_to_u32_clamps_max_not_min() {
 
 #[test]
 fn coerce_u64_to_u16_clamps_max_not_min() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU64 {
         id: i64,
         value: u64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU16 {
         id: i64,
         value: u16,
@@ -332,13 +332,13 @@ fn coerce_u64_to_u16_clamps_max_not_min() {
 
 #[test]
 fn coerce_u64_to_u8_clamps_max_not_min() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU64 {
         id: i64,
         value: u64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU8 {
         id: i64,
         value: u8,
@@ -354,13 +354,13 @@ fn coerce_u64_to_u8_clamps_max_not_min() {
 
 #[test]
 fn coerce_u32_to_i32_clamps_max() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU32 {
         id: i64,
         value: u32,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricI32 {
         id: i64,
         value: i32,
@@ -382,13 +382,13 @@ fn coerce_u32_to_i32_clamps_max() {
 
 #[test]
 fn coerce_i32_to_u32_clamps_min() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricI32 {
         id: i64,
         value: i32,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricU32 {
         id: i64,
         value: u32,
@@ -412,13 +412,13 @@ fn coerce_i32_to_u32_clamps_min() {
 
 #[test]
 fn coerce_i64_to_i8_clamps_both_ends() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricI64 {
         id: i64,
         value: i64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricI8 {
         id: i64,
         value: i8,
@@ -446,13 +446,13 @@ fn coerce_i64_to_i8_clamps_both_ends() {
 
 #[test]
 fn coerce_f64_to_i32_clamps_extremes() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricF64 {
         id: i64,
         value: f64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MetricI32 {
         id: i64,
         value: i32,
@@ -478,13 +478,13 @@ fn coerce_f64_to_i32_clamps_extremes() {
 
 #[test]
 fn add_new_field_single() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct UserV1 {
         id: i64,
         name: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack, Default)]
+    #[derive(Clone, Debug, PartialEq, PcoPack, Default)]
     struct UserV2 {
         id: i64,
         name: String,
@@ -506,14 +506,14 @@ fn add_new_field_single() {
 
 #[test]
 fn add_new_field_at_start() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct SensorReadingV1 {
         device_id: i64,
         temperature: f64,
         timestamp_ms: i64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack, Default)]
+    #[derive(Clone, Debug, PartialEq, PcoPack, Default)]
     struct SensorReadingV2 {
         version: u32,
         device_id: i64,
@@ -541,14 +541,14 @@ fn add_new_field_at_start() {
 
 #[test]
 fn add_new_field_in_middle() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct LogV1 {
         id: i64,
         level: String,
         message: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct LogV2 {
         id: i64,
         level: String,
@@ -569,14 +569,14 @@ fn add_new_field_in_middle() {
 
 #[test]
 fn add_new_fields_multiple() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct ProductV1 {
         id: i64,
         name: String,
         price_cents: i64,
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct ProductV2 {
         id: i64,
         name: String,
@@ -602,13 +602,13 @@ fn add_new_fields_multiple() {
 
 #[test]
 fn add_new_field_different_position() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct EventV1 {
         id: i64,
         payload: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct EventV2 {
         id: i64,
         tags: Vec<String>,
@@ -628,13 +628,13 @@ fn add_new_field_different_position() {
 #[test]
 fn add_new_bool_field_filter_on_old_data() {
     /// v1: original schema without active
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct UserV1 {
         id: i64,
         name: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack, Default)]
+    #[derive(Clone, Debug, PartialEq, PcoPack, Default)]
     struct UserV2 {
         id: i64,
         name: String,
@@ -659,13 +659,13 @@ fn add_new_bool_field_filter_on_old_data() {
 
 #[test]
 fn add_new_string_field_filter_on_old_data() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct EventV1 {
         id: i64,
         message: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack, Default)]
+    #[derive(Clone, Debug, PartialEq, PcoPack, Default)]
     struct EventV2 {
         id: i64,
         message: String,
@@ -688,13 +688,13 @@ fn add_new_string_field_filter_on_old_data() {
 
 #[test]
 fn add_new_i64_field_filter_on_old_data() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct ItemV1 {
         id: i64,
         name: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct ItemV2 {
         id: i64,
         name: String,
@@ -713,13 +713,13 @@ fn add_new_i64_field_filter_on_old_data() {
 
 #[test]
 fn add_new_f64_field_filter_on_old_data() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct ItemV1 {
         id: i64,
         name: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct ItemV2 {
         id: i64,
         name: String,
@@ -740,13 +740,13 @@ fn add_new_f64_field_filter_on_old_data() {
 fn add_new_uuid_field_filter_on_old_data() {
     use uuid::Uuid;
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct EventV1 {
         id: i64,
         message: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct EventV2 {
         id: i64,
         message: String,
@@ -771,13 +771,13 @@ fn add_new_uuid_field_filter_on_old_data() {
 
 #[test]
 fn add_new_option_field_filter_on_old_data() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct TaskV1 {
         id: i64,
         title: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct TaskV2 {
         id: i64,
         title: String,
@@ -794,13 +794,13 @@ fn add_new_option_field_filter_on_old_data() {
 
 #[test]
 fn add_new_vec_field_filter_on_old_data() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct PostV1 {
         id: i64,
         title: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct PostV2 {
         id: i64,
         title: String,
@@ -817,13 +817,13 @@ fn add_new_vec_field_filter_on_old_data() {
 
 #[test]
 fn add_new_bytebuf_field_filter_on_old_data() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct RecordV1 {
         id: i64,
         name: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct RecordV2 {
         id: i64,
         name: String,
@@ -840,13 +840,13 @@ fn add_new_bytebuf_field_filter_on_old_data() {
 
 #[test]
 fn add_new_json_value_field_filter_on_old_data() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct ConfigV1 {
         id: i64,
         name: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct ConfigV2 {
         id: i64,
         name: String,
@@ -863,14 +863,14 @@ fn add_new_json_value_field_filter_on_old_data() {
 
 #[test]
 fn remove_field_single() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct ContactV1 {
         id: i64,
         name: String,
         email: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct ContactV2 {
         id: i64,
         name: String,
@@ -887,14 +887,14 @@ fn remove_field_single() {
 
 #[test]
 fn remove_field_at_start() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct BatchV1 {
         batch_id: String,
         count: i64,
         status: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct BatchV2 {
         count: i64,
         status: String,
@@ -911,7 +911,7 @@ fn remove_field_at_start() {
 
 #[test]
 fn remove_field_in_middle() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MeasurementV1 {
         id: i64,
         sensor_id: String,
@@ -920,7 +920,7 @@ fn remove_field_in_middle() {
         timestamp_ms: i64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct MeasurementV2 {
         id: i64,
         value: f64,
@@ -947,7 +947,7 @@ fn remove_field_in_middle() {
 
 #[test]
 fn remove_fields_multiple() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct AuditLogV1 {
         id: i64,
         actor_id: i64,
@@ -959,7 +959,7 @@ fn remove_fields_multiple() {
         timestamp_ms: i64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct AuditLogV2 {
         id: i64,
         actor_id: i64,
@@ -989,14 +989,14 @@ fn remove_fields_multiple() {
 
 #[test]
 fn reorder_swap_adjacent() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct PointV1 {
         x: f64,
         y: f64,
         z: f64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct PointV2 {
         y: f64,
         x: f64,
@@ -1015,7 +1015,7 @@ fn reorder_swap_adjacent() {
 
 #[test]
 fn reorder_field_end_to_start() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct AlertV1 {
         id: i64,
         message: String,
@@ -1023,7 +1023,7 @@ fn reorder_field_end_to_start() {
         source: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct AlertV2 {
         severity: u8,
         id: i64,
@@ -1045,7 +1045,7 @@ fn reorder_field_end_to_start() {
 
 #[test]
 fn reorder_complex_permutation() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct TaskV1 {
         id: i64,
         title: String,
@@ -1055,7 +1055,7 @@ fn reorder_complex_permutation() {
         status: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct TaskV2 {
         status: String,
         assignee_id: i64,
@@ -1087,14 +1087,14 @@ fn reorder_complex_permutation() {
 
 #[test]
 fn reorder_and_add_field() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct SensorDataV1 {
         id: i64,
         value: f64,
         unit: String,
     }
 
-    #[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
     struct SensorDataV2 {
         unit: String,
         timestamp_ms: i64,
@@ -1115,7 +1115,7 @@ fn reorder_and_add_field() {
 
 #[test]
 fn reorder_and_remove_field() {
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct TransactionV1 {
         id: i64,
         amount_cents: i64,
@@ -1124,7 +1124,7 @@ fn reorder_and_remove_field() {
         created_at_ms: i64,
     }
 
-    #[derive(Debug, Clone, PartialEq, PcoPack)]
+    #[derive(Clone, Debug, PartialEq, PcoPack)]
     struct TransactionV2 {
         amount_cents: i64,
         created_at_ms: i64,

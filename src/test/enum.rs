@@ -1,7 +1,7 @@
 use crate as pco_pack;
 use crate::PcoPack;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum Status {
     #[default]
     Active,
@@ -23,18 +23,18 @@ fn enum_filter_type_error_includes_type() {
     assert!(err.contains("Range start must be an integer, got boolean"), "error message: {err}");
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
 struct Click {
     x: i32,
     y: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack, serde::Serialize, serde::Deserialize)]
 struct KeyPress {
     key: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum Event {
     #[default]
     Unknown,
@@ -43,7 +43,7 @@ enum Event {
     Resize,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum Priority {
     #[default]
     Low,
@@ -141,7 +141,7 @@ fn filter_mixed_variants() {
     assert_eq!(result, vec![Event::Click(Click { x: 10, y: 20 }), Event::Click(Click { x: 100, y: 200 })]);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct Record {
     id: i64,
     status: Status,
@@ -210,7 +210,7 @@ fn enum_multiple_tuple_variants_filter() {
     assert_eq!(result, vec![Priority::Medium(1_i32), Priority::Medium(2_i32)]);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum StatusWithLargeDiscriminant {
     #[default]
     Active = 10,
@@ -323,7 +323,7 @@ fn enum_non_contiguous_filter_multiple_tuple_variants() {
     assert_eq!(result, vec![Priority::Medium(10_i32), Priority::Medium(20_i32), Priority::Medium(30_i32)]);
 }
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct VecEvent {
     field: Vec<Event>,
 }

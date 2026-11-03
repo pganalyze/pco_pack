@@ -6,7 +6,9 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
 impl StructGen {
-    /// Generate per-column PcoSerde::write calls that produce compressed ByteBufs.
+    /// Generate per-column PcoSerde calls that produce compressed
+    /// ByteBufs. The same const that chose the staging column picks the
+    /// encoder: `write` for owned, `write_borrowed` for references.
     pub fn compress_payload(&self) -> Vec<TokenStream2> {
         let decimals = self.float_round.unwrap_or(0);
         let time_round = self.time_round.as_ref().map(|tr| quote! { #tr }).unwrap_or(quote! { Default::default() });
@@ -17,8 +19,15 @@ impl StructGen {
                 let ident = &fi.ident;
                 let ty = &fi.ty;
                 let ci = syn::Ident::new(&format!("col_{}", ident), ident.span());
+                let cr = syn::Ident::new(&format!("colr_{}", ident), ident.span());
                 let cb = syn::Ident::new(&format!("cb_{}", ident), ident.span());
-                quote! { let #cb = <#ty as pco_pack::PcoSerde>::write(#ci, #decimals, #time_round)?; }
+                quote! {
+                    let #cb = if <#ty as pco_pack::PcoSerde>::CHEAP_TO_CLONE {
+                        <#ty as pco_pack::PcoSerde>::write(#ci, #decimals, #time_round)?
+                    } else {
+                        <#ty as pco_pack::PcoSerde>::write_borrowed(&#cr, #decimals, #time_round)?
+                    };
+                }
             })
             .collect()
     }

@@ -41,6 +41,8 @@ where
     type Writer = (T1::Writer, T2::Writer);
     type Reader = (T1::Reader, T2::Reader);
 
+    const CHEAP_TO_CLONE: bool = T1::CHEAP_TO_CLONE && T2::CHEAP_TO_CLONE;
+
     fn write(data: Vec<(T1, T2)>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let (mut c0, mut c1) = (Vec::with_capacity(data.len()), Vec::with_capacity(data.len()));
         for (v0, v1) in data {
@@ -50,6 +52,18 @@ where
         let mut out = Vec::new();
         out.extend_from_slice(&T1::write(c0, float_round, time_round)?);
         out.extend_from_slice(&T2::write(c1, float_round, time_round)?);
+        Ok(out)
+    }
+
+    fn write_borrowed(values: &[&Self], float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let (mut c0, mut c1) = (Vec::with_capacity(values.len()), Vec::with_capacity(values.len()));
+        for (v0, v1) in values {
+            c0.push(v0);
+            c1.push(v1);
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&T1::write_borrowed(&c0, float_round, time_round)?);
+        out.extend_from_slice(&T2::write_borrowed(&c1, float_round, time_round)?);
         Ok(out)
     }
 
@@ -164,6 +178,8 @@ where
     type Writer = (T1::Writer, T2::Writer, T3::Writer);
     type Reader = (T1::Reader, T2::Reader, T3::Reader);
 
+    const CHEAP_TO_CLONE: bool = T1::CHEAP_TO_CLONE && T2::CHEAP_TO_CLONE && T3::CHEAP_TO_CLONE;
+
     fn write(data: Vec<(T1, T2, T3)>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let (mut c0, mut c1, mut c2) =
             (Vec::with_capacity(data.len()), Vec::with_capacity(data.len()), Vec::with_capacity(data.len()));
@@ -176,6 +192,21 @@ where
         out.extend_from_slice(&T1::write(c0, float_round, time_round)?);
         out.extend_from_slice(&T2::write(c1, float_round, time_round)?);
         out.extend_from_slice(&T3::write(c2, float_round, time_round)?);
+        Ok(out)
+    }
+
+    fn write_borrowed(values: &[&Self], float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let (mut c0, mut c1, mut c2) =
+            (Vec::with_capacity(values.len()), Vec::with_capacity(values.len()), Vec::with_capacity(values.len()));
+        for (v0, v1, v2) in values {
+            c0.push(v0);
+            c1.push(v1);
+            c2.push(v2);
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&T1::write_borrowed(&c0, float_round, time_round)?);
+        out.extend_from_slice(&T2::write_borrowed(&c1, float_round, time_round)?);
+        out.extend_from_slice(&T3::write_borrowed(&c2, float_round, time_round)?);
         Ok(out)
     }
 
@@ -318,6 +349,8 @@ where
     type Writer = (T1::Writer, T2::Writer, T3::Writer, T4::Writer);
     type Reader = (T1::Reader, T2::Reader, T3::Reader, T4::Reader);
 
+    const CHEAP_TO_CLONE: bool = T1::CHEAP_TO_CLONE && T2::CHEAP_TO_CLONE && T3::CHEAP_TO_CLONE && T4::CHEAP_TO_CLONE;
+
     fn write(data: Vec<(T1, T2, T3, T4)>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let (mut c0, mut c1, mut c2, mut c3) = (
             Vec::with_capacity(data.len()),
@@ -336,6 +369,27 @@ where
         out.extend_from_slice(&T2::write(c1, float_round, time_round)?);
         out.extend_from_slice(&T3::write(c2, float_round, time_round)?);
         out.extend_from_slice(&T4::write(c3, float_round, time_round)?);
+        Ok(out)
+    }
+
+    fn write_borrowed(values: &[&Self], float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let (mut c0, mut c1, mut c2, mut c3) = (
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+        );
+        for (v0, v1, v2, v3) in values {
+            c0.push(v0);
+            c1.push(v1);
+            c2.push(v2);
+            c3.push(v3);
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&T1::write_borrowed(&c0, float_round, time_round)?);
+        out.extend_from_slice(&T2::write_borrowed(&c1, float_round, time_round)?);
+        out.extend_from_slice(&T3::write_borrowed(&c2, float_round, time_round)?);
+        out.extend_from_slice(&T4::write_borrowed(&c3, float_round, time_round)?);
         Ok(out)
     }
 
@@ -512,6 +566,9 @@ where
     type Writer = (T1::Writer, T2::Writer, T3::Writer, T4::Writer, T5::Writer);
     type Reader = (T1::Reader, T2::Reader, T3::Reader, T4::Reader, T5::Reader);
 
+    const CHEAP_TO_CLONE: bool =
+        T1::CHEAP_TO_CLONE && T2::CHEAP_TO_CLONE && T3::CHEAP_TO_CLONE && T4::CHEAP_TO_CLONE && T5::CHEAP_TO_CLONE;
+
     fn write(
         data: Vec<(T1, T2, T3, T4, T5)>, float_round: u32, time_round: chrono::Duration,
     ) -> anyhow::Result<Vec<u8>> {
@@ -535,6 +592,30 @@ where
         out.extend_from_slice(&T3::write(c2, float_round, time_round)?);
         out.extend_from_slice(&T4::write(c3, float_round, time_round)?);
         out.extend_from_slice(&T5::write(c4, float_round, time_round)?);
+        Ok(out)
+    }
+
+    fn write_borrowed(values: &[&Self], float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let (mut c0, mut c1, mut c2, mut c3, mut c4) = (
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+        );
+        for (v0, v1, v2, v3, v4) in values {
+            c0.push(v0);
+            c1.push(v1);
+            c2.push(v2);
+            c3.push(v3);
+            c4.push(v4);
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&T1::write_borrowed(&c0, float_round, time_round)?);
+        out.extend_from_slice(&T2::write_borrowed(&c1, float_round, time_round)?);
+        out.extend_from_slice(&T3::write_borrowed(&c2, float_round, time_round)?);
+        out.extend_from_slice(&T4::write_borrowed(&c3, float_round, time_round)?);
+        out.extend_from_slice(&T5::write_borrowed(&c4, float_round, time_round)?);
         Ok(out)
     }
 
@@ -739,6 +820,13 @@ where
     type Writer = (T1::Writer, T2::Writer, T3::Writer, T4::Writer, T5::Writer, T6::Writer);
     type Reader = (T1::Reader, T2::Reader, T3::Reader, T4::Reader, T5::Reader, T6::Reader);
 
+    const CHEAP_TO_CLONE: bool = T1::CHEAP_TO_CLONE
+        && T2::CHEAP_TO_CLONE
+        && T3::CHEAP_TO_CLONE
+        && T4::CHEAP_TO_CLONE
+        && T5::CHEAP_TO_CLONE
+        && T6::CHEAP_TO_CLONE;
+
     fn write(
         data: Vec<(T1, T2, T3, T4, T5, T6)>, float_round: u32, time_round: chrono::Duration,
     ) -> anyhow::Result<Vec<u8>> {
@@ -765,6 +853,33 @@ where
         out.extend_from_slice(&T4::write(c3, float_round, time_round)?);
         out.extend_from_slice(&T5::write(c4, float_round, time_round)?);
         out.extend_from_slice(&T6::write(c5, float_round, time_round)?);
+        Ok(out)
+    }
+
+    fn write_borrowed(values: &[&Self], float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let (mut c0, mut c1, mut c2, mut c3, mut c4, mut c5) = (
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+            Vec::with_capacity(values.len()),
+        );
+        for (v0, v1, v2, v3, v4, v5) in values {
+            c0.push(v0);
+            c1.push(v1);
+            c2.push(v2);
+            c3.push(v3);
+            c4.push(v4);
+            c5.push(v5);
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&T1::write_borrowed(&c0, float_round, time_round)?);
+        out.extend_from_slice(&T2::write_borrowed(&c1, float_round, time_round)?);
+        out.extend_from_slice(&T3::write_borrowed(&c2, float_round, time_round)?);
+        out.extend_from_slice(&T4::write_borrowed(&c3, float_round, time_round)?);
+        out.extend_from_slice(&T5::write_borrowed(&c4, float_round, time_round)?);
+        out.extend_from_slice(&T6::write_borrowed(&c5, float_round, time_round)?);
         Ok(out)
     }
 

@@ -2,7 +2,7 @@ use crate as pco_pack;
 use crate::PcoPack;
 use serde_bytes::ByteBuf;
 
-#[derive(Debug, Clone, PartialEq, Default, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 struct BytesRow {
     value: ByteBuf,
 }

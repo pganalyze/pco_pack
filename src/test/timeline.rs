@@ -6,7 +6,7 @@ fn dt(us: i64) -> DateTime<Utc> {
     DateTime::from_timestamp_micros(us).unwrap()
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(timestamp = seen_at)]
 struct TimelineTimestamp {
     seen_at: Timeline,
@@ -70,7 +70,7 @@ fn timeline_as_timestamp_multi_range() {
     assert_eq!(result[0].seen_at.ranges(), &[(100i64, 200), (300, 400), (500, 600)]);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(timestamp = seen_at, index = [device_id])]
 struct TimelineWithIndex {
     device_id: i64,
@@ -212,7 +212,7 @@ fn timeline_range_filter_skips_chunks() {
 
 // Bucket-mode tests (resolution > 0)
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 #[pco_pack(timestamp = seen_at)]
 struct TimelineBucketed {
     seen_at: Timeline, // 10-second buckets
@@ -407,7 +407,7 @@ fn timeline_negative_timestamp_filter() {
     assert_eq!(result[0].value, 1);
 }
 
-#[derive(Debug, Clone, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, PcoPack)]
 struct TimelineAsPayload {
     id: i64,
     seen_at: Timeline,
