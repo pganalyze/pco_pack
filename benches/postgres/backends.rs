@@ -657,9 +657,7 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     println!();
     println!("#### Other crates\n");
     println!("{}", markdown_tables::as_table(&other_out));
-    println!(
-        "\n({nd} of {n} ticks survive the Timeline fold; both Timeline reduce cells fold folded rows, one count per collapsed tick run, while the label's percent stays the per-tick selectivity; the 10 s column floors range starts to bucket boundaries and extends ends to the last microsecond of the last tick's bucket)\n"
-    );
+    println!("\n({nd} of {n} ticks survive the Timeline fold)\n");
 }
 
 /// query_fingerprint => survivor count, over the fingerprints present in the

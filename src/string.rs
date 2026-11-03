@@ -205,8 +205,8 @@ impl PcoFilter for smol_str::SmolStr {
 
     fn filter_match(value: &Self, filter: &Filter) -> bool {
         match filter {
-            Filter::String(target) => value.as_ref() == target,
-            Filter::InclusionString(targets) => targets.contains(value.as_ref()),
+            Filter::String(target) => value.as_str() == target.as_str(),
+            Filter::InclusionString(targets) => targets.contains(value.as_str()),
             _ => false,
         }
     }

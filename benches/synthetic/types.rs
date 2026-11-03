@@ -178,14 +178,14 @@ macro_rules! row2_smolstr_vx {
         let (mp_size, mp_rt) = if enabled("msgpack") {
             let string_data: Vec<$map<(String, i32), i32>> = data
                 .iter()
-                .map(|m| m.iter().map(|((k, v), val)| ((k.as_ref().to_string(), *v), *val)).collect())
+                .map(|m| m.iter().map(|((k, v), val)| ((k.as_str().to_string(), *v), *val)).collect())
                 .collect();
             let size = to_msgpack_zstd(&string_data).len();
             let rt = min_ms(|| {
                 let data = ($gen)($n);
                 let string_data: Vec<$map<(String, i32), i32>> = data
                     .iter()
-                    .map(|m| m.iter().map(|((k, v), val)| ((k.as_ref().to_string(), *v), *val)).collect())
+                    .map(|m| m.iter().map(|((k, v), val)| ((k.as_str().to_string(), *v), *val)).collect())
                     .collect();
                 to_msgpack_zstd(&string_data)
             });
