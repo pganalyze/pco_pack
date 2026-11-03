@@ -1,6 +1,6 @@
 # Synthetic benchmarks
 
-Generated data: per-type compression, struct round trips, timeline deduplication, chunk size effects, and filter timing. Run one scenario alone with `cargo bench --bench synthetic -- types`.
+Generated data: per-type compression, struct and enum round trips, timeline deduplication, chunk size effects, and filter timing. Run one scenario alone with `cargo bench --bench synthetic -- types`.
 
 ## Types
 
@@ -158,6 +158,21 @@ First four rows use native `vortex.map`, the rest struct promotion. Struct promo
 | Text IN (2 rows) | 16.8 ms | 11.4 ms  | 22.0 ms  | 38.8 ms        | 75.1 ms |
 | Reduce 70.04%    | 12.6 ms | 5.1 ms   | 23.7 ms  | 40.9 ms        | 78.6 ms |
 | Reduce <0.01%    | 1.6 ms  | 0.7 ms   | 21.4 ms  | 39.0 ms        | 77.9 ms |
+
+## Enums
+
+500k rows of a top-level enum: a unit `Idle` variant, a ~10% `Tick` variant carrying sensor/value plus a never-read json blob, and a ~60% `Note` variant carrying author/text.
+
+| Metric                  | PcoPack | Vortex  | columnar | serde_columnar | msgpack |
+|-------------------------|---------|---------|----------|----------------|---------|
+| Size                    | 1554 KB | 1743 KB | 2.2 MB   | 1579 KB        | 2.1 MB  |
+| Serialize               | 30.0 ms | 97.5 ms | 34.7 ms  | 41.0 ms        | 23.1 ms |
+| Deserialize             | 34.1 ms | 29.2 ms | 21.6 ms  | 25.5 ms        | 30.0 ms |
+| Filter Tick 10%         | 8.4 ms  | 0.1 ms  | 22.3 ms  | 26.3 ms        | 30.2 ms |
+| Filter Note 60%         | 25.0 ms | 0.1 ms  | 22.4 ms  | 26.1 ms        | 30.3 ms |
+| Filter Tick or Note 70% | 33.8 ms | 0.1 ms  | 22.4 ms  | 26.2 ms        | 30.4 ms |
+| Reduce Tick 10%         | 33.6 ms | 1.7 ms  | 22.1 ms  | 26.6 ms        | 30.2 ms |
+| Reduce Note 60%         | 35.8 ms | 17.4 ms | 26.5 ms  | 31.1 ms        | 32.4 ms |
 
 ## Timeline
 

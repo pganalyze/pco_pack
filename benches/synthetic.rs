@@ -1,4 +1,4 @@
-//! All synthetic benchmarks in one binary: types, structs, timeline,
+//! All synthetic benchmarks in one binary: types, structs, enums, timeline,
 //! chunk_size, and filters.
 //!
 //! Run one scenario alone with `cargo bench --bench synthetic -- types`
@@ -8,6 +8,7 @@ include!("bench_common.rs");
 mod synthetic {
     pub use super::*;
     pub mod chunk_size;
+    pub mod enums;
     pub mod filter;
     pub mod structs;
     pub mod timeline;
@@ -22,6 +23,9 @@ fn main() {
     }
     if want("structs") {
         synthetic::structs::bench();
+    }
+    if want("enums") {
+        synthetic::enums::bench();
     }
     if want("timeline") {
         synthetic::timeline::bench();

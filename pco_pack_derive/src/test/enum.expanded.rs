@@ -1184,15 +1184,15 @@ const _: () = {
     }
     impl pco_pack::PcoPack for State {
         type Reader = <Self as pco_pack::PcoSerde>::Reader;
-        type Chunk = ::std::vec::Vec<u8>;
+        type Chunk = pco_pack::serde_bytes::ByteBuf;
         type Filter = serde_json::Value;
         fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
-            Ok(
-                vec![
-                    < Self as pco_pack::PcoSerde > ::write(data, 0u32,
-                    Default::default()) ?
-                ],
-            )
+            let chunk = <Self as pco_pack::PcoSerde>::write(
+                data,
+                0u32,
+                Default::default(),
+            )?;
+            Ok(vec![chunk.into()])
         }
         fn read(chunks: Vec<Self::Chunk>) -> pco_pack::anyhow::Result<Vec<Self>> {
             let mut result = Vec::new();
