@@ -362,13 +362,24 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     drop(time_round_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
-            let (ms_tr, fold_tr) = common::bench_pco_pack_projected::<BackendSnapshotTimeRound, _>(
-                &tr_bytes,
-                &queries[i],
-                &["query_fingerprint", "wait_event"],
-                kf_time_round[i].1,
-                |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
-            );
+            let (ms_tr, fold_tr) = common::min_pass(common::ds_iters(), || {
+                let mut acc: HashMap<i64, u32> = HashMap::new();
+                let mut n = 0usize;
+                BackendSnapshotTimeRound::for_each_bytes(
+                    &tr_bytes,
+                    queries[i].clone(),
+                    &[],
+                    pco_pack::fold!(BackendSnapshotTimeRound, |query_fingerprint: Option<i64>| {
+                        n += 1;
+                        if let Some(fp) = query_fingerprint {
+                            *acc.entry(fp).or_default() += 1;
+                        }
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, kf_time_round[i].1, "backend_snapshots (TimeRound) reduce count");
+                acc
+            });
             assert_eq!(fold_tr, proj_truths_time_round[i], "backend_snapshots (TimeRound) projected fold");
             pco_time_round.project_ms.push(Some(ms_tr));
         }
@@ -525,13 +536,24 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     drop(tl_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
-            let (ms_tl, fold_tl) = common::bench_pco_pack_projected::<BackendSnapshotTimeline, _>(
-                &tl_bytes,
-                &queries[i],
-                &["query_fingerprint"],
-                kf_tl[i].1,
-                |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
-            );
+            let (ms_tl, fold_tl) = common::min_pass(common::ds_iters(), || {
+                let mut acc: HashMap<i64, u32> = HashMap::new();
+                let mut n = 0usize;
+                BackendSnapshotTimeline::for_each_bytes(
+                    &tl_bytes,
+                    queries[i].clone(),
+                    &[],
+                    pco_pack::fold!(BackendSnapshotTimeline, |query_fingerprint: Option<i64>| {
+                        n += 1;
+                        if let Some(fp) = query_fingerprint {
+                            *acc.entry(fp).or_default() += 1;
+                        }
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, kf_tl[i].1, "backend_snapshots (Timeline) reduce count");
+                acc
+            });
             assert_eq!(fold_tl, tl_truths[i], "backend_snapshots (Timeline) projected fold over folded rows");
             pco_timeline.project_ms.push(Some(ms_tl));
         }
@@ -567,13 +589,24 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     drop(tl_rows10);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
-            let (ms_tl10, fold_tl10) = common::bench_pco_pack_projected::<BackendSnapshotTimeline10s, _>(
-                &tl10_bytes,
-                &queries[i],
-                &["query_fingerprint"],
-                kf_tl10[i].1,
-                |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
-            );
+            let (ms_tl10, fold_tl10) = common::min_pass(common::ds_iters(), || {
+                let mut acc: HashMap<i64, u32> = HashMap::new();
+                let mut n = 0usize;
+                BackendSnapshotTimeline10s::for_each_bytes(
+                    &tl10_bytes,
+                    queries[i].clone(),
+                    &[],
+                    pco_pack::fold!(BackendSnapshotTimeline10s, |query_fingerprint: Option<i64>| {
+                        n += 1;
+                        if let Some(fp) = query_fingerprint {
+                            *acc.entry(fp).or_default() += 1;
+                        }
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, kf_tl10[i].1, "backend_snapshots (Timeline 10s) reduce count");
+                acc
+            });
             assert_eq!(fold_tl10, tl_truths10[i], "backend_snapshots (Timeline 10s) projected fold over folded rows");
             pco_timeline10.project_ms.push(Some(ms_tl10));
         }
@@ -584,13 +617,24 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     drop(rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
-            let (ms_pco, fold) = common::bench_pco_pack_projected::<BackendSnapshot, _>(
-                &pco_bytes,
-                &queries[i],
-                &["query_fingerprint", "wait_event"],
-                kf[i].1,
-                |rows| fold_fp_counts(rows.iter().filter_map(|r| r.query_fingerprint)),
-            );
+            let (ms_pco, fold) = common::min_pass(common::ds_iters(), || {
+                let mut acc: HashMap<i64, u32> = HashMap::new();
+                let mut n = 0usize;
+                BackendSnapshot::for_each_bytes(
+                    &pco_bytes,
+                    queries[i].clone(),
+                    &[],
+                    pco_pack::fold!(BackendSnapshot, |query_fingerprint: Option<i64>| {
+                        n += 1;
+                        if let Some(fp) = query_fingerprint {
+                            *acc.entry(fp).or_default() += 1;
+                        }
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, kf[i].1, "backend_snapshots reduce count");
+                acc
+            });
             assert_eq!(fold, proj_truths[i], "backend_snapshots projected fold");
             pco.project_ms.push(Some(ms_pco));
         }

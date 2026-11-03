@@ -6,7 +6,7 @@ Zero-config columnar compression for Rust
 
 - `#[derive(PcoPack)]` for ideal compression of arbitrary nested types
 - Numbers are compressed with [Pcodec](https://github.com/pcodec/pcodec); other types use MessagePack + zstd
-- Extremely fast [filtering](#filtering) and [partial reads](#partial-reads)
+- Extremely fast [filtering](#filtering), [partial reads](#partial-reads), and [projected iteration](#projected-iteration)
 - [Advanced schema evolution](#schema-evolution)
 - [Novel timeseries compression](#timeline)
 
@@ -290,6 +290,116 @@ assert_eq!(results[0].score, 95.0);
 let results = MyStruct::filter_bytes(&bytes, filter, &["id", "name"]).unwrap();
 assert_eq!(results[0].name, "alice");
 assert_eq!(results[0].score, 0.0);
+```
+
+## Projected iteration
+
+`for_each` streams each matching row into a consumer, avoiding the `Vec<Self>` that `filter` materializes. For maximum performance, the `fold!` macro offers a columnar iteration API that avoids hydrating a struct when your code doesn't need it. Closures may return `()` or `Result<()>`; `Err` aborts the stream.
+
+```rust
+use pco_pack::{PcoPack, fold};
+use serde_json::json;
+
+#[derive(PcoPack, Clone)]
+struct Sensor { device_id: i64, temp: u64, humidity: u32, payload: serde_json::Value }
+
+let data = vec![
+    Sensor { device_id: 1, temp: 7, humidity: 2, payload: serde_json::json!("never read") },
+    Sensor { device_id: 1, temp: 9, humidity: 3, payload: serde_json::json!("never read") },
+];
+let chunks = Sensor::write(data).unwrap();
+
+// Streaming with hydration: the closure receives each row, no intermediate Vec.
+let mut sum = 0;
+Sensor::for_each(
+    &chunks,
+    json!({"device_id": 1}),
+    &[],
+    |row: Sensor| sum += row.humidity
+).unwrap();
+assert_eq!(sum, 5);
+
+// Projected streaming: fields are passed directly without hydrating a struct.
+let mut sums = Vec::new();
+Sensor::for_each(
+    &chunks,
+    json!({"device_id": 1}),
+    &[],
+    fold!(Sensor, |temp: u64, humidity: u32| sums.push(temp + humidity as u64)),
+)
+.unwrap();
+assert_eq!(sums, [9, 12]);
+```
+
+`fold!` allows enum pattern matching inside of the closure parameters to filter to a specific variant and access its fields without constucting the enum in memory. Multiple variant-matching closures can be passed to a single `fold!`.
+
+```rust
+use pco_pack::{PcoPack, fold};
+use serde_json::json;
+
+#[derive(PcoPack, Default, Clone)]
+struct Reading { sensor: u32, value: u64, blob: serde_json::Value }
+
+#[derive(PcoPack, Default, Clone)]
+enum Stream { #[default] Idle, Tick(Reading) }
+
+let data = vec![
+    Stream::Idle,
+    Stream::Tick(Reading { sensor: 7, value: 3, blob: json!("never read") }),
+    Stream::Idle,
+    Stream::Tick(Reading { sensor: 8, value: 4, blob: json!("never read") }),
+];
+let chunks = Stream::write(data).unwrap();
+
+// Tick rows only.
+let mut sum = 0;
+Stream::for_each(
+    &chunks,
+    json!({}),
+    &[],
+    fold!(Stream, |Tick(Reading { value: u64 })| sum += value),
+)
+.unwrap();
+assert_eq!(sum, 7);
+
+// One closure per variant folds them in a single pass.
+let mut idle = 0;
+let mut sum = 0;
+Stream::for_each(
+    &chunks,
+    json!({}),
+    &[],
+    fold!(
+        Stream,
+        |Idle| idle += 1,
+        |Tick(Reading { value: u64 })| sum += value,
+    ),
+)
+.unwrap();
+assert_eq!((idle, sum), (2, 7));
+```
+
+Scalar enum payloads are also supported:
+
+```rust
+use pco_pack::{PcoPack, fold};
+use serde_json::json;
+
+#[derive(PcoPack, Default, Clone)]
+enum Alert { #[default] Ok, Hot(u64) }
+
+let data = vec![Alert::Ok, Alert::Hot(30), Alert::Hot(80), Alert::Ok];
+let chunks = Alert::write(data).unwrap();
+
+let mut hot = Vec::new();
+Alert::for_each(
+    &chunks,
+    json!({}),
+    &[],
+    fold!(Alert, |Hot(value): u64| hot.push(value)),
+)
+.unwrap();
+assert_eq!(hot, [30, 80]);
 ```
 
 ## Timeline

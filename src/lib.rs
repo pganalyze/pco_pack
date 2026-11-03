@@ -37,6 +37,7 @@ pub use filter_mask::FilterMask;
 pub use lazy_reader::LazyReader;
 pub use number::{CoercibleNumber, NumberReader, NumberWriter, RangeCoercibleNumber};
 pub use pco_pack_derive::PcoPack;
+pub use pco_pack_derive::fold;
 pub use timeline::{Resolution, Timeline};
 pub use typed_filter::{BoolFilter, F64Filter, I64Filter, StringFilter, TimeFilter, UuidFilter};
 
@@ -118,6 +119,128 @@ pub trait PcoPack: PcoFilter + Sized {
     /// - No requested field contains a nested path ('.')
     /// - All requested fields exist in this type's schema
     fn resolve_fields(query: &serde_json::Value, fields: &[&str]) -> Result<Vec<&'static str>>;
+
+    /// Typed view over a chunk's decompressed columns, passed to `Consumer` implementations.
+    /// The derive generates one accessor per struct field.
+    type Columns<'a>;
+
+    /// Reconstruct the full row struct from a column view. Fields outside the loaded
+    /// projection take their `Default` value.
+    fn hydrate(columns: &mut Self::Columns<'_>, row: usize) -> Result<Self>;
+
+    /// Wraps a decompressed reader in the column view. Generated code uses this to hand
+    /// enum variant payload blocks to pattern-`fold!` consumers.
+    fn columns(reader: &mut <Self as PcoSerde>::Reader) -> Self::Columns<'_>;
+
+    /// Streaming fold engine behind `PcoPack::for_each`.
+    fn fold_value<C>(
+        chunks: &[Self::Chunk], query: &serde_json::Value, fields: &[&str], consumer: &mut C,
+    ) -> Result<()>
+    where
+        C: Consumer<Self>;
+
+    /// Streams every row matching the query into `consumer` without materializing a
+    /// row vector.
+    ///
+    /// The loaded projection is `fields` plus `Consumer::FIELDS` plus the fields the
+    /// query references; when all are empty every column loads, while a `fold!`
+    /// projection loads only the columns its closure reads.
+    ///
+    /// The consumer may return `()` or `Result<()>`; a decode error or `Err` aborts
+    /// the stream. Rows delivered before the abort are not rolled back; with index
+    /// grouping, which rows those were depends on chunk storage order and is
+    /// unspecified. Hydration closures that touch fields need an annotated parameter
+    /// (`|row: Sensor|`): argument types are not inferred through the generic
+    /// `Consumer` bound.
+    fn for_each<C, T>(chunks: &[Self::Chunk], query: T, fields: &[&str], mut consumer: C) -> Result<()>
+    where
+        C: Consumer<Self>,
+        T: TryInto<serde_json::Value>,
+        <T as TryInto<serde_json::Value>>::Error: Into<anyhow::Error>,
+    {
+        Self::fold_value(chunks, &query.try_into().map_err(Into::into)?, fields, &mut consumer)
+    }
+
+    /// Like `for_each`, reading from a serialized blob.
+    fn for_each_bytes<C, T>(bytes: &[u8], query: T, fields: &[&str], consumer: C) -> Result<()>
+    where
+        C: Consumer<Self>,
+        T: TryInto<serde_json::Value>,
+        <T as TryInto<serde_json::Value>>::Error: Into<anyhow::Error>,
+    {
+        Self::for_each(&Self::from_bytes(bytes)?, query, fields, consumer)
+    }
+}
+
+/// Adapter letting `for_each` closures return either `()` or `Result<()>`.
+pub trait Output {
+    fn lift(self) -> Result<()>;
+}
+
+impl Output for () {
+    fn lift(self) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl<E: Into<anyhow::Error>> Output for std::result::Result<(), E> {
+    fn lift(self) -> Result<()> {
+        self.map_err(Into::into)
+    }
+}
+
+/// Per-row sink for [`PcoPack::for_each`]: either a `|row: R|` closure over fully
+/// hydrated rows, or a `fold!` projection that pops only its own columns. Wrapper
+/// crates (e.g. persistence layers) can take `C: Consumer<R>` and forward it unchanged.
+pub trait Consumer<R: PcoPack>: Sized {
+    /// Field names this consumer reads. Empty (the default) requests nothing of its
+    /// own, so the projection comes from `for_each`'s `fields` and the query.
+    /// `fold!` struct folds list their column parameters; enum folds instead list
+    /// variant names, one per arm. Wrappers can inspect this via `projection_fields`
+    /// to push column selection into their own storage layer.
+    const FIELDS: &'static [&'static str];
+
+    /// Per-`FIELDS` flag set by `fold!` for arms that read their variant's payload
+    /// slots (pattern or binding form). The engine gates the enum slot-streaming fast
+    /// path on it and, in debug builds, cross-checks each flagged arm's slot cursor
+    /// against its delivered row count. Empty (the default) marks a hand-written
+    /// consumer: neither path applies.
+    #[doc(hidden)]
+    const POPS_PAYLOAD: &'static [bool] = &[];
+
+    /// Called once per surviving row. Rows ascend within a chunk, and accessors must
+    /// never see an index below a previously consumed row (columns are forward-only).
+    /// Chunks are visited in stored order, which index grouping may reorder relative
+    /// to the input. `Err` aborts the stream; delivered rows are not rolled back.
+    fn consume(&mut self, columns: &mut R::Columns<'_>, row: usize) -> Result<()>;
+
+    /// Called instead of `consume` for enum folds declaring multiple variants:
+    /// `variant` is the matching arm's index within `FIELDS`, so a multi-arm `fold!`
+    /// dispatches without ever seeing discriminant values. Default forwards to
+    /// `consume`.
+    fn consume_variant(&mut self, columns: &mut R::Columns<'_>, row: usize, _variant: usize) -> Result<()> {
+        self.consume(columns, row)
+    }
+}
+
+impl<R, F, O> Consumer<R> for F
+where
+    R: PcoPack,
+    F: FnMut(R) -> O,
+    O: Output,
+{
+    const FIELDS: &'static [&'static str] = &[];
+
+    fn consume(&mut self, columns: &mut R::Columns<'_>, row: usize) -> Result<()> {
+        let row = R::hydrate(columns, row)?;
+        (self)(row).lift()
+    }
+}
+
+/// Field names `C` reads, before query fields are merged. Lets persistence wrappers
+/// build a narrowed SELECT list, then add query fields via [`PcoPack::resolve_fields`].
+pub fn projection_fields<R: PcoPack, C: Consumer<R>>() -> &'static [&'static str] {
+    C::FIELDS
 }
 
 /// Basic columnar write and read for a single type.

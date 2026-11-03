@@ -291,17 +291,6 @@ pub fn bench() {
             e.1 += 1;
         }
     }
-    let fold = |rows: &[Work]| -> std::collections::HashMap<i32, (i64, u64)> {
-        let mut acc: std::collections::HashMap<i32, (i64, u64)> = Default::default();
-        for r in rows {
-            if let Some(y) = r.publication_year {
-                let e = acc.entry(y).or_default();
-                e.0 += r.cited_by_count as i64;
-                e.1 += 1;
-            }
-        }
-        acc
-    };
     // Second reduce: `work_type` equality on the moderate pick (Preprint),
     // the few-rows point on the same year => average citations fold.
     let disc1 = work_type_u8(&picks[1].0);
@@ -323,40 +312,82 @@ pub fn bench() {
         acc
     };
     if crate::enabled("pco_pack") {
-        let (ms, map) = common::bench_pco_pack_projected::<Work, _>(
-            &pco_bytes,
-            &proj_q,
-            &["publication_year", "cited_by_count"],
-            lang_exp,
-            fold,
-        );
+        let (ms, map) = common::min_pass(common::ds_iters(), || {
+            let mut acc: std::collections::HashMap<i32, (i64, u64)> = Default::default();
+            let mut n = 0usize;
+            Work::for_each_bytes(
+                &pco_bytes,
+                proj_q.clone(),
+                &[],
+                pco_pack::fold!(Work, |publication_year: Option<i32>, cited_by_count: i32| {
+                    n += 1;
+                    if let Some(y) = publication_year {
+                        let e = acc.entry(y).or_default();
+                        e.0 += cited_by_count as i64;
+                        e.1 += 1;
+                    }
+                }),
+            )
+            .unwrap();
+            assert_eq!(n, lang_exp, "openalex projected reduce count");
+            acc
+        });
         assert_eq!(map, proj_truth, "openalex projected reduce");
         pco.project_ms.push(Some(ms));
-        let (ms_pt, map_pt) = common::bench_pco_pack_projected::<Work, _>(
-            &pco_bytes,
-            &queries[1],
-            &["publication_year", "cited_by_count"],
-            exps[1],
-            fold,
-        );
+        let (ms_pt, map_pt) = common::min_pass(common::ds_iters(), || {
+            let mut acc: std::collections::HashMap<i32, (i64, u64)> = Default::default();
+            let mut n = 0usize;
+            Work::for_each_bytes(
+                &pco_bytes,
+                queries[1].clone(),
+                &[],
+                pco_pack::fold!(Work, |publication_year: Option<i32>, cited_by_count: i32| {
+                    n += 1;
+                    if let Some(y) = publication_year {
+                        let e = acc.entry(y).or_default();
+                        e.0 += cited_by_count as i64;
+                        e.1 += 1;
+                    }
+                }),
+            )
+            .unwrap();
+            assert_eq!(n, exps[1], "openalex work_type projected reduce count");
+            acc
+        });
         assert_eq!(map_pt, preprint_truth, "openalex work_type projected reduce");
         pco.project_ms.push(Some(ms_pt));
         drop(pco_bytes);
-        let (msf, _) = common::bench_pco_pack_projected::<WorkF, _>(
-            &pcof_bytes,
-            &proj_q,
-            &["publication_year", "cited_by_count"],
-            lang_exp,
-            |rows| rows.len(),
-        );
+        let (msf, n) = common::min_pass(common::ds_iters(), || {
+            let mut n = 0usize;
+            WorkF::for_each_bytes(
+                &pcof_bytes,
+                proj_q.clone(),
+                &[],
+                pco_pack::fold!(WorkF, |publication_year: Option<i32>, cited_by_count: i32| {
+                    let _ = (&publication_year, cited_by_count);
+                    n += 1;
+                }),
+            )
+            .unwrap();
+            n
+        });
+        assert_eq!(n, lang_exp, "openalex (lossy) reduce count");
         pcof.project_ms.push(Some(msf));
-        let (msf_pt, _) = common::bench_pco_pack_projected::<WorkF, _>(
-            &pcof_bytes,
-            &queries[1],
-            &["publication_year", "cited_by_count"],
-            exps[1],
-            |rows| rows.len(),
-        );
+        let (msf_pt, n) = common::min_pass(common::ds_iters(), || {
+            let mut n = 0usize;
+            WorkF::for_each_bytes(
+                &pcof_bytes,
+                queries[1].clone(),
+                &[],
+                pco_pack::fold!(WorkF, |publication_year: Option<i32>, cited_by_count: i32| {
+                    let _ = (&publication_year, cited_by_count);
+                    n += 1;
+                }),
+            )
+            .unwrap();
+            n
+        });
+        assert_eq!(n, exps[1], "openalex (lossy) work_type reduce count");
         pcof.project_ms.push(Some(msf_pt));
         drop(pcof_bytes);
     }

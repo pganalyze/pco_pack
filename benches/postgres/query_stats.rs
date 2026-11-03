@@ -183,13 +183,26 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
     drop(time_round_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
-            let (project_ms, fold_time_round) = common::bench_pco_pack_projected::<QueryStatTimeRound, _>(
-                &tr_bytes,
-                &queries[i],
-                &["fingerprint", "calls"],
-                kf_time_round[i].1,
-                |survivors| fold_avg_calls(survivors.iter().map(|r| (r.fingerprint, r.calls))),
-            );
+            let (project_ms, fold_time_round) = common::min_pass(common::ds_iters(), || {
+                let mut sums: HashMap<i64, (i64, u64)> = HashMap::new();
+                let mut n = 0usize;
+                QueryStatTimeRound::for_each_bytes(
+                    &tr_bytes,
+                    queries[i].clone(),
+                    &[],
+                    pco_pack::fold!(QueryStatTimeRound, |fingerprint: i64, calls: i64| {
+                        n += 1;
+                        let entry = sums.entry(fingerprint).or_insert((0, 0));
+                        entry.0 += calls;
+                        entry.1 += 1;
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, kf_time_round[i].1, "{name} (TimeRound) reduce count");
+                let avg: HashMap<i64, f64> =
+                    sums.into_iter().map(|(k, (sum, cnt))| (k, sum as f64 / cnt as f64)).collect();
+                avg
+            });
             assert_eq!(fold_time_round, truths_time_round[i], "{name} (TimeRound) projected fold");
             pco_time_round.project_ms.push(Some(project_ms));
         }
@@ -354,13 +367,26 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
     let (mut pco, pco_bytes) = common::bench_pco_pack_full(&rows, &pco_filters, |_back, _off| {}, || {});
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
-            let (project_ms, fold) = common::bench_pco_pack_projected::<QueryStat, _>(
-                &pco_bytes,
-                &queries[i],
-                &["fingerprint", "calls"],
-                kf[i].1,
-                |survivors| fold_avg_calls(survivors.iter().map(|r| (r.fingerprint, r.calls))),
-            );
+            let (project_ms, fold) = common::min_pass(common::ds_iters(), || {
+                let mut sums: HashMap<i64, (i64, u64)> = HashMap::new();
+                let mut n = 0usize;
+                QueryStat::for_each_bytes(
+                    &pco_bytes,
+                    queries[i].clone(),
+                    &[],
+                    pco_pack::fold!(QueryStat, |fingerprint: i64, calls: i64| {
+                        n += 1;
+                        let entry = sums.entry(fingerprint).or_insert((0, 0));
+                        entry.0 += calls;
+                        entry.1 += 1;
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, kf[i].1, "{name} reduce count");
+                let avg: HashMap<i64, f64> =
+                    sums.into_iter().map(|(k, (sum, cnt))| (k, sum as f64 / cnt as f64)).collect();
+                avg
+            });
             assert_eq!(fold, truths[i], "{name} projected fold");
             pco.project_ms.push(Some(project_ms));
         }

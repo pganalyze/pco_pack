@@ -185,31 +185,42 @@ pub fn bench() {
             .collect();
         if crate::enabled("pco_pack") {
             for i in 0..boxes.len() {
-                let (ms, map) = common::bench_pco_pack_projected::<Node, _>(
-                    &pco_bytes,
-                    &queries[i],
-                    &["id", "lat", "lon"],
-                    exp[i],
-                    |rows| {
-                        let mut acc: std::collections::HashMap<(i32, i32), u32> = Default::default();
-                        for r in rows {
-                            *acc.entry(((r.lat * 10.0) as i32, (r.lon * 10.0) as i32)).or_default() += 1;
-                        }
-                        acc
-                    },
-                );
+                let (ms, map) = common::min_pass(common::ds_iters(), || {
+                    let mut acc: std::collections::HashMap<(i32, i32), u32> = Default::default();
+                    let mut n = 0usize;
+                    Node::for_each_bytes(
+                        &pco_bytes,
+                        queries[i].clone(),
+                        &[],
+                        pco_pack::fold!(Node, |lat: f64, lon: f64| {
+                            n += 1;
+                            *acc.entry(((lat * 10.0) as i32, (lon * 10.0) as i32)).or_default() += 1;
+                        }),
+                    )
+                    .unwrap();
+                    assert_eq!(n, exp[i], "osm node projected reduce count");
+                    acc
+                });
                 assert_eq!(map, proj_truths[i], "osm node projected reduce");
                 pco.project_ms.push(Some(ms));
             }
             drop(pco_bytes);
             for i in 0..boxes.len() {
-                let (msf, _) = common::bench_pco_pack_projected::<NodeF, _>(
-                    &pcof_bytes,
-                    &queries[i],
-                    &["id", "lat", "lon"],
-                    exp_f[i],
-                    |rows| rows.len(),
-                );
+                let (msf, n) = common::min_pass(common::ds_iters(), || {
+                    let mut n = 0usize;
+                    NodeF::for_each_bytes(
+                        &pcof_bytes,
+                        queries[i].clone(),
+                        &[],
+                        pco_pack::fold!(NodeF, |lat: f64, lon: f64| {
+                            let _ = (lat, lon);
+                            n += 1;
+                        }),
+                    )
+                    .unwrap();
+                    n
+                });
+                assert_eq!(n, exp_f[i], "osm node (lossy) reduce count");
                 pcof.project_ms.push(Some(msf));
             }
             drop(pcof_bytes);
@@ -424,13 +435,22 @@ pub fn bench() {
             || {},
         );
         if crate::enabled("pco_pack") {
-            let (ms, got) = common::bench_pco_pack_projected::<Way, _>(
-                &pco_bytes,
-                &serde_json::json!({}),
-                &["refs"],
-                n_ways,
-                |rows| rows.iter().map(|w| w.refs.len() as u64).sum::<u64>(),
-            );
+            let (ms, got) = common::min_pass(common::ds_iters(), || {
+                let mut total = 0u64;
+                let mut n = 0usize;
+                Way::for_each_bytes(
+                    &pco_bytes,
+                    serde_json::json!({}),
+                    &[],
+                    pco_pack::fold!(Way, |refs: Vec<i64>| {
+                        n += 1;
+                        total += refs.len() as u64;
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, n_ways, "osm way reduce count");
+                total
+            });
             assert_eq!(got, total_refs, "osm way projected reduce");
             pco.project_ms.push(Some(ms));
             drop(pco_bytes);
@@ -534,13 +554,22 @@ pub fn bench() {
             || {},
         );
         if crate::enabled("pco_pack") {
-            let (ms, got) = common::bench_pco_pack_projected::<Relation, _>(
-                &pco_bytes,
-                &serde_json::json!({}),
-                &["members"],
-                n_rels,
-                |rows| rows.iter().map(|r| r.members.len() as u64).sum::<u64>(),
-            );
+            let (ms, got) = common::min_pass(common::ds_iters(), || {
+                let mut total = 0u64;
+                let mut n = 0usize;
+                Relation::for_each_bytes(
+                    &pco_bytes,
+                    serde_json::json!({}),
+                    &[],
+                    pco_pack::fold!(Relation, |members: Vec<Member>| {
+                        n += 1;
+                        total += members.len() as u64;
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, n_rels, "osm relation reduce count");
+                total
+            });
             assert_eq!(got, total_members, "osm relation projected reduce");
             pco.project_ms.push(Some(ms));
             drop(pco_bytes);

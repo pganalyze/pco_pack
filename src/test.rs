@@ -27,6 +27,7 @@ mod map;
 mod number;
 mod option;
 mod option_nested;
+mod projection_fold;
 mod range_filter;
 mod schema_evolution;
 mod schema_evolution_float_round;

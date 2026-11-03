@@ -137,15 +137,6 @@ pub fn bench() {
             e.1 += 1;
         }
     }
-    let fold_zone = |rows: &[Trip]| -> std::collections::HashMap<i32, (f64, u64)> {
-        let mut acc: std::collections::HashMap<i32, (f64, u64)> = Default::default();
-        for r in rows {
-            let e = acc.entry(r.pu_location_id).or_default();
-            e.0 += r.trip_miles;
-            e.1 += 1;
-        }
-        acc
-    };
     let fold_pairs = |pairs: Vec<(i32, f64)>| -> HashMap<i32, (f64, u64)> {
         let mut acc: HashMap<i32, (f64, u64)> = Default::default();
         for (zone, miles) in pairs {
@@ -168,40 +159,78 @@ pub fn bench() {
     };
     let lic_key = lic0.to_string();
     if crate::enabled("pco_pack") {
-        let (ms, map) = common::bench_pco_pack_projected::<Trip, _>(
-            &pco_bytes,
-            &proj_q,
-            &["pu_location_id", "trip_miles"],
-            exp[1],
-            fold_zone,
-        );
+        let (ms, map) = common::min_pass(common::ds_iters(), || {
+            let mut acc: HashMap<i32, (f64, u64)> = Default::default();
+            let mut n = 0usize;
+            Trip::for_each_bytes(
+                &pco_bytes,
+                proj_q.clone(),
+                &[],
+                pco_pack::fold!(Trip, |pu_location_id: i32, trip_miles: f64| {
+                    n += 1;
+                    let e = acc.entry(pu_location_id).or_default();
+                    e.0 += trip_miles;
+                    e.1 += 1;
+                }),
+            )
+            .unwrap();
+            assert_eq!(n, exp[1], "taxi projected reduce count");
+            acc
+        });
         check_fuzzy(&map, &proj_truth, "taxi projected reduce");
         pco.project_ms.push(Some(ms));
-        let (ms_lic, map_lic) = common::bench_pco_pack_projected::<Trip, _>(
-            &pco_bytes,
-            &queries[2],
-            &["pu_location_id", "trip_miles"],
-            lic_exp,
-            fold_zone,
-        );
+        let (ms_lic, map_lic) = common::min_pass(common::ds_iters(), || {
+            let mut acc: HashMap<i32, (f64, u64)> = Default::default();
+            let mut n = 0usize;
+            Trip::for_each_bytes(
+                &pco_bytes,
+                queries[2].clone(),
+                &[],
+                pco_pack::fold!(Trip, |pu_location_id: i32, trip_miles: f64| {
+                    n += 1;
+                    let e = acc.entry(pu_location_id).or_default();
+                    e.0 += trip_miles;
+                    e.1 += 1;
+                }),
+            )
+            .unwrap();
+            assert_eq!(n, lic_exp, "taxi license reduce count");
+            acc
+        });
         check_fuzzy(&map_lic, &lic_truth, "taxi license reduce");
         pco.project_ms.push(Some(ms_lic));
         drop(pco_bytes);
-        let (msf, _) = common::bench_pco_pack_projected::<TripF, _>(
-            &pcof_bytes,
-            &proj_q,
-            &["pu_location_id", "trip_miles"],
-            exp[1],
-            |rows| rows.len(),
-        );
+        let (msf, n) = common::min_pass(common::ds_iters(), || {
+            let mut n = 0usize;
+            TripF::for_each_bytes(
+                &pcof_bytes,
+                proj_q.clone(),
+                &[],
+                pco_pack::fold!(TripF, |pu_location_id: i32, trip_miles: f64| {
+                    let _ = (pu_location_id, trip_miles);
+                    n += 1;
+                }),
+            )
+            .unwrap();
+            n
+        });
+        assert_eq!(n, exp[1], "taxi (lossy) reduce count");
         pcof.project_ms.push(Some(msf));
-        let (msf_lic, _) = common::bench_pco_pack_projected::<TripF, _>(
-            &pcof_bytes,
-            &queries[2],
-            &["pu_location_id", "trip_miles"],
-            lic_exp,
-            |rows| rows.len(),
-        );
+        let (msf_lic, n) = common::min_pass(common::ds_iters(), || {
+            let mut n = 0usize;
+            TripF::for_each_bytes(
+                &pcof_bytes,
+                queries[2].clone(),
+                &[],
+                pco_pack::fold!(TripF, |pu_location_id: i32, trip_miles: f64| {
+                    let _ = (pu_location_id, trip_miles);
+                    n += 1;
+                }),
+            )
+            .unwrap();
+            n
+        });
+        assert_eq!(n, lic_exp, "taxi (lossy) license reduce count");
         pcof.project_ms.push(Some(msf_lic));
         drop(pcof_bytes);
     }

@@ -150,33 +150,44 @@ pub fn bench() {
         .collect();
     if crate::enabled("pco_pack") {
         for ((q, e), truth) in proj_q.iter().zip(exp_pco.iter()).zip(proj_truths.iter()) {
-            let (ms, map) = common::bench_pco_pack_projected::<AirQuality, _>(
-                &pco_bytes,
-                q,
-                &["kafka_partition", "pm_2_5"],
-                *e,
-                |rows| {
-                    let mut acc: std::collections::HashMap<i32, (i64, u64)> = Default::default();
-                    for r in rows {
-                        let e = acc.entry(r.kafka_partition).or_default();
-                        e.0 += r.pm_2_5 as i64;
-                        e.1 += 1;
-                    }
-                    acc
-                },
-            );
+            let (ms, map) = common::min_pass(common::ds_iters(), || {
+                let mut acc: HashMap<i32, (i64, u64)> = Default::default();
+                let mut n = 0usize;
+                AirQuality::for_each_bytes(
+                    &pco_bytes,
+                    q.clone(),
+                    &[],
+                    pco_pack::fold!(AirQuality, |kafka_partition: i32, pm_2_5: i16| {
+                        n += 1;
+                        let row = acc.entry(kafka_partition).or_default();
+                        row.0 += pm_2_5 as i64;
+                        row.1 += 1;
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, *e, "air_quality projected reduce count");
+                acc
+            });
             assert_eq!(map, *truth, "air_quality projected reduce");
             pco.project_ms.push(Some(ms));
         }
         drop(pco_bytes);
         for (q, e) in proj_q.iter().zip(exp_pcof.iter()) {
-            let (msf, _) = common::bench_pco_pack_projected::<AqF, _>(
-                &pcof_bytes,
-                q,
-                &["kafka_partition", "pm_2_5"],
-                *e,
-                |rows| rows.len(),
-            );
+            let (msf, n) = common::min_pass(common::ds_iters(), || {
+                let mut n = 0usize;
+                AqF::for_each_bytes(
+                    &pcof_bytes,
+                    q.clone(),
+                    &[],
+                    pco_pack::fold!(AqF, |kafka_partition: i32, pm_2_5: i16| {
+                        let _ = (kafka_partition, pm_2_5);
+                        n += 1;
+                    }),
+                )
+                .unwrap();
+                n
+            });
+            assert_eq!(n, *e, "air_quality (lossy) reduce count");
             pcof.project_ms.push(Some(msf));
         }
         drop(pcof_bytes);

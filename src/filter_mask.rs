@@ -20,6 +20,14 @@ impl FilterMask {
         self.0.fill(val);
     }
 
+    /// Resize to `len` bits, all set. Lets a streaming query reuse one scratch mask
+    /// across chunks whose row counts differ.
+    #[inline]
+    pub fn reset_ones(&mut self, len: usize) {
+        self.0.clear();
+        self.0.resize(len, true);
+    }
+
     /// Returns a borrowed slice of this bitmask for the given range.
     #[inline]
     pub fn get_range(&self, range: std::ops::Range<usize>) -> &BitSlice<u64, Lsb0> {
@@ -49,6 +57,26 @@ impl FilterMask {
     #[inline]
     pub fn as_raw_slice(&self) -> &[u64] {
         self.0.as_raw_slice()
+    }
+
+    /// Calls `f` for every set bit below `row_count`, ascending, stopping at the first
+    /// `Err`. Padding bits above `row_count` exist only in the last word; mask them
+    /// before scanning.
+    #[inline]
+    pub fn for_each_set_row(
+        &self, row_count: usize, mut f: impl FnMut(usize) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        let mut base_row_index = 0usize;
+        for &word in self.as_raw_slice().iter().take(row_count.div_ceil(64)) {
+            let remaining_bits = row_count - base_row_index;
+            let mut current = if remaining_bits < 64 { word & ((1u64 << remaining_bits) - 1) } else { word };
+            while current != 0 {
+                f(base_row_index + current.trailing_zeros() as usize)?;
+                current &= current - 1;
+            }
+            base_row_index += 64;
+        }
+        Ok(())
     }
 
     /// Returns true if any valid bit is set, i.e. some row still matches.

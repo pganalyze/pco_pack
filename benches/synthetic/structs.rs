@@ -702,11 +702,22 @@ fn reduce_scenario(
 
     let pco_ms = if enabled("pco_pack") {
         let (ms, map) = min_ms_pair(|| {
-            let compressed = Record::from_bytes(pco_buf).unwrap();
-            let results = Record::filter(&compressed, query.clone(), &["account_id", "score"]).unwrap();
-            assert_eq!(results.len(), expected);
-            assert!(results.iter().all(|r| r.name.is_empty()), "unprojected text stays default");
-            fold_rows(&results.iter().map(|r| (r.account_id, r.score)).collect::<Vec<_>>())
+            let mut acc: std::collections::HashMap<i64, (f64, u64)> = Default::default();
+            let mut n = 0usize;
+            Record::for_each_bytes(
+                pco_buf,
+                query.clone(),
+                &[],
+                pco_pack::fold!(Record, |account_id: i64, score: f64| {
+                    n += 1;
+                    let e = acc.entry(account_id).or_default();
+                    e.0 += score;
+                    e.1 += 1;
+                }),
+            )
+            .unwrap();
+            assert_eq!(n, expected);
+            acc
         });
         assert_eq!(map, truth, "projected reduce");
         ms

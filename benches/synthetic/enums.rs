@@ -284,9 +284,10 @@ pub fn bench() {
     };
 
     // --- Reduce: group the survivors of one variant by key and sum the
-    // payload. PcoPack hydrates the whole stream first (payload enums
-    // carry no field projection, so the filter cannot pre-narrow); the
-    // baselines decode all flat columns for every row. ---
+    // payload. The fold! variant pattern narrows the mask to its declared
+    // variant and pops the named fields straight from that variant's
+    // payload block; the blob column and the other variants' blocks stay
+    // compressed. The baselines decode all flat columns for every row. ---
     let fold_inputs = FoldInputs {
         rt: &rt,
         vortex_session: &vortex_session,
@@ -394,9 +395,9 @@ struct FoldInputs<'a> {
 
 /// Fold Tick rows only: sensor => (sum value, count). Returns
 /// `(pco_pack, columnar, serde_columnar, msgpack, vortex)` milliseconds;
-/// `NaN` (a "-" cell) for codecs whose gate is off. PcoPack hydrates every
-/// row before matching the Tick payload; the baselines decode every flat
-/// column for every row first.
+/// `NaN` (a "-" cell) for codecs whose gate is off. The PcoPack fold pops
+/// `sensor` and `value` straight from the Tick block and never assembles
+/// `Reading`; the baselines decode every flat column for every row first.
 fn reduce_tick(inputs: &FoldInputs) -> (f64, f64, f64, f64, f64) {
     let FoldInputs {
         rt,
@@ -421,22 +422,24 @@ fn reduce_tick(inputs: &FoldInputs) -> (f64, f64, f64, f64, f64) {
 
     let pco_ms = if enabled("pco_pack") {
         let (ms, map) = min_ms_pair(|| {
-            let compressed = Event::from_bytes(pco_buf).unwrap();
-            let rows = Event::filter(&compressed, json!({}), &[]).unwrap();
             let mut acc: std::collections::HashMap<u32, (f64, u64)> = Default::default();
             let mut n = 0usize;
-            for row in rows {
-                if let Event::Tick(r) = row {
+            Event::for_each_bytes(
+                pco_buf,
+                json!({}),
+                &[],
+                pco_pack::fold!(Event, |Tick(Reading { sensor: u32, value: f64 })| {
                     n += 1;
-                    let entry = acc.entry(r.sensor).or_default();
-                    entry.0 += r.value;
+                    let entry = acc.entry(sensor).or_default();
+                    entry.0 += value;
                     entry.1 += 1;
-                }
-            }
+                }),
+            )
+            .unwrap();
             assert_eq!(n, expected);
             acc
         });
-        assert_eq!(map, truth, "hydrated tick reduce");
+        assert_eq!(map, truth, "projected tick reduce");
         ms
     } else {
         f64::NAN
@@ -516,7 +519,8 @@ fn reduce_tick(inputs: &FoldInputs) -> (f64, f64, f64, f64, f64) {
 }
 
 /// Fold Note rows only: author => (sum text length, count). Same codec
-/// order and full-decode baselines as [`reduce_tick`].
+/// order and full-decode baselines as [`reduce_tick`]; the PcoPack fold
+/// pops `author` and `text` from the Note block only.
 fn reduce_note(inputs: &FoldInputs) -> (f64, f64, f64, f64, f64) {
     let FoldInputs {
         rt,
@@ -541,22 +545,24 @@ fn reduce_note(inputs: &FoldInputs) -> (f64, f64, f64, f64, f64) {
 
     let pco_ms = if enabled("pco_pack") {
         let (ms, map) = min_ms_pair(|| {
-            let compressed = Event::from_bytes(pco_buf).unwrap();
-            let rows = Event::filter(&compressed, json!({}), &[]).unwrap();
             let mut acc: std::collections::HashMap<String, (f64, u64)> = Default::default();
             let mut n = 0usize;
-            for row in rows {
-                if let Event::Note(m) = row {
+            Event::for_each_bytes(
+                pco_buf,
+                json!({}),
+                &[],
+                pco_pack::fold!(Event, |Note(Message { author: String, text: String })| {
                     n += 1;
-                    let entry = acc.entry(m.author).or_default();
-                    entry.0 += m.text.len() as f64;
+                    let entry = acc.entry(author).or_default();
+                    entry.0 += text.len() as f64;
                     entry.1 += 1;
-                }
-            }
+                }),
+            )
+            .unwrap();
             assert_eq!(n, expected);
             acc
         });
-        assert_eq!(map, truth, "hydrated note reduce");
+        assert_eq!(map, truth, "projected note reduce");
         ms
     } else {
         f64::NAN

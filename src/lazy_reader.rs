@@ -41,6 +41,14 @@ where
         let reader = self.ensure_decompressed()?;
         Ok(T::validate_bounds(reader)?.unwrap_or(0))
     }
+
+    /// Decompresses if needed and hands out the inner reader. Generated enum fold code
+    /// reads payload slots through it: whole values via `PcoSerde::get`, or a nested
+    /// column view for pattern folds.
+    #[inline]
+    pub fn reader_mut(&mut self) -> anyhow::Result<&mut T::Reader> {
+        self.ensure_decompressed()
+    }
 }
 
 impl<T: PcoSerde + PcoFilter + Default> LazyReader<T>
@@ -49,10 +57,18 @@ where
 {
     #[inline]
     pub fn pop_inner(&mut self, index: usize) -> anyhow::Result<T> {
+        // A column outside the loaded projection carries no bytes; read back `Default`,
+        // matching `filter` for unloaded fields.
+        if self.compressed.is_empty() {
+            return Ok(T::default());
+        }
         let reader = self.ensure_decompressed()?;
         match T::get(reader, index) {
             Ok(Some(v)) => Ok(v),
-            Ok(None) | Err(_) => Ok(T::default()),
+            // Past a column's end is legitimate (schema evolution shortened it); a
+            // decode failure is not, so propagate rather than zero the value.
+            Ok(None) => Ok(T::default()),
+            Err(e) => Err(e),
         }
     }
 

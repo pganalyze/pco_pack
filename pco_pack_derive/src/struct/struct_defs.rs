@@ -1,5 +1,5 @@
 use super::parse::{FieldRole, StructGen};
-use super::type_helpers::is_timeline_type;
+use super::type_helpers::{is_copy_scalar, is_timeline_type};
 use quote::quote;
 
 /// Generate the struct definitions: wrapper (Chunk), group (Group), reader (Reader), and writer (Writer).
@@ -121,6 +121,34 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
     }
 
     let wrapper_doc = format!(" Intermediate compressed form for [{}] with metadata fields", sg.name);
+
+    // Columns view accessors: index fields come from uncompressed chunk metadata, payload
+    // and timestamp fields pop through their LazyReader (same semantics as expand_row).
+    let columns_accessors: Vec<proc_macro2::TokenStream> = sg
+        .field_infos
+        .iter()
+        .map(|fi| {
+            let ident = &fi.ident;
+            let ty = &fi.ty;
+            if fi.role == FieldRole::Index {
+                let read = if is_copy_scalar(&fi.ty) {
+                    quote! { Ok(self.reader.#ident) }
+                } else {
+                    quote! { Ok(self.reader.#ident.clone()) }
+                };
+                quote! {
+                    pub fn #ident(&self, _row: usize) -> pco_pack::anyhow::Result<#ty> { #read }
+                }
+            } else {
+                quote! {
+                    pub fn #ident(&mut self, row: usize) -> pco_pack::anyhow::Result<#ty> {
+                        self.reader.#ident.pop_inner(row)
+                    }
+                }
+            }
+        })
+        .collect();
+
     quote! {
         #[doc = #wrapper_doc]
         /// (index, timestamp bounds) uncompressed and payload columns
@@ -132,5 +160,18 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
         pub struct Reader { #(#reader_fields)* }
         #[derive(Default)]
         pub struct Writer { #(#writer_fields)* }
+
+        /// Typed view over one chunk's decompressed columns, with one accessor per field.
+        /// Fields outside the loaded projection return `Default`, matching `filter` semantics.
+        /// Rows are read in ascending order only, mirroring the forward-only `PcoSerde::get`.
+        /// Chunk bounds (`start_at`/`end_at`) have no accessors; they reach consumers only
+        /// through `hydrate` rows, never through `fold!` projections.
+        pub struct Columns<'a> {
+            reader: &'a mut Reader,
+        }
+
+        impl Columns<'_> {
+            #(#columns_accessors)*
+        }
     }
 }

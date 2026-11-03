@@ -490,13 +490,25 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     drop(string_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
-            let (ms_text, fold_text) = common::bench_pco_pack_projected::<QueryExplainString, _>(
-                &text_bytes,
-                &queries[i],
-                &["query_fingerprint", "runtime_ms"],
-                kf[i].1,
-                |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
-            );
+            let (ms_text, fold_text) = common::min_pass(common::ds_iters(), || {
+                let mut acc: HashMap<i64, (f64, u64)> = HashMap::new();
+                let mut n = 0usize;
+                QueryExplainString::for_each_bytes(
+                    &text_bytes,
+                    queries[i].clone(),
+                    &[],
+                    pco_pack::fold!(QueryExplainString, |query_fingerprint: i64, runtime_ms: f32| {
+                        n += 1;
+                        let e = acc.entry(query_fingerprint).or_default();
+                        e.0 += runtime_ms as f64;
+                        e.1 += 1;
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, kf[i].1, "query_explains (text) reduce count");
+                let avg: HashMap<i64, f64> = acc.into_iter().map(|(fp, (sum, cnt))| (fp, sum / cnt as f64)).collect();
+                avg
+            });
             assert_eq!(fold_text, proj_truths[i], "query_explains (text) projected fold");
             pco_text.project_ms.push(Some(ms_text));
         }
@@ -511,13 +523,21 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     drop(lossy_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
-            let (ms_lossy, _) = common::bench_pco_pack_projected::<QueryExplainLossy, _>(
-                &lossy_bytes,
-                &queries[i],
-                &["query_fingerprint", "runtime_ms"],
-                kf_lossy[i].1,
-                |rows| rows.len(),
-            );
+            let (ms_lossy, n) = common::min_pass(common::ds_iters(), || {
+                let mut n = 0usize;
+                QueryExplainLossy::for_each_bytes(
+                    &lossy_bytes,
+                    queries[i].clone(),
+                    &[],
+                    pco_pack::fold!(QueryExplainLossy, |query_fingerprint: i64, runtime_ms: f32| {
+                        let _ = (query_fingerprint, runtime_ms);
+                        n += 1;
+                    }),
+                )
+                .unwrap();
+                n
+            });
+            assert_eq!(n, kf_lossy[i].1, "query_explains (lossy) reduce count");
             pco_lossy.project_ms.push(Some(ms_lossy));
         }
         drop(lossy_bytes);
@@ -547,13 +567,25 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     drop(arena_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
-            let (ms_arena, fold_arena) = common::bench_pco_pack_projected::<QueryExplainArena, _>(
-                &arena_bytes,
-                &queries[i],
-                &["query_fingerprint", "runtime_ms"],
-                kf[i].1,
-                |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
-            );
+            let (ms_arena, fold_arena) = common::min_pass(common::ds_iters(), || {
+                let mut acc: HashMap<i64, (f64, u64)> = HashMap::new();
+                let mut n = 0usize;
+                QueryExplainArena::for_each_bytes(
+                    &arena_bytes,
+                    queries[i].clone(),
+                    &[],
+                    pco_pack::fold!(QueryExplainArena, |query_fingerprint: i64, runtime_ms: f32| {
+                        n += 1;
+                        let e = acc.entry(query_fingerprint).or_default();
+                        e.0 += runtime_ms as f64;
+                        e.1 += 1;
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, kf[i].1, "query_explains (arena) reduce count");
+                let avg: HashMap<i64, f64> = acc.into_iter().map(|(fp, (sum, cnt))| (fp, sum / cnt as f64)).collect();
+                avg
+            });
             assert_eq!(fold_arena, proj_truths[i], "query_explains (arena) projected fold");
             pco_arena.project_ms.push(Some(ms_arena));
         }
@@ -584,13 +616,21 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     drop(arena_lossy_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
-            let (ms_al, _) = common::bench_pco_pack_projected::<QueryExplainArenaLossy, _>(
-                &arena_lossy_bytes,
-                &queries[i],
-                &["query_fingerprint", "runtime_ms"],
-                kf_lossy[i].1,
-                |rows| rows.len(),
-            );
+            let (ms_al, n) = common::min_pass(common::ds_iters(), || {
+                let mut n = 0usize;
+                QueryExplainArenaLossy::for_each_bytes(
+                    &arena_lossy_bytes,
+                    queries[i].clone(),
+                    &[],
+                    pco_pack::fold!(QueryExplainArenaLossy, |query_fingerprint: i64, runtime_ms: f32| {
+                        let _ = (query_fingerprint, runtime_ms);
+                        n += 1;
+                    }),
+                )
+                .unwrap();
+                n
+            });
+            assert_eq!(n, kf_lossy[i].1, "query_explains (arena lossy) reduce count");
             pco_arena_lossy.project_ms.push(Some(ms_al));
         }
         drop(arena_lossy_bytes);
@@ -755,13 +795,25 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     let (mut pco, pco_bytes) = common::bench_pco_pack_full(&rows, &pco_filters, |_back, _off| {}, || {});
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
-            let (ms_pco, fold_pco) = common::bench_pco_pack_projected::<QueryExplain, _>(
-                &pco_bytes,
-                &queries[i],
-                &["query_fingerprint", "runtime_ms"],
-                kf[i].1,
-                |rows| fold_fp_avg(rows.iter().map(|r| (r.query_fingerprint, r.runtime_ms))),
-            );
+            let (ms_pco, fold_pco) = common::min_pass(common::ds_iters(), || {
+                let mut acc: HashMap<i64, (f64, u64)> = HashMap::new();
+                let mut n = 0usize;
+                QueryExplain::for_each_bytes(
+                    &pco_bytes,
+                    queries[i].clone(),
+                    &[],
+                    pco_pack::fold!(QueryExplain, |query_fingerprint: i64, runtime_ms: f32| {
+                        n += 1;
+                        let e = acc.entry(query_fingerprint).or_default();
+                        e.0 += runtime_ms as f64;
+                        e.1 += 1;
+                    }),
+                )
+                .unwrap();
+                assert_eq!(n, kf[i].1, "query_explains reduce count");
+                let avg: HashMap<i64, f64> = acc.into_iter().map(|(fp, (sum, cnt))| (fp, sum / cnt as f64)).collect();
+                avg
+            });
             assert_eq!(fold_pco, proj_truths[i], "query_explains projected fold");
             pco.project_ms.push(Some(ms_pco));
         }
