@@ -698,7 +698,14 @@ fn file_md5(path: &Path) -> String {
     use md5::Digest;
     let mut file = std::fs::File::open(path).unwrap();
     let mut hasher = md5::Md5::new();
-    std::io::copy(&mut file, &mut hasher).unwrap();
+    let mut buf = vec![0u8; 4 << 20];
+    loop {
+        let n = std::io::Read::read(&mut file, &mut buf).unwrap();
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
     hex::encode(hasher.finalize())
 }
 
