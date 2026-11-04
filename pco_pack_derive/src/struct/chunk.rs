@@ -161,6 +161,17 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
         })
         .collect();
 
+    // Names `fold_into` accepts, mirroring `resolve_fields`' known set (which
+    // gains start_at/end_at only for timestamped structs).
+    let known_field_names: Vec<TokenStream2> = {
+        let mut names = sg.all_struct_field_names.clone();
+        if has_timestamp {
+            names.push(quote! { "start_at" });
+            names.push(quote! { "end_at" });
+        }
+        names
+    };
+
     quote! {
         impl Chunk {
             #compute_row_count_fn
@@ -208,29 +219,96 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
                     }
                 }
                 let mut results = Vec::with_capacity(matches.count_ones());
-                let raw_chunks = matches.as_raw_slice();
-                let mut base_row_index: usize = 0;
-                let total_chunks = row_count.div_ceil(64);
-                for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
-                    if chunk_idx >= total_chunks {
-                        break;
-                    }
-                    let remaining_bits = row_count.saturating_sub(base_row_index);
-                    let masked_chunk = if remaining_bits < 64 {
-                        chunk & ((1u64 << remaining_bits) - 1)
-                    } else {
-                        chunk
-                    };
-                    let mut current_chunk = masked_chunk;
-                    while current_chunk != 0 {
-                        let skip = current_chunk.trailing_zeros() as usize;
-                        let actual_row_index = base_row_index + skip;
-                        results.push(expand_row(&mut reader, actual_row_index)?);
-                        current_chunk &= current_chunk - 1;
-                    }
-                    base_row_index += 64;
-                }
+                matches.for_each_set_row(row_count, |actual_row_index| {
+                    results.push(expand_row(&mut reader, actual_row_index)?);
+                    Ok(())
+                })?;
                 Ok(results)
+            }
+
+            /// Validates a projection: an unloaded payload column reads back as
+            /// `Default`, so an unresolved or misspelled field name must not silently
+            /// become zeroed values.
+            pub fn validate_projection(fields: &[&str]) -> pco_pack::anyhow::Result<()> {
+                let known: &[&str] = &[#(#known_field_names),*];
+                for &field in fields {
+                    if field.contains('.') {
+                        let top = field.split_once('.').map(|(t, _)| t).unwrap_or(field);
+                        return Err(pco_pack::anyhow::anyhow!(
+                            "Nested field path '{field}' is not supported; use '{top}' instead when specifying which fields to load",
+                        ));
+                    }
+                    if !known.contains(&field) {
+                        return Err(pco_pack::anyhow::anyhow!("Unknown field: {}", field));
+                    }
+                }
+                Ok(())
+            }
+
+            /// Streams this chunk's matching rows into a consumer, mirroring `filter`
+            /// but never materializing a row vector or a full row struct. `plan` and
+            /// `fields` are the outputs of `PcoFilter::resolve_query` and
+            /// `PcoPack::resolve_fields`; direct callers use this one-shot path, while
+            /// `for_each` resolves once per stream and reuses scratch buffers via
+            /// `fold_chunk`.
+            pub fn fold_into<C>(
+                &self,
+                plan: &[pco_pack::ResolvedFilter],
+                fields: &[&str],
+                consumer: &mut C,
+            ) -> pco_pack::anyhow::Result<()>
+            where
+                C: pco_pack::Consumer<#name>,
+            {
+                Self::validate_projection(fields)?;
+                let mut order = Vec::new();
+                let mut matches = pco_pack::FilterMask::ones(0);
+                self.fold_chunk(plan, fields, &mut order, &mut matches, consumer)
+            }
+
+            /// Per-chunk streaming body. `order` and `matches` are stream-scope scratch
+            /// reused across chunks: the filter order depends on this chunk's column sizes,
+            /// so it is re-sorted here, but neither needs a fresh allocation.
+            pub fn fold_chunk<C>(
+                &self,
+                plan: &[pco_pack::ResolvedFilter],
+                fields: &[&str],
+                order: &mut Vec<usize>,
+                matches: &mut pco_pack::FilterMask,
+                consumer: &mut C,
+            ) -> pco_pack::anyhow::Result<()>
+            where
+                C: pco_pack::Consumer<#name>,
+            {
+                let mut reader = Reader {
+                    #(#index_copies)*
+                    #bounds_copies
+                    #(#payload_wraps_combined)*
+                };
+                let row_count = Self::compute_row_count(&mut reader, fields)?;
+                // With nothing to filter, every row streams; skip the mask entirely.
+                if plan.is_empty() {
+                    let mut columns = Columns { reader: &mut reader };
+                    for row_index in 0..row_count {
+                        consumer.consume(&mut columns, row_index)?;
+                    }
+                    return Ok(());
+                }
+                matches.reset_ones(row_count);
+                // Run cheap filters (small columns, index fields) before expensive ones.
+                order.clear();
+                order.extend(0..plan.len());
+                let sizes = [#(#size_keys),*];
+                order.sort_by_key(|&i| sizes[plan[i].path[0]]);
+                for &i in order.iter() {
+                    <#name as pco_pack::PcoFilter>::filter_step(&mut reader, &plan[i].path, &plan[i].filter, matches)?;
+                    // Early exit: previous filters invalidated the entire chunk.
+                    if !matches.any_set_in_range(0..row_count) {
+                        return Ok(());
+                    }
+                }
+                let mut columns = Columns { reader: &mut reader };
+                matches.for_each_set_row(row_count, |row| consumer.consume(&mut columns, row))
             }
         }
     }

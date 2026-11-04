@@ -1,5 +1,5 @@
 use super::*;
-use proc_macro2::TokenStream;
+use proc_macro2::{Group, TokenStream, TokenTree};
 use quote::ToTokens;
 use std::fs;
 use std::path::Path;
@@ -37,6 +37,9 @@ fn expand() {
     }
 }
 
+/// Expands a valid-Rust input file the way the compiler would: derive expansions are
+/// appended after their (stripped) item, and `fold!` invocations are replaced in place
+/// with the block the macro emits at that position.
 fn expand_tokens(input_tokens: TokenStream) -> TokenStream {
     let file: syn::File = match syn::parse2(input_tokens.clone()) {
         Ok(v) => v,
@@ -61,9 +64,58 @@ fn expand_tokens(input_tokens: TokenStream) -> TokenStream {
             output.extend(stripped.into_token_stream());
             // Then include the generated derive code
             output.extend(derive_enum_tokens(&item_enum));
+        } else {
+            // Any other item (fn, const, ...) carries through unchanged apart from its
+            // fold! invocations expanding to the blocks the macro would emit there.
+            output.extend(expand_fold_calls(item.into_token_stream()));
         }
     }
     output
+}
+
+/// Rewrites `tokens` the way the compiler would, replacing every `fold!` invocation,
+/// bare or path-qualified, with the macro's expansion, descending into delimited groups
+/// so nested calls inside fn bodies, initializers, and similar positions get expanded.
+fn expand_fold_calls(tokens: TokenStream) -> TokenStream {
+    let tts: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut output: Vec<TokenTree> = Vec::with_capacity(tts.len());
+    let mut i = 0;
+    while i < tts.len() {
+        let is_fold = matches!(&tts[i], TokenTree::Ident(id) if id == "fold")
+            && matches!(tts.get(i + 1), Some(TokenTree::Punct(p)) if p.as_char() == '!')
+            && matches!(tts.get(i + 2), Some(TokenTree::Group(_)));
+        if is_fold {
+            let TokenTree::Group(args) = &tts[i + 2] else { unreachable!("matched above") };
+            // A qualified call carries its path in the already-emitted tokens
+            // (`pco_pack` `::` precede `fold`), and rustc consumes all of it.
+            while output.len() >= 2
+                && matches!(&output[output.len() - 2..],
+                    [TokenTree::Punct(a), TokenTree::Punct(b)] if a.as_char() == ':' && b.as_char() == ':')
+            {
+                output.truncate(output.len() - 2);
+                if matches!(output.last(), Some(TokenTree::Ident(_))) {
+                    output.pop();
+                }
+            }
+            let expansion = match syn::parse2::<fold::FoldInput>(args.stream()).and_then(fold::expand) {
+                Ok(v) => v,
+                Err(e) => return e.to_compile_error(),
+            };
+            // fold::expand emits a single brace block, exactly the token the call site
+            // is replaced with, so splice it in as-is.
+            output.extend(expansion);
+            i += 3;
+        } else if let TokenTree::Group(group) = &tts[i] {
+            let mut rewritten = Group::new(group.delimiter(), expand_fold_calls(group.stream()));
+            rewritten.set_span(group.span());
+            output.push(TokenTree::Group(rewritten));
+            i += 1;
+        } else {
+            output.push(tts[i].clone());
+            i += 1;
+        }
+    }
+    output.into_iter().collect()
 }
 
 fn strip_pco_pack_attrs(attrs: &mut Vec<syn::Attribute>) {
@@ -101,7 +153,10 @@ fn derive_struct_tokens(input: &syn::ItemStruct) -> TokenStream {
 
 fn derive_enum_tokens(input: &syn::ItemEnum) -> TokenStream {
     let name = &input.ident;
-    let attrs = PcoPackAttrs::default();
+    let attrs = match parse_pco_pack_attrs(&input.attrs) {
+        Ok(a) => a,
+        Err(e) => return e.to_compile_error(),
+    };
     if input.variants.is_empty() {
         syn::Error::new_spanned(&input.ident, "PcoPack cannot be derived for empty enums").to_compile_error()
     } else {

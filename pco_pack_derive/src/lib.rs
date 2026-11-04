@@ -1,4 +1,5 @@
 mod r#enum;
+mod fold;
 mod r#struct;
 #[cfg(test)]
 mod test;
@@ -106,6 +107,31 @@ pub fn derive_pco_pack(input: TokenStream) -> TokenStream {
         _ => syn::Error::new_spanned(&input.ident, "PcoPack can only be derived for structs and enums")
             .to_compile_error()
             .into(),
+    }
+}
+
+/// `fold!(Ty, |field_a: u64, field_b: u32| body)` builds a projected row consumer for
+/// `pco_pack::PcoPack::for_each`. Enums instead take variant patterns, e.g.
+/// `fold!(Job, |Tick(Reading { value: f64 })| body)`, which visits only that variant's
+/// rows and pops the named payload fields straight from its block. A scalar payload
+/// binds the whole value with the payload type after the pattern,
+/// `fold!(Job, |Tick(value): u64| body)`; the same form binds a struct payload whole.
+/// Listing several closures folds several variants in one pass: each row dispatches to
+/// the arm that owns its variant. Variant names may be bare (`Tick`) or qualified
+/// (`Job::Tick`). A unit variant, or a payload variant used for membership only, folds
+/// with an empty pattern (`|Idle|`, `|Idle()|`, or `|Job::Idle|`), calling a
+/// zero-argument closure once per matching row.
+///
+/// Patterns are checked at compile time: a variant name absent from `Ty`, a qualified
+/// pattern naming a different type, or a unit pattern given a payload annotation fails
+/// to build, as do mistyped payload field names and binding annotations that disagree
+/// with the payload's `PcoSerde` type.
+#[proc_macro]
+pub fn fold(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as fold::FoldInput);
+    match fold::expand(input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
     }
 }
 

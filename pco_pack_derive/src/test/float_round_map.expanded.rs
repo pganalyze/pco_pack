@@ -28,6 +28,25 @@ const _: () = {
         pub id: Vec<i64>,
         pub metrics: Vec<HashMap<String, f64>>,
     }
+    /// Typed view over one chunk's decompressed columns, with one accessor per field.
+    /// Fields outside the loaded projection return `Default`, matching `filter` semantics.
+    /// Rows are read in ascending order only, mirroring the forward-only `PcoSerde::get`.
+    /// Chunk bounds (`start_at`/`end_at`) have no accessors; they reach consumers only
+    /// through `hydrate` rows, never through `fold!` projections.
+    pub struct Columns<'a> {
+        reader: &'a mut Reader,
+    }
+    impl Columns<'_> {
+        pub fn id(&mut self, row: usize) -> pco_pack::anyhow::Result<i64> {
+            self.reader.id.pop_inner(row)
+        }
+        pub fn metrics(
+            &mut self,
+            row: usize,
+        ) -> pco_pack::anyhow::Result<HashMap<String, f64>> {
+            self.reader.metrics.pop_inner(row)
+        }
+    }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
     #[serde(crate = "pco_pack::serde", deny_unknown_fields)]
@@ -407,6 +426,42 @@ const _: () = {
         type Reader = Reader;
         type Chunk = Chunk;
         type Filter = Filter;
+        type Columns<'a> = Columns<'a>;
+        fn hydrate(
+            columns: &mut Self::Columns<'_>,
+            row: usize,
+        ) -> pco_pack::anyhow::Result<Self> {
+            expand_row(columns.reader, row)
+        }
+        fn columns(
+            reader: &mut <Self as pco_pack::PcoSerde>::Reader,
+        ) -> Self::Columns<'_> {
+            Columns { reader }
+        }
+        fn fold_value<C>(
+            chunks: &[Self::Chunk],
+            query: &pco_pack::serde_json::Value,
+            fields: &[&str],
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Self>,
+        {
+            let mut base: Vec<&str> = fields.to_vec();
+            base.extend_from_slice(<C as pco_pack::Consumer<Self>>::FIELDS);
+            let fields = <MetricRecord as pco_pack::PcoPack>::resolve_fields(
+                query,
+                &base,
+            )?;
+            let plan = <MetricRecord as pco_pack::PcoFilter>::resolve_query(query)?;
+            Self::Chunk::validate_projection(&fields)?;
+            let mut order: Vec<usize> = Vec::new();
+            let mut matches = pco_pack::FilterMask::ones(0);
+            for c in chunks {
+                c.fold_chunk(&plan, &fields, &mut order, &mut matches, consumer)?;
+            }
+            Ok(())
+        }
         fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
             let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
             for (i, _) in data.iter().enumerate() {
@@ -690,29 +745,121 @@ const _: () = {
                 }
             }
             let mut results = Vec::with_capacity(matches.count_ones());
-            let raw_chunks = matches.as_raw_slice();
-            let mut base_row_index: usize = 0;
-            let total_chunks = row_count.div_ceil(64);
-            for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
-                if chunk_idx >= total_chunks {
-                    break;
-                }
-                let remaining_bits = row_count.saturating_sub(base_row_index);
-                let masked_chunk = if remaining_bits < 64 {
-                    chunk & ((1u64 << remaining_bits) - 1)
-                } else {
-                    chunk
-                };
-                let mut current_chunk = masked_chunk;
-                while current_chunk != 0 {
-                    let skip = current_chunk.trailing_zeros() as usize;
-                    let actual_row_index = base_row_index + skip;
-                    results.push(expand_row(&mut reader, actual_row_index)?);
-                    current_chunk &= current_chunk - 1;
-                }
-                base_row_index += 64;
-            }
+            matches
+                .for_each_set_row(
+                    row_count,
+                    |actual_row_index| {
+                        results.push(expand_row(&mut reader, actual_row_index)?);
+                        Ok(())
+                    },
+                )?;
             Ok(results)
+        }
+        /// Validates a projection: an unloaded payload column reads back as
+        /// `Default`, so an unresolved or misspelled field name must not silently
+        /// become zeroed values.
+        pub fn validate_projection(fields: &[&str]) -> pco_pack::anyhow::Result<()> {
+            let known: &[&str] = &["id", "metrics"];
+            for &field in fields {
+                if field.contains('.') {
+                    let top = field.split_once('.').map(|(t, _)| t).unwrap_or(field);
+                    return Err(
+                        pco_pack::anyhow::anyhow!(
+                            "Nested field path '{field}' is not supported; use '{top}' instead when specifying which fields to load",
+                        ),
+                    );
+                }
+                if !known.contains(&field) {
+                    return Err(pco_pack::anyhow::anyhow!("Unknown field: {}", field));
+                }
+            }
+            Ok(())
+        }
+        /// Streams this chunk's matching rows into a consumer, mirroring `filter`
+        /// but never materializing a row vector or a full row struct. `plan` and
+        /// `fields` are the outputs of `PcoFilter::resolve_query` and
+        /// `PcoPack::resolve_fields`; direct callers use this one-shot path, while
+        /// `for_each` resolves once per stream and reuses scratch buffers via
+        /// `fold_chunk`.
+        pub fn fold_into<C>(
+            &self,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<MetricRecord>,
+        {
+            Self::validate_projection(fields)?;
+            let mut order = Vec::new();
+            let mut matches = pco_pack::FilterMask::ones(0);
+            self.fold_chunk(plan, fields, &mut order, &mut matches, consumer)
+        }
+        /// Per-chunk streaming body. `order` and `matches` are stream-scope scratch
+        /// reused across chunks: the filter order depends on this chunk's column sizes,
+        /// so it is re-sorted here, but neither needs a fresh allocation.
+        pub fn fold_chunk<C>(
+            &self,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+            order: &mut Vec<usize>,
+            matches: &mut pco_pack::FilterMask,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<MetricRecord>,
+        {
+            let mut reader = Reader {
+                id: <pco_pack::LazyReader<
+                    i64,
+                >>::new(
+                    if fields.is_empty() || fields.contains(&"id") {
+                        self.id.to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    2u32,
+                    Default::default(),
+                ),
+                metrics: <pco_pack::LazyReader<
+                    HashMap<String, f64>,
+                >>::new(
+                    if fields.is_empty() || fields.contains(&"metrics") {
+                        self.metrics.to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    2u32,
+                    Default::default(),
+                ),
+            };
+            let row_count = Self::compute_row_count(&mut reader, fields)?;
+            if plan.is_empty() {
+                let mut columns = Columns { reader: &mut reader };
+                for row_index in 0..row_count {
+                    consumer.consume(&mut columns, row_index)?;
+                }
+                return Ok(());
+            }
+            matches.reset_ones(row_count);
+            order.clear();
+            order.extend(0..plan.len());
+            let sizes = [self.id.len(), self.metrics.len()];
+            order.sort_by_key(|&i| sizes[plan[i].path[0]]);
+            for &i in order.iter() {
+                <MetricRecord as pco_pack::PcoFilter>::filter_step(
+                    &mut reader,
+                    &plan[i].path,
+                    &plan[i].filter,
+                    matches,
+                )?;
+                if !matches.any_set_in_range(0..row_count) {
+                    return Ok(());
+                }
+            }
+            let mut columns = Columns { reader: &mut reader };
+            matches
+                .for_each_set_row(row_count, |row| consumer.consume(&mut columns, row))
         }
     }
 };
@@ -745,6 +892,25 @@ const _: () = {
     pub struct Writer {
         pub id: Vec<i64>,
         pub metrics: Vec<HashMap<String, (f64, i32)>>,
+    }
+    /// Typed view over one chunk's decompressed columns, with one accessor per field.
+    /// Fields outside the loaded projection return `Default`, matching `filter` semantics.
+    /// Rows are read in ascending order only, mirroring the forward-only `PcoSerde::get`.
+    /// Chunk bounds (`start_at`/`end_at`) have no accessors; they reach consumers only
+    /// through `hydrate` rows, never through `fold!` projections.
+    pub struct Columns<'a> {
+        reader: &'a mut Reader,
+    }
+    impl Columns<'_> {
+        pub fn id(&mut self, row: usize) -> pco_pack::anyhow::Result<i64> {
+            self.reader.id.pop_inner(row)
+        }
+        pub fn metrics(
+            &mut self,
+            row: usize,
+        ) -> pco_pack::anyhow::Result<HashMap<String, (f64, i32)>> {
+            self.reader.metrics.pop_inner(row)
+        }
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -1131,6 +1297,42 @@ const _: () = {
         type Reader = Reader;
         type Chunk = Chunk;
         type Filter = Filter;
+        type Columns<'a> = Columns<'a>;
+        fn hydrate(
+            columns: &mut Self::Columns<'_>,
+            row: usize,
+        ) -> pco_pack::anyhow::Result<Self> {
+            expand_row(columns.reader, row)
+        }
+        fn columns(
+            reader: &mut <Self as pco_pack::PcoSerde>::Reader,
+        ) -> Self::Columns<'_> {
+            Columns { reader }
+        }
+        fn fold_value<C>(
+            chunks: &[Self::Chunk],
+            query: &pco_pack::serde_json::Value,
+            fields: &[&str],
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Self>,
+        {
+            let mut base: Vec<&str> = fields.to_vec();
+            base.extend_from_slice(<C as pco_pack::Consumer<Self>>::FIELDS);
+            let fields = <MapTupleRecord as pco_pack::PcoPack>::resolve_fields(
+                query,
+                &base,
+            )?;
+            let plan = <MapTupleRecord as pco_pack::PcoFilter>::resolve_query(query)?;
+            Self::Chunk::validate_projection(&fields)?;
+            let mut order: Vec<usize> = Vec::new();
+            let mut matches = pco_pack::FilterMask::ones(0);
+            for c in chunks {
+                c.fold_chunk(&plan, &fields, &mut order, &mut matches, consumer)?;
+            }
+            Ok(())
+        }
         fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
             let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
             for (i, _) in data.iter().enumerate() {
@@ -1420,29 +1622,121 @@ const _: () = {
                 }
             }
             let mut results = Vec::with_capacity(matches.count_ones());
-            let raw_chunks = matches.as_raw_slice();
-            let mut base_row_index: usize = 0;
-            let total_chunks = row_count.div_ceil(64);
-            for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
-                if chunk_idx >= total_chunks {
-                    break;
-                }
-                let remaining_bits = row_count.saturating_sub(base_row_index);
-                let masked_chunk = if remaining_bits < 64 {
-                    chunk & ((1u64 << remaining_bits) - 1)
-                } else {
-                    chunk
-                };
-                let mut current_chunk = masked_chunk;
-                while current_chunk != 0 {
-                    let skip = current_chunk.trailing_zeros() as usize;
-                    let actual_row_index = base_row_index + skip;
-                    results.push(expand_row(&mut reader, actual_row_index)?);
-                    current_chunk &= current_chunk - 1;
-                }
-                base_row_index += 64;
-            }
+            matches
+                .for_each_set_row(
+                    row_count,
+                    |actual_row_index| {
+                        results.push(expand_row(&mut reader, actual_row_index)?);
+                        Ok(())
+                    },
+                )?;
             Ok(results)
+        }
+        /// Validates a projection: an unloaded payload column reads back as
+        /// `Default`, so an unresolved or misspelled field name must not silently
+        /// become zeroed values.
+        pub fn validate_projection(fields: &[&str]) -> pco_pack::anyhow::Result<()> {
+            let known: &[&str] = &["id", "metrics"];
+            for &field in fields {
+                if field.contains('.') {
+                    let top = field.split_once('.').map(|(t, _)| t).unwrap_or(field);
+                    return Err(
+                        pco_pack::anyhow::anyhow!(
+                            "Nested field path '{field}' is not supported; use '{top}' instead when specifying which fields to load",
+                        ),
+                    );
+                }
+                if !known.contains(&field) {
+                    return Err(pco_pack::anyhow::anyhow!("Unknown field: {}", field));
+                }
+            }
+            Ok(())
+        }
+        /// Streams this chunk's matching rows into a consumer, mirroring `filter`
+        /// but never materializing a row vector or a full row struct. `plan` and
+        /// `fields` are the outputs of `PcoFilter::resolve_query` and
+        /// `PcoPack::resolve_fields`; direct callers use this one-shot path, while
+        /// `for_each` resolves once per stream and reuses scratch buffers via
+        /// `fold_chunk`.
+        pub fn fold_into<C>(
+            &self,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<MapTupleRecord>,
+        {
+            Self::validate_projection(fields)?;
+            let mut order = Vec::new();
+            let mut matches = pco_pack::FilterMask::ones(0);
+            self.fold_chunk(plan, fields, &mut order, &mut matches, consumer)
+        }
+        /// Per-chunk streaming body. `order` and `matches` are stream-scope scratch
+        /// reused across chunks: the filter order depends on this chunk's column sizes,
+        /// so it is re-sorted here, but neither needs a fresh allocation.
+        pub fn fold_chunk<C>(
+            &self,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+            order: &mut Vec<usize>,
+            matches: &mut pco_pack::FilterMask,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<MapTupleRecord>,
+        {
+            let mut reader = Reader {
+                id: <pco_pack::LazyReader<
+                    i64,
+                >>::new(
+                    if fields.is_empty() || fields.contains(&"id") {
+                        self.id.to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    2u32,
+                    Default::default(),
+                ),
+                metrics: <pco_pack::LazyReader<
+                    HashMap<String, (f64, i32)>,
+                >>::new(
+                    if fields.is_empty() || fields.contains(&"metrics") {
+                        self.metrics.to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    2u32,
+                    Default::default(),
+                ),
+            };
+            let row_count = Self::compute_row_count(&mut reader, fields)?;
+            if plan.is_empty() {
+                let mut columns = Columns { reader: &mut reader };
+                for row_index in 0..row_count {
+                    consumer.consume(&mut columns, row_index)?;
+                }
+                return Ok(());
+            }
+            matches.reset_ones(row_count);
+            order.clear();
+            order.extend(0..plan.len());
+            let sizes = [self.id.len(), self.metrics.len()];
+            order.sort_by_key(|&i| sizes[plan[i].path[0]]);
+            for &i in order.iter() {
+                <MapTupleRecord as pco_pack::PcoFilter>::filter_step(
+                    &mut reader,
+                    &plan[i].path,
+                    &plan[i].filter,
+                    matches,
+                )?;
+                if !matches.any_set_in_range(0..row_count) {
+                    return Ok(());
+                }
+            }
+            let mut columns = Columns { reader: &mut reader };
+            matches
+                .for_each_set_row(row_count, |row| consumer.consume(&mut columns, row))
         }
     }
 };
@@ -1475,6 +1769,25 @@ const _: () = {
     pub struct Writer {
         pub id: Vec<i64>,
         pub metrics: Vec<Option<HashMap<String, (f32, i32)>>>,
+    }
+    /// Typed view over one chunk's decompressed columns, with one accessor per field.
+    /// Fields outside the loaded projection return `Default`, matching `filter` semantics.
+    /// Rows are read in ascending order only, mirroring the forward-only `PcoSerde::get`.
+    /// Chunk bounds (`start_at`/`end_at`) have no accessors; they reach consumers only
+    /// through `hydrate` rows, never through `fold!` projections.
+    pub struct Columns<'a> {
+        reader: &'a mut Reader,
+    }
+    impl Columns<'_> {
+        pub fn id(&mut self, row: usize) -> pco_pack::anyhow::Result<i64> {
+            self.reader.id.pop_inner(row)
+        }
+        pub fn metrics(
+            &mut self,
+            row: usize,
+        ) -> pco_pack::anyhow::Result<Option<HashMap<String, (f32, i32)>>> {
+            self.reader.metrics.pop_inner(row)
+        }
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -1854,6 +2167,44 @@ const _: () = {
         type Reader = Reader;
         type Chunk = Chunk;
         type Filter = Filter;
+        type Columns<'a> = Columns<'a>;
+        fn hydrate(
+            columns: &mut Self::Columns<'_>,
+            row: usize,
+        ) -> pco_pack::anyhow::Result<Self> {
+            expand_row(columns.reader, row)
+        }
+        fn columns(
+            reader: &mut <Self as pco_pack::PcoSerde>::Reader,
+        ) -> Self::Columns<'_> {
+            Columns { reader }
+        }
+        fn fold_value<C>(
+            chunks: &[Self::Chunk],
+            query: &pco_pack::serde_json::Value,
+            fields: &[&str],
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Self>,
+        {
+            let mut base: Vec<&str> = fields.to_vec();
+            base.extend_from_slice(<C as pco_pack::Consumer<Self>>::FIELDS);
+            let fields = <OptionMapTupleRecord as pco_pack::PcoPack>::resolve_fields(
+                query,
+                &base,
+            )?;
+            let plan = <OptionMapTupleRecord as pco_pack::PcoFilter>::resolve_query(
+                query,
+            )?;
+            Self::Chunk::validate_projection(&fields)?;
+            let mut order: Vec<usize> = Vec::new();
+            let mut matches = pco_pack::FilterMask::ones(0);
+            for c in chunks {
+                c.fold_chunk(&plan, &fields, &mut order, &mut matches, consumer)?;
+            }
+            Ok(())
+        }
         fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
             let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
             for (i, _) in data.iter().enumerate() {
@@ -2139,29 +2490,121 @@ const _: () = {
                 }
             }
             let mut results = Vec::with_capacity(matches.count_ones());
-            let raw_chunks = matches.as_raw_slice();
-            let mut base_row_index: usize = 0;
-            let total_chunks = row_count.div_ceil(64);
-            for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
-                if chunk_idx >= total_chunks {
-                    break;
-                }
-                let remaining_bits = row_count.saturating_sub(base_row_index);
-                let masked_chunk = if remaining_bits < 64 {
-                    chunk & ((1u64 << remaining_bits) - 1)
-                } else {
-                    chunk
-                };
-                let mut current_chunk = masked_chunk;
-                while current_chunk != 0 {
-                    let skip = current_chunk.trailing_zeros() as usize;
-                    let actual_row_index = base_row_index + skip;
-                    results.push(expand_row(&mut reader, actual_row_index)?);
-                    current_chunk &= current_chunk - 1;
-                }
-                base_row_index += 64;
-            }
+            matches
+                .for_each_set_row(
+                    row_count,
+                    |actual_row_index| {
+                        results.push(expand_row(&mut reader, actual_row_index)?);
+                        Ok(())
+                    },
+                )?;
             Ok(results)
+        }
+        /// Validates a projection: an unloaded payload column reads back as
+        /// `Default`, so an unresolved or misspelled field name must not silently
+        /// become zeroed values.
+        pub fn validate_projection(fields: &[&str]) -> pco_pack::anyhow::Result<()> {
+            let known: &[&str] = &["id", "metrics"];
+            for &field in fields {
+                if field.contains('.') {
+                    let top = field.split_once('.').map(|(t, _)| t).unwrap_or(field);
+                    return Err(
+                        pco_pack::anyhow::anyhow!(
+                            "Nested field path '{field}' is not supported; use '{top}' instead when specifying which fields to load",
+                        ),
+                    );
+                }
+                if !known.contains(&field) {
+                    return Err(pco_pack::anyhow::anyhow!("Unknown field: {}", field));
+                }
+            }
+            Ok(())
+        }
+        /// Streams this chunk's matching rows into a consumer, mirroring `filter`
+        /// but never materializing a row vector or a full row struct. `plan` and
+        /// `fields` are the outputs of `PcoFilter::resolve_query` and
+        /// `PcoPack::resolve_fields`; direct callers use this one-shot path, while
+        /// `for_each` resolves once per stream and reuses scratch buffers via
+        /// `fold_chunk`.
+        pub fn fold_into<C>(
+            &self,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<OptionMapTupleRecord>,
+        {
+            Self::validate_projection(fields)?;
+            let mut order = Vec::new();
+            let mut matches = pco_pack::FilterMask::ones(0);
+            self.fold_chunk(plan, fields, &mut order, &mut matches, consumer)
+        }
+        /// Per-chunk streaming body. `order` and `matches` are stream-scope scratch
+        /// reused across chunks: the filter order depends on this chunk's column sizes,
+        /// so it is re-sorted here, but neither needs a fresh allocation.
+        pub fn fold_chunk<C>(
+            &self,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+            order: &mut Vec<usize>,
+            matches: &mut pco_pack::FilterMask,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<OptionMapTupleRecord>,
+        {
+            let mut reader = Reader {
+                id: <pco_pack::LazyReader<
+                    i64,
+                >>::new(
+                    if fields.is_empty() || fields.contains(&"id") {
+                        self.id.to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    2u32,
+                    Default::default(),
+                ),
+                metrics: <pco_pack::LazyReader<
+                    Option<HashMap<String, (f32, i32)>>,
+                >>::new(
+                    if fields.is_empty() || fields.contains(&"metrics") {
+                        self.metrics.to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    2u32,
+                    Default::default(),
+                ),
+            };
+            let row_count = Self::compute_row_count(&mut reader, fields)?;
+            if plan.is_empty() {
+                let mut columns = Columns { reader: &mut reader };
+                for row_index in 0..row_count {
+                    consumer.consume(&mut columns, row_index)?;
+                }
+                return Ok(());
+            }
+            matches.reset_ones(row_count);
+            order.clear();
+            order.extend(0..plan.len());
+            let sizes = [self.id.len(), self.metrics.len()];
+            order.sort_by_key(|&i| sizes[plan[i].path[0]]);
+            for &i in order.iter() {
+                <OptionMapTupleRecord as pco_pack::PcoFilter>::filter_step(
+                    &mut reader,
+                    &plan[i].path,
+                    &plan[i].filter,
+                    matches,
+                )?;
+                if !matches.any_set_in_range(0..row_count) {
+                    return Ok(());
+                }
+            }
+            let mut columns = Columns { reader: &mut reader };
+            matches
+                .for_each_set_row(row_count, |row| consumer.consume(&mut columns, row))
         }
     }
 };
@@ -2194,6 +2637,25 @@ const _: () = {
     pub struct Writer {
         pub id: Vec<i64>,
         pub batches: Vec<Vec<HashMap<String, (half::f16, i32)>>>,
+    }
+    /// Typed view over one chunk's decompressed columns, with one accessor per field.
+    /// Fields outside the loaded projection return `Default`, matching `filter` semantics.
+    /// Rows are read in ascending order only, mirroring the forward-only `PcoSerde::get`.
+    /// Chunk bounds (`start_at`/`end_at`) have no accessors; they reach consumers only
+    /// through `hydrate` rows, never through `fold!` projections.
+    pub struct Columns<'a> {
+        reader: &'a mut Reader,
+    }
+    impl Columns<'_> {
+        pub fn id(&mut self, row: usize) -> pco_pack::anyhow::Result<i64> {
+            self.reader.id.pop_inner(row)
+        }
+        pub fn batches(
+            &mut self,
+            row: usize,
+        ) -> pco_pack::anyhow::Result<Vec<HashMap<String, (half::f16, i32)>>> {
+            self.reader.batches.pop_inner(row)
+        }
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -2573,6 +3035,42 @@ const _: () = {
         type Reader = Reader;
         type Chunk = Chunk;
         type Filter = Filter;
+        type Columns<'a> = Columns<'a>;
+        fn hydrate(
+            columns: &mut Self::Columns<'_>,
+            row: usize,
+        ) -> pco_pack::anyhow::Result<Self> {
+            expand_row(columns.reader, row)
+        }
+        fn columns(
+            reader: &mut <Self as pco_pack::PcoSerde>::Reader,
+        ) -> Self::Columns<'_> {
+            Columns { reader }
+        }
+        fn fold_value<C>(
+            chunks: &[Self::Chunk],
+            query: &pco_pack::serde_json::Value,
+            fields: &[&str],
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Self>,
+        {
+            let mut base: Vec<&str> = fields.to_vec();
+            base.extend_from_slice(<C as pco_pack::Consumer<Self>>::FIELDS);
+            let fields = <VecMapTupleRecord as pco_pack::PcoPack>::resolve_fields(
+                query,
+                &base,
+            )?;
+            let plan = <VecMapTupleRecord as pco_pack::PcoFilter>::resolve_query(query)?;
+            Self::Chunk::validate_projection(&fields)?;
+            let mut order: Vec<usize> = Vec::new();
+            let mut matches = pco_pack::FilterMask::ones(0);
+            for c in chunks {
+                c.fold_chunk(&plan, &fields, &mut order, &mut matches, consumer)?;
+            }
+            Ok(())
+        }
         fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
             let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
             for (i, _) in data.iter().enumerate() {
@@ -2858,29 +3356,121 @@ const _: () = {
                 }
             }
             let mut results = Vec::with_capacity(matches.count_ones());
-            let raw_chunks = matches.as_raw_slice();
-            let mut base_row_index: usize = 0;
-            let total_chunks = row_count.div_ceil(64);
-            for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
-                if chunk_idx >= total_chunks {
-                    break;
-                }
-                let remaining_bits = row_count.saturating_sub(base_row_index);
-                let masked_chunk = if remaining_bits < 64 {
-                    chunk & ((1u64 << remaining_bits) - 1)
-                } else {
-                    chunk
-                };
-                let mut current_chunk = masked_chunk;
-                while current_chunk != 0 {
-                    let skip = current_chunk.trailing_zeros() as usize;
-                    let actual_row_index = base_row_index + skip;
-                    results.push(expand_row(&mut reader, actual_row_index)?);
-                    current_chunk &= current_chunk - 1;
-                }
-                base_row_index += 64;
-            }
+            matches
+                .for_each_set_row(
+                    row_count,
+                    |actual_row_index| {
+                        results.push(expand_row(&mut reader, actual_row_index)?);
+                        Ok(())
+                    },
+                )?;
             Ok(results)
+        }
+        /// Validates a projection: an unloaded payload column reads back as
+        /// `Default`, so an unresolved or misspelled field name must not silently
+        /// become zeroed values.
+        pub fn validate_projection(fields: &[&str]) -> pco_pack::anyhow::Result<()> {
+            let known: &[&str] = &["id", "batches"];
+            for &field in fields {
+                if field.contains('.') {
+                    let top = field.split_once('.').map(|(t, _)| t).unwrap_or(field);
+                    return Err(
+                        pco_pack::anyhow::anyhow!(
+                            "Nested field path '{field}' is not supported; use '{top}' instead when specifying which fields to load",
+                        ),
+                    );
+                }
+                if !known.contains(&field) {
+                    return Err(pco_pack::anyhow::anyhow!("Unknown field: {}", field));
+                }
+            }
+            Ok(())
+        }
+        /// Streams this chunk's matching rows into a consumer, mirroring `filter`
+        /// but never materializing a row vector or a full row struct. `plan` and
+        /// `fields` are the outputs of `PcoFilter::resolve_query` and
+        /// `PcoPack::resolve_fields`; direct callers use this one-shot path, while
+        /// `for_each` resolves once per stream and reuses scratch buffers via
+        /// `fold_chunk`.
+        pub fn fold_into<C>(
+            &self,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<VecMapTupleRecord>,
+        {
+            Self::validate_projection(fields)?;
+            let mut order = Vec::new();
+            let mut matches = pco_pack::FilterMask::ones(0);
+            self.fold_chunk(plan, fields, &mut order, &mut matches, consumer)
+        }
+        /// Per-chunk streaming body. `order` and `matches` are stream-scope scratch
+        /// reused across chunks: the filter order depends on this chunk's column sizes,
+        /// so it is re-sorted here, but neither needs a fresh allocation.
+        pub fn fold_chunk<C>(
+            &self,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+            order: &mut Vec<usize>,
+            matches: &mut pco_pack::FilterMask,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<VecMapTupleRecord>,
+        {
+            let mut reader = Reader {
+                id: <pco_pack::LazyReader<
+                    i64,
+                >>::new(
+                    if fields.is_empty() || fields.contains(&"id") {
+                        self.id.to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    2u32,
+                    Default::default(),
+                ),
+                batches: <pco_pack::LazyReader<
+                    Vec<HashMap<String, (half::f16, i32)>>,
+                >>::new(
+                    if fields.is_empty() || fields.contains(&"batches") {
+                        self.batches.to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                    2u32,
+                    Default::default(),
+                ),
+            };
+            let row_count = Self::compute_row_count(&mut reader, fields)?;
+            if plan.is_empty() {
+                let mut columns = Columns { reader: &mut reader };
+                for row_index in 0..row_count {
+                    consumer.consume(&mut columns, row_index)?;
+                }
+                return Ok(());
+            }
+            matches.reset_ones(row_count);
+            order.clear();
+            order.extend(0..plan.len());
+            let sizes = [self.id.len(), self.batches.len()];
+            order.sort_by_key(|&i| sizes[plan[i].path[0]]);
+            for &i in order.iter() {
+                <VecMapTupleRecord as pco_pack::PcoFilter>::filter_step(
+                    &mut reader,
+                    &plan[i].path,
+                    &plan[i].filter,
+                    matches,
+                )?;
+                if !matches.any_set_in_range(0..row_count) {
+                    return Ok(());
+                }
+            }
+            let mut columns = Columns { reader: &mut reader };
+            matches
+                .for_each_set_row(row_count, |row| consumer.consume(&mut columns, row))
         }
     }
 };

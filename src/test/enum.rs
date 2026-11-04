@@ -1,5 +1,5 @@
 use crate as pco_pack;
-use crate::PcoPack;
+use crate::{PcoPack, fold};
 
 #[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 enum Status {
@@ -377,4 +377,209 @@ fn enum_filter_inclusion_non_contiguous() {
     let query = serde_json::json!({"": [1, 3]});
     let result = Priority::filter_bytes(&bytes, query, &[]).unwrap();
     assert_eq!(result, vec![Priority::Medium(10_i32), Priority::Critical(99_i32), Priority::Medium(20_i32)]);
+}
+
+fn priority_data() -> Vec<Priority> {
+    (0..200)
+        .map(|i| match i % 4 {
+            0 => Priority::Low,
+            1 => Priority::Medium(i),
+            2 => Priority::High,
+            _ => Priority::Critical(i * 2),
+        })
+        .collect()
+}
+
+/// A scalar-payload variant folds through an annotated binding: the closure receives
+/// the payload value directly, and the fold streams payload slots without decoding
+/// the discriminant column.
+#[test]
+fn enum_scalar_binding_fold() {
+    let data = priority_data();
+    let chunks = Priority::write(data.clone()).unwrap();
+
+    let mut seen = Vec::new();
+    Priority::for_each(&chunks, serde_json::json!({}), &[], fold!(Priority, |Medium(value): i32| seen.push(value)))
+        .unwrap();
+    let truth: Vec<i32> = data
+        .iter()
+        .filter_map(|p| match p {
+            Priority::Medium(v) => Some(*v),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(seen, truth);
+}
+
+/// A query pinning exactly the folded variant also reaches the slot fast path: the
+/// survivors are that variant's rows, so the discriminant never decodes.
+#[test]
+fn enum_scalar_binding_fold_pinned_query() {
+    let chunks = Priority::write(priority_data()).unwrap();
+
+    let mut fast = Vec::new();
+    Priority::for_each(
+        &chunks,
+        serde_json::json!({"Medium": true}),
+        &[],
+        fold!(Priority, |Medium(value): i32| fast.push(value)),
+    )
+    .unwrap();
+    let mut hydrating: Vec<i32> = Priority::filter(&chunks, serde_json::json!({"Medium": true}), &[])
+        .unwrap()
+        .iter()
+        .map(|p| match p {
+            Priority::Medium(v) => *v,
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    fast.sort();
+    hydrating.sort();
+    assert_eq!(fast, hydrating);
+}
+
+/// A qualified binding spells the same fold as the bare name.
+#[test]
+fn enum_scalar_binding_fold_qualified() {
+    let chunks = Priority::write(priority_data()).unwrap();
+
+    let mut bare = 0i64;
+    Priority::for_each(&chunks, serde_json::json!({}), &[], fold!(Priority, |Medium(value): i32| bare += value as i64))
+        .unwrap();
+    let mut qualified = 0i64;
+    Priority::for_each(
+        &chunks,
+        serde_json::json!({}),
+        &[],
+        fold!(Priority, |Priority::Medium(value): i32| qualified += value as i64),
+    )
+    .unwrap();
+    assert_eq!(bare, qualified);
+    assert!(bare > 0);
+}
+
+/// Scalar bindings mix with unit arms in one multi-arm pass; each payload arm reads
+/// through its own slot cursor, which the debug cross-check ties to its delivered-row
+/// count.
+#[test]
+fn enum_scalar_binding_fold_multi_arm() {
+    let data = priority_data();
+    let chunks = Priority::write(data.clone()).unwrap();
+
+    let mut mediums = Vec::new();
+    let mut criticals = Vec::new();
+    let mut low = 0usize;
+    let mut high = 0usize;
+    Priority::for_each(
+        &chunks,
+        serde_json::json!({}),
+        &[],
+        fold!(
+            Priority,
+            |Medium(value): i32| mediums.push(value),
+            |Low| low += 1,
+            |High| high += 1,
+            |Critical(value): i32| criticals.push(value),
+        ),
+    )
+    .unwrap();
+
+    mediums.sort();
+    criticals.sort();
+    let medium_truth: Vec<i32> = data
+        .iter()
+        .filter_map(|p| match p {
+            Priority::Medium(v) => Some(*v),
+            _ => None,
+        })
+        .collect();
+    let critical_truth: Vec<i32> = data
+        .iter()
+        .filter_map(|p| match p {
+            Priority::Critical(v) => Some(*v),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(mediums, medium_truth);
+    assert_eq!(criticals, critical_truth);
+    assert_eq!(low, data.iter().filter(|p| matches!(p, Priority::Low)).count());
+    assert_eq!(high, data.iter().filter(|p| matches!(p, Priority::High)).count());
+}
+
+/// A binding annotated with the struct payload type hands the closure the whole
+/// payload value instead of selected fields.
+#[test]
+fn enum_whole_payload_binding_fold() {
+    let data: Vec<Event> = (0..60)
+        .map(|i| match i % 3 {
+            0 => Event::Click(Click { x: i, y: -i }),
+            1 => Event::Resize,
+            _ => Event::Unknown,
+        })
+        .collect();
+    let chunks = Event::write(data.clone()).unwrap();
+
+    let mut clicks = Vec::new();
+    Event::for_each(
+        &chunks,
+        serde_json::json!({}),
+        &[],
+        fold!(Event, |Click(click): Click| clicks.push((click.x, click.y))),
+    )
+    .unwrap();
+    let truth: Vec<(i32, i32)> = data
+        .iter()
+        .filter_map(|e| match e {
+            Event::Click(c) => Some((c.x, c.y)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(clicks, truth);
+}
+
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
+enum WideSchema {
+    #[default]
+    Zero,
+    Hidden = 7,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
+enum NarrowSchema {
+    #[default]
+    Zero,
+    One,
+}
+
+/// A discriminant outside the reader's variant table is corruption or an
+/// incompatible schema, and errors instead of hydrating a silent default row.
+#[test]
+fn enum_unknown_discriminant_errors() {
+    let chunks = WideSchema::write(vec![WideSchema::Zero, WideSchema::Hidden]).unwrap();
+    let bytes = WideSchema::to_bytes(&chunks).unwrap();
+    let mismatched = NarrowSchema::from_bytes(&bytes).unwrap();
+
+    let err = NarrowSchema::read(mismatched).unwrap_err().to_string();
+    assert!(err.contains("has no variant with discriminant 7"), "error message: {err}");
+}
+
+/// Block lengths inside an enum chunk are data: a truncated or length-corrupted
+/// chunk must surface as a decode error, never an out-of-range panic.
+#[test]
+fn enum_truncated_chunk_errors() {
+    let data: Vec<Event> = (0..30).map(|i| Event::Click(Click { x: i, y: i })).collect();
+
+    let mut truncated = Event::write(data.clone()).unwrap();
+    let mut raw = std::mem::take(&mut truncated[0]).into_vec();
+    raw.truncate(9);
+    truncated[0] = crate::serde_bytes::ByteBuf::from(raw);
+    let err = Event::filter(&truncated, serde_json::json!({}), &[]).unwrap_err().to_string();
+    assert!(err.contains("enum block"), "error message: {err}");
+
+    let mut huge = Event::write(data).unwrap();
+    let mut raw = std::mem::take(&mut huge[0]).into_vec();
+    raw[..8].fill(0xFF);
+    huge[0] = crate::serde_bytes::ByteBuf::from(raw);
+    let err = Event::filter(&huge, serde_json::json!({}), &[]).unwrap_err().to_string();
+    assert!(err.contains("enum block"), "error message: {err}");
 }

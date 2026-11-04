@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{Fields, Ident, Variant};
 
 use crate::PcoPackAttrs;
@@ -91,6 +91,11 @@ pub fn generate_enum_tokens(
         .map(|v| syn::Ident::new(&format!("variant_{}", v.discriminant), v.ident.span()))
         .collect();
 
+    // Existence markers per variant, referenced by `fold!` patterns for compile-time
+    // validation (emitted after the impls below).
+    let variant_probe_idents: Vec<syn::Ident> =
+        variant_infos.iter().map(|v| syn::Ident::new(&format!("__pco_variant_{}", v.ident), v.ident.span())).collect();
+
     // Payload types as TokenStreams for struct field declarations
     let payload_field_tys_tokens: Vec<proc_macro2::TokenStream> =
         variant_infos.iter().filter_map(|v| v.payload_ty.as_ref().map(|ty| quote!(#ty))).collect();
@@ -117,7 +122,12 @@ pub fn generate_enum_tokens(
         .iter()
         .map(|field_id| {
             let index_name = syn::Ident::new(&format!("{}_index", field_id), field_id.span());
-            quote! { #index_name: usize, }
+            let last_row = syn::Ident::new(&format!("{}_last_row", field_id), field_id.span());
+            quote! {
+                #index_name: usize,
+                #[cfg(debug_assertions)]
+                #last_row: Option<usize>,
+            }
         })
         .collect();
 
@@ -125,9 +135,12 @@ pub fn generate_enum_tokens(
         .iter()
         .map(|field_id| {
             let index_name = syn::Ident::new(&format!("{}_index", field_id), field_id.span());
+            let last_row = syn::Ident::new(&format!("{}_last_row", field_id), field_id.span());
             quote! {
                 #field_id,
                 #index_name: 0,
+                #[cfg(debug_assertions)]
+                #last_row: None,
             }
         })
         .collect();
@@ -157,6 +170,9 @@ pub fn generate_enum_tokens(
         })
         .collect();
 
+    // A discriminant outside the variant table means corruption or an incompatible
+    // schema, never schema evolution: error instead of silently hydrating damaged rows
+    // as the default variant.
     let get_arms: proc_macro2::TokenStream = variant_infos
         .iter()
         .map(|v| {
@@ -244,9 +260,9 @@ pub fn generate_enum_tokens(
         let first = it.next().unwrap();
         quote! { #first #(&& #it)* }
     };
-    // The variant count gates blocks past the first so older schemas with fewer
-    // variants still parse. A single block is always readable, and read_exact has
-    // already consumed the count, so only multi-block readers name it.
+    // The variant count gates blocks past the first, so blobs written by schemas with
+    // fewer variants still parse. read_exact already consumed it, so only multi-block
+    // readers name it.
     let multi_block = non_unit_variants.len() > 1;
     let block_count_decl: proc_macro2::TokenStream = if multi_block {
         quote! { let mut block_count = u64::from_le_bytes(len_buf) as usize; }
@@ -264,17 +280,8 @@ pub fn generate_enum_tokens(
                 let count_tick = multi_block.then(|| quote! { block_count -= 1; });
                 blocks.push(quote! {
                     let #field_id = {
-                        let mut block_buf = [0u8; 8];
-                        <std::io::Cursor<&[u8]> as std::io::Read>::read_exact(src, &mut block_buf)?;
-                        let block_len = u64::from_le_bytes(block_buf) as usize;
-                        if block_len > 0 {
-                            let current_pos = src.position() as usize;
-                            let compressed = src.get_ref()[current_pos..current_pos + block_len].to_vec();
-                            src.set_position((current_pos + block_len) as u64);
-                            pco_pack::LazyReader::new(compressed, float_round, time_round)
-                        } else {
-                            pco_pack::LazyReader::new(Vec::new(), float_round, time_round)
-                        }
+                        let block = pco_enum_block(src)?;
+                        pco_pack::LazyReader::new(block.to_vec(), float_round, time_round)
                     };
                     #count_tick
                 });
@@ -282,17 +289,8 @@ pub fn generate_enum_tokens(
                 blocks.push(quote! {
                     let #field_id = if block_count > 0 {
                         {
-                            let mut block_buf = [0u8; 8];
-                            <std::io::Cursor<&[u8]> as std::io::Read>::read_exact(src, &mut block_buf)?;
-                            let block_len = u64::from_le_bytes(block_buf) as usize;
-                            if block_len > 0 {
-                                let current_pos = src.position() as usize;
-                                let compressed = src.get_ref()[current_pos..current_pos + block_len].to_vec();
-                                src.set_position((current_pos + block_len) as u64);
-                                pco_pack::LazyReader::new(compressed, float_round, time_round)
-                            } else {
-                                pco_pack::LazyReader::new(Vec::new(), float_round, time_round)
-                            }
+                            let block = pco_enum_block(src)?;
+                            pco_pack::LazyReader::new(block.to_vec(), float_round, time_round)
                         }
                     } else {
                         pco_pack::LazyReader::new(Vec::new(), float_round, time_round)
@@ -306,9 +304,130 @@ pub fn generate_enum_tokens(
         }
     };
 
+    // Variant views for enum folds: the engine narrows the mask to the fold's declared
+    // variant, so only that variant's rows reach the consumer and only its block ever
+    // decompresses. The view hands back the lazy block plus the payload slot.
+    let variant_views: Vec<proc_macro2::TokenStream> = non_unit_variants
+        .iter()
+        .map(|v| {
+            let payload_ty = v.payload_ty.as_ref().unwrap();
+            let view_fn = format_ident!("variant_{}", v.ident);
+            let disc = v.discriminant.to_string();
+            let block = format_ident!("variant_{}", disc);
+            let cursor = format_ident!("variant_{}_index", disc);
+            let last_row = format_ident!("variant_{}_last_row", disc);
+            let view_fn_lit = proc_macro2::Literal::string(&v.ident.to_string());
+            let doc = format!(
+                " Payload view for `Self::{}` rows: the variant's lazy block and the payload slot for the current row. ",
+                v.ident
+            );
+            quote! {
+                #[doc = #doc]
+                #[allow(non_snake_case)]
+                pub fn #view_fn(&mut self, row: usize) -> pco_pack::anyhow::Result<(&mut pco_pack::LazyReader<#payload_ty>, usize)> {
+                    let slot = self.reader.#cursor;
+                    self.reader.#cursor += 1;
+                    debug_assert!(
+                        slot <= row,
+                        "variant_{} payload slot {} outruns row {}: every call must follow an ascending walk over this variant's rows",
+                        #view_fn_lit,
+                        slot,
+                        row,
+                    );
+                    #[cfg(debug_assertions)]
+                    {
+                        let last = self.reader.#last_row.replace(row);
+                        debug_assert!(
+                            last.is_none_or(|last| row > last),
+                            "variant_{} payload view called for row {} after row {}: one call per matching row, ascending",
+                            #view_fn_lit,
+                            row,
+                            last.unwrap_or_default(),
+                        );
+                    }
+                    Ok((&mut self.reader.#block, slot))
+                }
+            }
+        })
+        .collect();
+
+    // Variant name to discriminant, so a fold's declared FIELDS can narrow the mask.
+    let variant_disc_arms: proc_macro2::TokenStream = variant_infos
+        .iter()
+        .map(|v| {
+            let lit = syn::LitStr::new(&v.ident.to_string(), v.ident.span());
+            let disc = v.discriminant;
+            quote! { #lit => Some(#disc), }
+        })
+        .collect();
+
+    // Payload variants map their discriminant to their block's slot count, which the
+    // slot-streaming fast path iterates in place of a mask walk.
+    let slot_count_arms: proc_macro2::TokenStream = non_unit_variants
+        .iter()
+        .map(|v| {
+            let disc = v.discriminant;
+            let block = format_ident!("variant_{}", disc.to_string());
+            quote! { Some(#disc) => Some(reader.#block.row_count()?), }
+        })
+        .collect();
+
+    // Debug-only cross-checks that each arm flagged in POPS_PAYLOAD advanced its slot
+    // cursor exactly once per delivered row: against the fast path's slot count, or
+    // against the per-chunk delivered tally. The chains use `if`/`else if` equality
+    // tests so a one-arm match cannot invite clippy's `single_match` in user code.
+    let slot_stream_cursor_arms: proc_macro2::TokenStream = non_unit_variants
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let disc = v.discriminant;
+            let cursor = format_ident!("variant_{}_index", disc.to_string());
+            let name = syn::LitStr::new(&v.ident.to_string(), v.ident.span());
+            let body = quote! {
+                debug_assert_eq!(
+                    reader.#cursor,
+                    slot_count,
+                    "fold arm for variant {} advanced its payload slot cursor {} times for {} streamed slots",
+                    #name, reader.#cursor, slot_count,
+                );
+            };
+            if i == 0 {
+                quote! { if declared[0] == #disc { #body } }
+            } else {
+                quote! { else if declared[0] == #disc { #body } }
+            }
+        })
+        .collect();
+
+    let delivered_cursor_arms: proc_macro2::TokenStream = non_unit_variants
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let disc = v.discriminant;
+            let cursor = format_ident!("variant_{}_index", disc.to_string());
+            let name = syn::LitStr::new(&v.ident.to_string(), v.ident.span());
+            let body = quote! {
+                debug_assert_eq!(
+                    reader.#cursor,
+                    __pco_delivered[__pco_arm],
+                    "fold arm {} for variant {} advanced its payload slot cursor {} times for {} delivered rows",
+                    __pco_arm, #name, reader.#cursor, __pco_delivered[__pco_arm],
+                );
+            };
+            if i == 0 {
+                quote! { if declared[__pco_arm] == #disc { #body } }
+            } else {
+                quote! { else if declared[__pco_arm] == #disc { #body } }
+            }
+        })
+        .collect();
+
     let float_round_attr = attrs.float_round.unwrap_or(0);
     let time_round_attr =
         attrs.time_round.as_ref().map(|expr| quote! { #expr }).unwrap_or(quote! { Default::default() });
+    // Without the attribute the trait's default chunk size applies, so enum writes
+    // flush full chunks exactly like struct writes.
+    let chunk_size_decl = attrs.chunk_size.map(|v| quote! { const CHUNK_SIZE: usize = #v; });
     quote! {
         const _: () = {
             #[allow(unused)]
@@ -325,9 +444,20 @@ pub fn generate_enum_tokens(
             #[doc = concat!("Reader state for ", stringify!(#name), " data.")]
             #[derive(Clone, Default)]
             pub struct Reader {
-                row_variant: pco_pack::NumberReader<i64>,
+                row_variant: pco_pack::LazyReader<i64>,
                 #reader_field_decls
                 #reader_variant_index_decls
+            }
+
+            /// Column view for enum consumers. `hydrate` reconstructs variants via
+            /// `PcoSerde::get`; a `variant_*` view exposes one variant's payload block
+            /// for pattern-`fold!` projections that skip the payload struct entirely.
+            pub struct Columns<'a> {
+                reader: &'a mut Reader,
+            }
+
+            impl Columns<'_> {
+                #(#variant_views)*
             }
 
             impl pco_pack::PcoSerde for #name {
@@ -344,7 +474,12 @@ pub fn generate_enum_tokens(
                         }
                     }
                     let mut out = Vec::new();
-                    out.extend_from_slice(&<i64 as pco_pack::PcoSerde>::write(writer.row_variant.values, float_round, time_round)?);
+                    // Framed like the payload blocks so the reader slices the
+                    // discriminant without decoding it; slot-streaming folds never
+                    // decode it at all.
+                    let disc_block = <i64 as pco_pack::PcoSerde>::write(writer.row_variant.values, float_round, time_round)?;
+                    out.extend_from_slice(&(disc_block.len() as u64).to_le_bytes());
+                    out.extend_from_slice(&disc_block);
                     let non_unit_count: usize = #non_unit_count;
                     out.extend_from_slice(&(non_unit_count as u64).to_le_bytes());
                     #variant_serialize_blocks
@@ -354,7 +489,10 @@ pub fn generate_enum_tokens(
                 fn read(
                     src: &mut std::io::Cursor<&[u8]>, float_round: u32, time_round: pco_pack::chrono::Duration,
                 ) -> pco_pack::anyhow::Result<Self::Reader> {
-                    let row_variant = <i64 as pco_pack::PcoSerde>::read(src, 0, Default::default())?;
+                    let row_variant = {
+                        let block = pco_enum_block(src)?;
+                        pco_pack::LazyReader::new(block.to_vec(), float_round, time_round)
+                    };
                     let mut len_buf = [0u8; 8];
                     <std::io::Cursor<&[u8]> as std::io::Read>::read_exact(src, &mut len_buf)?;
                     #variant_deserialize_blocks
@@ -362,16 +500,46 @@ pub fn generate_enum_tokens(
                 }
 
                 fn validate_bounds(reader: &mut Self::Reader) -> pco_pack::anyhow::Result<Option<usize>> {
-                    Ok(Some(reader.row_variant.values.len()))
+                    Ok(Some(reader.row_variant.row_count()?))
                 }
 
                 fn get(reader: &mut Self::Reader, index: usize) -> pco_pack::anyhow::Result<Option<Self>> {
-                    let discriminant = <i64 as pco_pack::PcoSerde>::get(&mut reader.row_variant, index)?;
+                    let discriminant = <i64 as pco_pack::PcoSerde>::get(reader.row_variant.reader_mut()?, index)?;
                     match discriminant {
                         #get_arms
-                        None | Some(_) => Ok(Some(Self::default())),
+                        None => Ok(None),
+                        Some(other) => Err(pco_pack::anyhow::anyhow!(
+                            "Enum '{}' has no variant with discriminant {}",
+                            stringify!(#name),
+                            other
+                        )),
                     }
                 }
+            }
+
+            /// Slice the next length-prefixed block out of the blob, returning an error
+            /// for truncated or format-mismatched blobs.
+            fn pco_enum_block<'a>(
+                src: &mut std::io::Cursor<&'a [u8]>,
+            ) -> pco_pack::anyhow::Result<&'a [u8]> {
+                let mut len_buf = [0u8; 8];
+                <std::io::Cursor<&[u8]> as std::io::Read>::read_exact(src, &mut len_buf)?;
+                let block_len = u64::from_le_bytes(len_buf) as usize;
+                let start = <std::io::Cursor<&[u8]>>::position(src) as usize;
+                let end = start.checked_add(block_len).ok_or_else(|| {
+                    pco_pack::anyhow::anyhow!("enum block length {} overflows the buffer", block_len)
+                })?;
+                let buf = *src.get_ref();
+                let block = <[u8]>::get(buf, start..end).ok_or_else(|| {
+                    pco_pack::anyhow::anyhow!(
+                        "enum block of {} bytes at offset {} runs past the {}-byte chunk",
+                        block_len,
+                        start,
+                        <[u8]>::len(buf)
+                    )
+                })?;
+                <std::io::Cursor<&[u8]>>::set_position(src, end as u64);
+                Ok(block)
             }
 
             impl pco_pack::PcoFilter for #name {
@@ -381,10 +549,7 @@ pub fn generate_enum_tokens(
                     filter: &pco_pack::Filter,
                     matches: &mut pco_pack::FilterMask,
                 ) -> pco_pack::anyhow::Result<()> {
-                    <i64 as pco_pack::PcoFilter>::filter_bulk(
-                        &mut reader.row_variant, 0, filter, matches,
-                    )?;
-                    Ok(())
+                    reader.row_variant.filter_in_group(filter, matches)
                 }
 
                 fn filter_match(value: &Self, filter: &pco_pack::Filter) -> bool {
@@ -439,22 +604,287 @@ pub fn generate_enum_tokens(
                             filter: pco_pack::Filter::I64(discriminant),
                         });
                     }
-                    Err(pco_pack::anyhow::anyhow!(
-                        "Enum '{}' has no nested fields; cannot resolve path '{}'",
-                        stringify!(#name),
-                        path
-                    ))
+                    // A query key may name a variant directly: `{"Tick": true}` keeps only
+                    // that variant's rows. Payload paths never resolve; enum filtering is
+                    // variant-level, which is what keeps pattern folds' occurrence cursors
+                    // aligned (a mask can only drop whole variants).
+                    if path.contains('.') {
+                        return Err(pco_pack::anyhow::anyhow!(
+                            "Enum '{}' has no nested fields; cannot resolve path '{}'",
+                            stringify!(#name),
+                            path
+                        ));
+                    }
+                    let variant_disc: Option<i64> = match path {
+                        #variant_disc_arms
+                        _ => None,
+                    };
+                    let Some(discriminant) = variant_disc else {
+                        return Err(pco_pack::anyhow::anyhow!(
+                            "Enum '{}' has no variant '{}'; query keys are variant names or the empty discriminant key",
+                            stringify!(#name),
+                            path
+                        ));
+                    };
+                    match json.as_bool() {
+                        Some(true) => Ok(pco_pack::ResolvedFilter {
+                            path: vec![0],
+                            filter: pco_pack::Filter::I64(discriminant),
+                        }),
+                        Some(false) => Err(pco_pack::anyhow::anyhow!(
+                            "Enum '{}' variant '{}' filter must be true; exclude a variant by listing the discriminants to keep under the empty key",
+                            stringify!(#name),
+                            path
+                        )),
+                        None => Err(pco_pack::anyhow::anyhow!(
+                            "Enum '{}' variant '{}' filter must be a boolean, got {}",
+                            stringify!(#name),
+                            path,
+                            pco_pack::json_type_name(json)
+                        )),
+                    }
                 }
             }
 
             impl pco_pack::PcoPack for #name {
+                #chunk_size_decl
+
                 type Reader = <Self as pco_pack::PcoSerde>::Reader;
                 type Chunk = pco_pack::serde_bytes::ByteBuf;
                 type Filter = serde_json::Value;
+                type Columns<'a> = Columns<'a>;
+
+                fn hydrate(columns: &mut Self::Columns<'_>, row: usize) -> pco_pack::anyhow::Result<Self> {
+                    <Self as pco_pack::PcoSerde>::get(columns.reader, row)?
+                        .ok_or_else(|| pco_pack::anyhow::anyhow!("Missing enum variant at index {}", row))
+                }
+
+                fn columns(reader: &mut <Self as pco_pack::PcoSerde>::Reader) -> Self::Columns<'_> {
+                    Columns { reader }
+                }
+
+                fn fold_value<C>(
+                    chunks: &[Self::Chunk],
+                    query: &pco_pack::serde_json::Value,
+                    fields: &[&str],
+                    consumer: &mut C,
+                ) -> pco_pack::anyhow::Result<()>
+                where
+                    C: pco_pack::Consumer<Self>,
+                {
+                    if !fields.is_empty() {
+                        return Err(pco_pack::anyhow::anyhow!(
+                            "Enum '{}' does not support field matches",
+                            stringify!(#name)
+                        ));
+                    }
+                    // A pattern fold declares its variants through FIELDS (one or more
+                    // variant names); hydrating consumers declare nothing. The declared
+                    // set narrows the mask.
+                    let mut declared: Vec<i64> = Vec::new();
+                    for &name in <C as pco_pack::Consumer<Self>>::FIELDS {
+                        let disc: Option<i64> = match name {
+                            #variant_disc_arms
+                            _ => None,
+                        };
+                        let Some(disc) = disc else {
+                            return Err(pco_pack::anyhow::anyhow!(
+                                "Enum '{}' has no variant '{}'",
+                                stringify!(#name),
+                                name
+                            ));
+                        };
+                        declared.push(disc);
+                    }
+                    let execution_plan = <Self as pco_pack::PcoFilter>::resolve_query(query)?;
+                    // With nothing to filter, every row streams; skip the mask entirely.
+                    let stream_all = execution_plan.is_empty() && declared.is_empty();
+                    // Every enum filter tests the discriminant column, so equality and
+                    // inclusion steps together bound exactly which variants survive; a
+                    // range step bounds without enumerating and clears the pin set.
+                    // Serves the fast path and the narrowing check below.
+                    let mut pinned: Option<Vec<i64>> = None;
+                    let mut bounded = true;
+                    for step in &execution_plan {
+                        if !bounded {
+                            break;
+                        }
+                        match &step.filter {
+                            pco_pack::Filter::I64(target) if step.path.first() == Some(&0) => {
+                                pinned = Some(match pinned {
+                                    None => vec![*target],
+                                    Some(cur) => cur.into_iter().filter(|d| d == target).collect(),
+                                });
+                            }
+                            pco_pack::Filter::InclusionI64(targets) if step.path.first() == Some(&0) => {
+                                pinned = Some(match pinned {
+                                    None => targets.iter().copied().collect(),
+                                    Some(cur) => cur.into_iter().filter(|d| targets.contains(d)).collect(),
+                                });
+                            }
+                            _ => bounded = false,
+                        }
+                    }
+                    // Pattern and binding folds over a single payload variant stream
+                    // slots directly - no discriminant decode, row-count validation, or
+                    // mask - whenever no query step can drop a declared row: no steps at
+                    // all, or every step pins exactly that variant. Membership folds
+                    // read no slots and keep the mask path, which counts rows through
+                    // the discriminant without decoding the payload. Unit variants have
+                    // no slots, and a multi-arm fold needs the discriminant to dispatch.
+                    let pops = <C as pco_pack::Consumer<Self>>::POPS_PAYLOAD;
+                    let slot_stream = bounded
+                        && declared.len() == 1
+                        && pops.len() == 1
+                        && pops[0]
+                        && match &pinned {
+                            Some(pins) => pins.as_slice() == declared.as_slice(),
+                            None => execution_plan.is_empty(),
+                        };
+                    // Scratch mask reused across chunks; sized per chunk in the mask path.
+                    let mut matches = pco_pack::FilterMask::ones(0);
+                    'chunks: for chunk in chunks {
+                        if chunk.is_empty() {
+                            continue 'chunks;
+                        }
+                        let mut cursor = std::io::Cursor::new(chunk.as_slice());
+                        let mut reader = <Self as pco_pack::PcoSerde>::read(&mut cursor, #float_round_attr, #time_round_attr)?;
+
+                        if slot_stream {
+                            let slot_count: Option<usize> = match Some(declared[0]) {
+                                #slot_count_arms
+                                _ => None,
+                            };
+                            if let Some(slot_count) = slot_count {
+                                let mut columns = Columns { reader: &mut reader };
+                                for slot in 0..slot_count {
+                                    consumer.consume(&mut columns, slot)?;
+                                }
+                                // `slot_stream` already implies `pops[0]`, so the
+                                // chain needs no extra guard; it matches the single
+                                // declared variant's discriminant and checks its
+                                // cursor against the streamed slot count.
+                                #[cfg(debug_assertions)]
+                                {
+                                    #slot_stream_cursor_arms;
+                                }
+                                continue 'chunks;
+                            }
+                        }
+
+                        // Debug-only tally of rows delivered to each declared arm, so
+                        // the cursor cross-check below can tell a fold that skipped a
+                        // row from one that double-consumed.
+                        #[cfg(debug_assertions)]
+                        let mut __pco_delivered = vec![0usize; declared.len()];
+
+                        let row_count: usize = <Self as pco_pack::PcoSerde>::validate_bounds(&mut reader)
+                            .context("Invalid enum payload")?
+                            .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
+
+                        if stream_all {
+                            let mut columns = Columns { reader: &mut reader };
+                            for row_index in 0..row_count {
+                                consumer.consume(&mut columns, row_index)?;
+                            }
+                            continue 'chunks;
+                        }
+
+                        matches.reset_ones(row_count);
+                        for step in &execution_plan {
+                            <Self as pco_pack::PcoFilter>::filter_step(&mut reader, &step.path, &step.filter, &mut matches)?;
+                            // This chunk contributed no survivors; try the next one.
+                            if !matches.any_set_in_range(0..row_count) {
+                                continue 'chunks;
+                            }
+                        }
+
+                        if !declared.is_empty() {
+                            // The narrowing keeps declared variants' rows. It is
+                            // redundant when the query steps already pin the
+                            // discriminant inside the declared set; the walk then
+                            // touches the column once instead of twice.
+                            let redundant = pinned
+                                .as_ref()
+                                .is_some_and(|pins| bounded && pins.iter().all(|d| declared.contains(d)));
+                            if !redundant {
+                                // Narrow the whole declared set in one pass over the column.
+                                let disc_filter = if declared.len() == 1 {
+                                    pco_pack::Filter::I64(declared[0])
+                                } else {
+                                    pco_pack::Filter::InclusionI64(declared.iter().copied().collect())
+                                };
+                                <Self as pco_pack::PcoFilter>::filter_bulk(&mut reader, 0, &disc_filter, &mut matches)?;
+                                if !matches.any_set_in_range(0..row_count) {
+                                    continue 'chunks;
+                                }
+                            }
+                        }
+                        if declared.len() > 1 {
+                            // Multi-arm fold: every declared variant is already pinned
+                            // into the mask, so each row dispatches to the arm at its
+                            // discriminant's position. The column decodes once and
+                            // lookups are random access, one read per surviving row.
+                            matches.for_each_set_row(row_count, |row_index| {
+                                let disc = <i64 as pco_pack::PcoSerde>::get(reader.row_variant.reader_mut()?, row_index)?
+                                    .ok_or_else(|| pco_pack::anyhow::anyhow!("Missing discriminant at row {}", row_index))?;
+                                let Some(variant) = declared.iter().position(|&d| d == disc) else {
+                                    return Err(pco_pack::anyhow::anyhow!(
+                                        "Row {} carries discriminant {} outside the declared variants",
+                                        row_index,
+                                        disc
+                                    ));
+                                };
+                                #[cfg(debug_assertions)]
+                                {
+                                    __pco_delivered[variant] += 1;
+                                }
+                                let mut columns = Columns { reader: &mut reader };
+                                consumer.consume_variant(&mut columns, row_index, variant)
+                            })?;
+                        } else {
+                            let mut columns = Columns { reader: &mut reader };
+                            matches.for_each_set_row(row_count, |row_index| {
+                                #[cfg(debug_assertions)]
+                                if let Some(n) = __pco_delivered.first_mut() {
+                                    *n += 1;
+                                }
+                                consumer.consume(&mut columns, row_index)
+                            })?;
+                        }
+                        // A payload arm that skipped or repeated its view call misaligns
+                        // every later slot; this is the last place the engine can still
+                        // see the discrepancy.
+                        #[cfg(debug_assertions)]
+                        if !pops.is_empty() {
+                            debug_assert!(
+                                pops.len() == declared.len(),
+                                "Consumer::POPS_PAYLOAD must align with FIELDS"
+                            );
+                            for __pco_arm in 0..pops.len().min(declared.len()) {
+                                if !pops[__pco_arm] {
+                                    continue;
+                                }
+                                #delivered_cursor_arms;
+                            }
+                        }
+                    }
+                    Ok(())
+                }
 
                 fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
-                    let chunk = <Self as pco_pack::PcoSerde>::write(data, #float_round_attr, #time_round_attr)?;
-                    Ok(vec![chunk.into()])
+                    // Chunk like structs: one self-contained block per CHUNK_SIZE rows;
+                    // empty input writes no chunks.
+                    let mut result = Vec::new();
+                    let mut rows = data.into_iter();
+                    while let Some(first) = rows.next() {
+                        let mut piece = Vec::with_capacity(Self::CHUNK_SIZE);
+                        piece.push(first);
+                        piece.extend(rows.by_ref().take(Self::CHUNK_SIZE - 1));
+                        let chunk = <Self as pco_pack::PcoSerde>::write(piece, #float_round_attr, #time_round_attr)?;
+                        result.push(chunk.into());
+                    }
+                    Ok(result)
                 }
 
                 fn read(chunks: Vec<Self::Chunk>) -> pco_pack::anyhow::Result<Vec<Self>> {
@@ -466,8 +896,10 @@ pub fn generate_enum_tokens(
                             .context("Invalid enum payload")?
                             .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
                         for row_idx in 0..row_count {
-                            result.push(<Self as pco_pack::PcoSerde>::get(&mut reader, row_idx)
-                                .context("Unexpected end of data")?
+                            // `get`'s own errors (framing, unknown discriminant) are
+                            // descriptive; a blanket context here would mislabel them
+                            // all as truncation.
+                            result.push(<Self as pco_pack::PcoSerde>::get(&mut reader, row_idx)?
                                 .ok_or_else(|| pco_pack::anyhow::anyhow!("Missing enum variant at index {}", row_idx))?);
                         }
                     }
@@ -485,60 +917,39 @@ pub fn generate_enum_tokens(
                             stringify!(#name)
                         ));
                     }
-                    let all_bytes: Vec<u8> = chunks
-                        .iter()
-                        .flat_map(|b| b.iter().copied())
-                        .collect();
-                    if all_bytes.is_empty() {
-                        return Ok(Vec::new());
-                    }
-                    let mut cursor = std::io::Cursor::new(all_bytes.as_slice());
-                    let mut reader = <Self as pco_pack::PcoSerde>::read(&mut cursor, #float_round_attr, #time_round_attr)?;
-                    let row_count: usize = <Self as pco_pack::PcoSerde>::validate_bounds(&mut reader)
-                        .context("Invalid enum payload")?
-                        .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
-
                     let execution_plan = <Self as pco_pack::PcoFilter>::resolve_query(query)?;
-                    let mut matches = pco_pack::FilterMask::ones(row_count);
-                    for step in &execution_plan {
-                        <Self as pco_pack::PcoFilter>::filter_step(
-                            &mut reader,
-                            &step.path,
-                            &step.filter,
-                            &mut matches,
-                        )?;
-                        // Early exit if no rows match anymore.
-                        if !matches.any_set_in_range(0..row_count) {
-                            return Ok(Vec::new());
+                    let mut result = Vec::new();
+                    'chunks: for chunk in chunks {
+                        if chunk.is_empty() {
+                            continue 'chunks;
                         }
-                    }
+                        let mut cursor = std::io::Cursor::new(chunk.as_slice());
+                        let mut reader = <Self as pco_pack::PcoSerde>::read(&mut cursor, #float_round_attr, #time_round_attr)?;
+                        let row_count: usize = <Self as pco_pack::PcoSerde>::validate_bounds(&mut reader)
+                            .context("Invalid enum payload")?
+                            .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
 
-                    let mut result = Vec::with_capacity(matches.count_ones());
-                    {
-                        let raw_chunks = matches.as_raw_slice();
-                        let mut base_row_index: usize = 0;
-                        let total_chunks = row_count.div_ceil(64);
-                        for (chunk_idx, &chunk) in raw_chunks.iter().enumerate() {
-                            if chunk_idx >= total_chunks {
-                                break;
+                        let mut matches = pco_pack::FilterMask::ones(row_count);
+                        for step in &execution_plan {
+                            <Self as pco_pack::PcoFilter>::filter_step(
+                                &mut reader,
+                                &step.path,
+                                &step.filter,
+                                &mut matches,
+                            )?;
+                            // This chunk contributed no survivors; try the next one.
+                            if !matches.any_set_in_range(0..row_count) {
+                                continue 'chunks;
                             }
-                            let remaining_bits = row_count.saturating_sub(base_row_index);
-                            let masked_chunk = if remaining_bits < 64 {
-                                chunk & ((1u64 << remaining_bits) - 1)
-                            } else {
-                                chunk
-                            };
-                            let mut current_chunk = masked_chunk;
-                            while current_chunk != 0 {
-                                let skip = current_chunk.trailing_zeros() as usize;
-                                let actual_row_index = base_row_index + skip;
-                                result.push(<Self as pco_pack::PcoSerde>::get(&mut reader, actual_row_index)
-                                    .context("Unexpected end of data")?
-                                    .ok_or_else(|| pco_pack::anyhow::anyhow!("Missing enum variant at index {}", actual_row_index))?);
-                                current_chunk &= current_chunk - 1;
-                            }
-                            base_row_index += 64;
                         }
+
+                        let mut chunk_hits = Vec::with_capacity(matches.count_ones());
+                        matches.for_each_set_row(row_count, |actual_row_index| {
+                            chunk_hits.push(<Self as pco_pack::PcoSerde>::get(&mut reader, actual_row_index)?
+                                .ok_or_else(|| pco_pack::anyhow::anyhow!("Missing enum variant at index {}", actual_row_index))?);
+                            Ok(())
+                        })?;
+                        result.extend(chunk_hits);
                     }
                     Ok(result)
                 }
@@ -556,6 +967,18 @@ pub fn generate_enum_tokens(
                 fn resolve_fields(_query: &pco_pack::serde_json::Value, _fields: &[&str]) -> pco_pack::anyhow::Result<Vec<&'static str>> {
                     Ok(Vec::new())
                 }
+            }
+
+            // Existence markers read by `fold!` expansions: naming a variant in a fold
+            // pattern references the matching const, so a misspelled variant is a
+            // compile error instead of a runtime "no variant" failure. They exist only
+            // because the derive ran, doubling as the "derives PcoPack" check.
+            #[allow(non_upper_case_globals)]
+            impl #name {
+                #(
+                    #[doc(hidden)]
+                    pub const #variant_probe_idents: () = ();
+                )*
             }
         };
     }

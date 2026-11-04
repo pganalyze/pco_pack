@@ -130,6 +130,41 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
             type Reader = Reader;
             type Chunk = Chunk;
             type Filter = Filter;
+            type Columns<'a> = Columns<'a>;
+
+            fn hydrate(columns: &mut Self::Columns<'_>, row: usize) -> pco_pack::anyhow::Result<Self> {
+                expand_row(columns.reader, row)
+            }
+
+            fn columns(reader: &mut <Self as pco_pack::PcoSerde>::Reader) -> Self::Columns<'_> {
+                Columns { reader }
+            }
+
+            fn fold_value<C>(
+                chunks: &[Self::Chunk],
+                query: &pco_pack::serde_json::Value,
+                fields: &[&str],
+                consumer: &mut C,
+            ) -> pco_pack::anyhow::Result<()>
+            where
+                C: pco_pack::Consumer<Self>,
+            {
+                // Projection = explicit fields plus the columns the consumer reads; empty
+                // on both means load everything (full hydration path).
+                let mut base: Vec<&str> = fields.to_vec();
+                base.extend_from_slice(<C as pco_pack::Consumer<Self>>::FIELDS);
+                let fields = <#name as pco_pack::PcoPack>::resolve_fields(query, &base)?;
+                let plan = <#name as pco_pack::PcoFilter>::resolve_query(query)?;
+                // Validate once up front even when there are no chunks; the order
+                // buffer and mask are scratch reused per chunk.
+                Self::Chunk::validate_projection(&fields)?;
+                let mut order: Vec<usize> = Vec::new();
+                let mut matches = pco_pack::FilterMask::ones(0);
+                for c in chunks {
+                    c.fold_chunk(&plan, &fields, &mut order, &mut matches, consumer)?;
+                }
+                Ok(())
+            }
 
             fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
                 let mut groups: pco_pack::ahash::HashMap<#group_key_type, Vec<usize>> = Default::default();

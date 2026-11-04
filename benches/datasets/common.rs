@@ -97,23 +97,6 @@ where
     (bench_pco_pack_tail(&blob, serial_ms, data.len(), filters, verify, finish), blob)
 }
 
-/// Filter + projection + reduce runner (PcoPack): `filter_bytes(query, fields)`
-/// materializes only the projected columns (unprojected payloads stay
-/// compressed and never inflate), then the caller folds the survivors into
-/// its aggregate. Returns the reduce output so scenarios assert exact results.
-pub fn bench_pco_pack_projected<T, R>(
-    blob: &[u8], query: &serde_json::Value, fields: &[&str], expected: usize, reduce: impl Fn(&[T]) -> R,
-) -> (f64, R)
-where
-    T: pco_pack::PcoPack + std::fmt::Debug,
-{
-    min_pass(ds_iters(), || {
-        let survivors: Vec<T> = T::filter_bytes(blob, query.clone(), fields).unwrap();
-        assert_eq!(survivors.len(), expected, "projected filter count");
-        reduce(&survivors)
-    })
-}
-
 /// Honest reduce baselines: a codec without a partial-column read path
 /// decodes every projected row and folds the survivors in Rust. Each helper
 /// re-reads the same bytes the size/filter row measured, times decode+fold
