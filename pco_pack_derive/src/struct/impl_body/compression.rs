@@ -33,8 +33,16 @@ impl StructGen {
     }
 
     /// Generate field assignments when building a Chunk from compressed columns.
+    /// `__pco_rows` must be in scope (the staged row count) whenever the struct has
+    /// payload columns; index-only structs answer one deduped row instead.
     pub fn wrapper_assigns(&self) -> Vec<TokenStream2> {
-        let mut assigns: Vec<TokenStream2> = Vec::new();
+        let chunk_size_assign = if self.all_payload().is_empty() {
+            // Index-only chunk: expand collapses every physical row into one answer.
+            quote! { chunk_size: 1, }
+        } else {
+            quote! { chunk_size: __pco_rows as u32, }
+        };
+        let mut assigns: Vec<TokenStream2> = vec![chunk_size_assign];
 
         for (i, fi) in self.index_fields().iter().enumerate() {
             let ident = &fi.ident;

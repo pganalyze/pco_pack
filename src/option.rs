@@ -111,8 +111,8 @@ where
         })
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> Result<Option<usize>> {
-        Ok(Some(reader.total_rows))
+    fn reader_len(reader: &mut Self::Reader) -> Result<usize> {
+        Ok(reader.total_rows)
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>> {

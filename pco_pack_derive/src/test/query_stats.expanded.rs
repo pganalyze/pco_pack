@@ -12,9 +12,19 @@ const _: () = {
     /// Intermediate compressed form for [QueryStat] with metadata fields
     /// (index, timestamp bounds) uncompressed and payload columns
     /// stored as compressed ByteBuf. One instance per logical group.
-    #[derive(pco_pack::serde::Serialize, pco_pack::serde::Deserialize, Default, Clone)]
+    #[derive(
+        pco_pack::serde::Serialize,
+        pco_pack::serde::Deserialize,
+        Default,
+        Clone,
+        PartialEq
+    )]
     #[serde(crate = "pco_pack::serde")]
     pub struct Chunk {
+        /// Actual rows written into this chunk. Unrelated to the `chunk_size` derive
+        /// attribute, which only caps rows per chunk through the `CHUNK_SIZE` constant.
+        #[serde(default)]
+        pub chunk_size: u32,
         pub database_id: i64,
         pub granularity: i32,
         #[serde(with = "pco_pack::chrono::serde::ts_microseconds")]
@@ -271,8 +281,17 @@ const _: () = {
                 } else {
                     (0i64, 0i64)
                 };
+                debug_assert!(
+                    ! indices.is_empty(), "zero-row groups never reach the chunk writer"
+                );
+                let __pco_rows = indices.len();
+                debug_assert!(
+                    __pco_rows <= u32::MAX as usize,
+                    "chunk rows must fit the u32 chunk_size field"
+                );
                 records
                     .push(Chunk {
+                        chunk_size: __pco_rows as u32,
                         database_id: key.0,
                         granularity: key.1,
                         start_at: pco_pack::chrono::DateTime::<
@@ -375,8 +394,17 @@ const _: () = {
                 } else {
                     (0i64, 0i64)
                 };
+                debug_assert!(
+                    ! indices.is_empty(), "zero-row groups never reach the chunk writer"
+                );
+                let __pco_rows = indices.len();
+                debug_assert!(
+                    __pco_rows <= u32::MAX as usize,
+                    "chunk rows must fit the u32 chunk_size field"
+                );
                 records
                     .push(Chunk {
+                        chunk_size: __pco_rows as u32,
                         database_id: key.0,
                         granularity: key.1,
                         start_at: pco_pack::chrono::DateTime::<
@@ -455,10 +483,8 @@ const _: () = {
                 ),
             })
         }
-        fn validate_bounds(
-            reader: &mut Self::Reader,
-        ) -> pco_pack::anyhow::Result<Option<usize>> {
-            row_count(reader).map(Some)
+        fn reader_len(reader: &mut Self::Reader) -> pco_pack::anyhow::Result<usize> {
+            row_count(reader)
         }
         fn get(
             reader: &mut Self::Reader,
@@ -821,7 +847,17 @@ const _: () = {
                     } else {
                         (0i64, 0i64)
                     };
+                    debug_assert!(
+                        ! group_indices.is_empty(),
+                        "zero-row groups never reach the chunk writer"
+                    );
+                    let __pco_rows = group_indices.len();
+                    debug_assert!(
+                        __pco_rows <= u32::MAX as usize,
+                        "chunk rows must fit the u32 chunk_size field"
+                    );
                     let rec = Chunk {
+                        chunk_size: __pco_rows as u32,
                         database_id: key.0,
                         granularity: key.1,
                         start_at: pco_pack::chrono::DateTime::<
@@ -954,16 +990,17 @@ const _: () = {
         fn compute_row_count(
             reader: &mut Reader,
             fields: &[&str],
+            chunk_size: u32,
         ) -> pco_pack::anyhow::Result<usize> {
-            let mut count = 0usize;
-            if count == 0 && fields.contains(&"fingerprint") {
-                let r = reader.fingerprint.row_count();
-                match r {
-                    Ok(n) if n > 0 => count = n,
-                    Err(e) => return Err(e),
-                    _ => {}
-                }
+            let has_loaded_payload = fields.contains(&"collected_at")
+                || fields.contains(&"fingerprint") || false;
+            if !has_loaded_payload && true {
+                return Ok(1);
             }
+            if chunk_size > 0 {
+                return Ok(chunk_size as usize);
+            }
+            let mut count = 0usize;
             if count == 0 && fields.contains(&"collected_at") {
                 let r = reader.collected_at.row_count();
                 match r {
@@ -972,12 +1009,15 @@ const _: () = {
                     _ => {}
                 }
             }
-            let count = count;
-            let has_loaded_payload = fields.contains(&"collected_at")
-                || fields.contains(&"fingerprint") || false;
-            if count == 0 && !has_loaded_payload && true {
-                return Ok(1);
+            if count == 0 && fields.contains(&"fingerprint") {
+                let r = reader.fingerprint.row_count();
+                match r {
+                    Ok(n) if n > 0 => count = n,
+                    Err(e) => return Err(e),
+                    _ => {}
+                }
             }
+            let count = count;
             if count == 0 {
                 return Err(
                     pco_pack::anyhow::anyhow!(
@@ -1002,7 +1042,11 @@ const _: () = {
                 >>::new(self.fingerprint.into_vec(), 0u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["collected_at", "fingerprint"];
-            let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;
+            let row_count = Self::compute_row_count(
+                &mut reader,
+                loaded_fields,
+                self.chunk_size,
+            )?;
             let mut results = Vec::with_capacity(row_count);
             for row_idx in 0..row_count {
                 results.push(expand_row(&mut reader, row_idx)?);
@@ -1050,10 +1094,19 @@ const _: () = {
                     Default::default(),
                 ),
             };
-            let row_count = Self::compute_row_count(&mut reader, &fields)?;
+            let row_count = Self::compute_row_count(
+                &mut reader,
+                &fields,
+                self.chunk_size,
+            )?;
             let mut matches = pco_pack::FilterMask::ones(row_count);
             let mut plan: Vec<usize> = (0..execution_plan.len()).collect();
-            let sizes = [0, 0, self.collected_at.len(), self.fingerprint.len()];
+            let sizes: [usize; 4usize] = [
+                0,
+                0,
+                self.collected_at.len(),
+                self.fingerprint.len(),
+            ];
             plan.sort_by_key(|&i| sizes[execution_plan[i].path[0]]);
             for i in plan {
                 <QueryStat as pco_pack::PcoFilter>::filter_step(
@@ -1166,7 +1219,11 @@ const _: () = {
                     Default::default(),
                 ),
             };
-            let row_count = Self::compute_row_count(&mut reader, fields)?;
+            let row_count = Self::compute_row_count(
+                &mut reader,
+                fields,
+                self.chunk_size,
+            )?;
             if plan.is_empty() {
                 let mut columns = Columns { reader: &mut reader };
                 for row_index in 0..row_count {
@@ -1177,7 +1234,12 @@ const _: () = {
             matches.reset_ones(row_count);
             order.clear();
             order.extend(0..plan.len());
-            let sizes = [0, 0, self.collected_at.len(), self.fingerprint.len()];
+            let sizes: [usize; 4usize] = [
+                0,
+                0,
+                self.collected_at.len(),
+                self.fingerprint.len(),
+            ];
             order.sort_by_key(|&i| sizes[plan[i].path[0]]);
             for &i in order.iter() {
                 <QueryStat as pco_pack::PcoFilter>::filter_step(

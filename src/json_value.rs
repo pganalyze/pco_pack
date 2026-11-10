@@ -230,8 +230,8 @@ impl super::PcoSerde for serde_json::Value {
         ))
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> anyhow::Result<Option<usize>> {
-        Ok(Some(reader.total_rows))
+    fn reader_len(reader: &mut Self::Reader) -> anyhow::Result<usize> {
+        Ok(reader.total_rows)
     }
 
     /// Get an item by index. Scans forward-only through chunks; retains the current deserialized chunk in cache until index advances past that range.

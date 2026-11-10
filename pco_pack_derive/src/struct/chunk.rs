@@ -70,16 +70,21 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
             }
         }
     }
+    // Annotated so the array still type-checks for a field-less struct, where
+    // size_keys is empty and the element type would otherwise be ambiguous.
+    let n_size_keys = sg.field_infos.len();
 
     // Build the compute_row_count helper function body.
-    // Checks payload columns in reverse declaration order (most likely to be populated),
-    // but only if that column was actually loaded. Falls back to 1 if any index field
-    // was requested but no payload data is available (one row per chunk with just index fields).
+    // A query that loads no payload column answers 1 (the chunk's rows share the
+    // chunk's index values, so they collapse to one row). Otherwise the chunk's own
+    // `chunk_size` field answers; chunks written before the field existed decode as
+    // 0 and fall back to the first loaded payload column that decodes non-empty,
+    // probed in declaration order.
     let mut count_checks: TokenStream2 = quote! { 0usize };
 
     // Collect all payload fields first to build a match-based chain instead of nested blocks
     let mut field_checks: Vec<(proc_macro2::Ident, String)> = Vec::new();
-    for fi in sg.all_payload().iter().rev() {
+    for fi in sg.all_payload().iter() {
         let ident = &fi.ident;
         let field_name = ident.to_string();
         field_checks.push((ident.clone(), field_name));
@@ -134,20 +139,43 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
     // those index fields populated.
     let has_index_fields = !sg.index_fields().is_empty();
 
-    let compute_row_count_fn = quote! {
-        fn compute_row_count(reader: &mut Reader, fields: &[&str]) -> pco_pack::anyhow::Result<usize> {
-            #count_checks
-            // Fallback: if no payload columns were decompressed but this struct has
-            // index fields, return 1 (one row per chunk with just the index fields).
-            // This handles queries that only need index fields, e.g. {"device_id": 1}.
-            let has_loaded_payload = #has_loaded_payload_check;
-            if count == 0 && !has_loaded_payload && #has_index_fields {
-                return Ok(1);
+    let compute_row_count_fn = if sg.all_payload().is_empty() {
+        // No payload column can be loaded, so one row answers every query: with index
+        // fields the chunk's rows share them and collapse to one answer, and a
+        // field-less record carries no per-row data to dedupe or lose.
+        quote! {
+            fn compute_row_count(
+                _reader: &mut Reader,
+                _fields: &[&str],
+                _chunk_size: u32,
+            ) -> pco_pack::anyhow::Result<usize> {
+                Ok(1)
             }
-            if count == 0 {
-                return Err(pco_pack::anyhow::anyhow!("Chunk has no row data and no index fields"));
+        }
+    } else {
+        quote! {
+            fn compute_row_count(
+                reader: &mut Reader,
+                fields: &[&str],
+                chunk_size: u32,
+            ) -> pco_pack::anyhow::Result<usize> {
+                // Queries that need only index fields dedupe each chunk to one row,
+                // e.g. {"device_id": 1}; the index values alone answer them.
+                let has_loaded_payload = #has_loaded_payload_check;
+                if !has_loaded_payload && #has_index_fields {
+                    return Ok(1);
+                }
+                if chunk_size > 0 {
+                    return Ok(chunk_size as usize);
+                }
+                // Legacy chunk (written before chunk_size existed): recover the row
+                // count from the loaded columns instead of trusting the chunk.
+                #count_checks
+                if count == 0 {
+                    return Err(pco_pack::anyhow::anyhow!("Chunk has no row data and no index fields"));
+                }
+                Ok(count)
             }
-            Ok(count)
         }
     };
 
@@ -184,7 +212,7 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
                     #(#payload_wraps)*
                 };
                 let loaded_fields: &[&str] = &[#(#all_field_names),*];
-                let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;
+                let row_count = Self::compute_row_count(&mut reader, loaded_fields, self.chunk_size)?;
                 let mut results = Vec::with_capacity(row_count);
                 for row_idx in 0..row_count {
                     results.push(expand_row(&mut reader, row_idx)?);
@@ -205,11 +233,11 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
                     #bounds_copies
                     #(#payload_wraps_combined)*
                 };
-                let row_count = Self::compute_row_count(&mut reader, &fields)?;
+                let row_count = Self::compute_row_count(&mut reader, &fields, self.chunk_size)?;
                 let mut matches = pco_pack::FilterMask::ones(row_count);
                 // Run cheap filters (small columns, index fields) before expensive ones.
                 let mut plan: Vec<usize> = (0..execution_plan.len()).collect();
-                let sizes = [#(#size_keys),*];
+                let sizes: [usize; #n_size_keys] = [#(#size_keys),*];
                 plan.sort_by_key(|&i| sizes[execution_plan[i].path[0]]);
                 for i in plan {
                     <#name as pco_pack::PcoFilter>::filter_step(&mut reader, &execution_plan[i].path, &execution_plan[i].filter, &mut matches)?;
@@ -285,7 +313,7 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
                     #bounds_copies
                     #(#payload_wraps_combined)*
                 };
-                let row_count = Self::compute_row_count(&mut reader, fields)?;
+                let row_count = Self::compute_row_count(&mut reader, fields, self.chunk_size)?;
                 // With nothing to filter, every row streams; skip the mask entirely.
                 if plan.is_empty() {
                     let mut columns = Columns { reader: &mut reader };
@@ -298,7 +326,7 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
                 // Run cheap filters (small columns, index fields) before expensive ones.
                 order.clear();
                 order.extend(0..plan.len());
-                let sizes = [#(#size_keys),*];
+                let sizes: [usize; #n_size_keys] = [#(#size_keys),*];
                 order.sort_by_key(|&i| sizes[plan[i].path[0]]);
                 for &i in order.iter() {
                     <#name as pco_pack::PcoFilter>::filter_step(&mut reader, &plan[i].path, &plan[i].filter, matches)?;

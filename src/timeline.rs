@@ -306,8 +306,8 @@ impl PcoSerde for Timeline {
         Vec::<(i64, i64)>::read(src, float_round, time_round)
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> Result<Option<usize>> {
-        Ok(Some(reader.lengths.len()))
+    fn reader_len(reader: &mut Self::Reader) -> Result<usize> {
+        Ok(reader.lengths.len())
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>> {

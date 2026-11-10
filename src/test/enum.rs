@@ -563,23 +563,27 @@ fn enum_unknown_discriminant_errors() {
     assert!(err.contains("has no variant with discriminant 7"), "error message: {err}");
 }
 
-/// Block lengths inside an enum chunk are data: a truncated or length-corrupted
-/// chunk must surface as a decode error, never an out-of-range panic.
+/// An enum column nested inside a struct rides the length-framed blob format;
+/// a truncated or length-corrupted blob must surface as a decode error, never
+/// an out-of-range panic.
 #[test]
-fn enum_truncated_chunk_errors() {
+fn enum_truncated_nested_blob_errors() {
+    fn nested_read_err(blob: &[u8]) -> String {
+        match <Event as crate::PcoSerde>::read(&mut std::io::Cursor::new(blob), 0, chrono::Duration::zero()) {
+            Ok(_) => panic!("corrupt enum blob must not read"),
+            Err(e) => e.to_string(),
+        }
+    }
+
     let data: Vec<Event> = (0..30).map(|i| Event::Click(Click { x: i, y: i })).collect();
 
-    let mut truncated = Event::write(data.clone()).unwrap();
-    let mut raw = std::mem::take(&mut truncated[0]).into_vec();
-    raw.truncate(9);
-    truncated[0] = crate::serde_bytes::ByteBuf::from(raw);
-    let err = Event::filter(&truncated, serde_json::json!({}), &[]).unwrap_err().to_string();
+    let mut truncated = <Event as crate::PcoSerde>::write(data.clone(), 0, chrono::Duration::zero()).unwrap();
+    truncated.truncate(9);
+    let err = nested_read_err(&truncated);
     assert!(err.contains("enum block"), "error message: {err}");
 
-    let mut huge = Event::write(data).unwrap();
-    let mut raw = std::mem::take(&mut huge[0]).into_vec();
-    raw[..8].fill(0xFF);
-    huge[0] = crate::serde_bytes::ByteBuf::from(raw);
-    let err = Event::filter(&huge, serde_json::json!({}), &[]).unwrap_err().to_string();
+    let mut huge = <Event as crate::PcoSerde>::write(data, 0, chrono::Duration::zero()).unwrap();
+    huge[..8].fill(0xFF);
+    let err = nested_read_err(&huge);
     assert!(err.contains("enum block"), "error message: {err}");
 }

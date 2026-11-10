@@ -32,7 +32,7 @@ fn bool_backward_compat_roundtrip() {
     let pco_buf = serialize_bool_pco_u16(data.clone());
     let mut cursor = std::io::Cursor::new(&pco_buf[..]);
     let mut de_columns = bool::read(&mut cursor, 0, chrono::Duration::zero()).unwrap();
-    let row_count = bool::validate_bounds(&mut de_columns).unwrap().unwrap();
+    let row_count = bool::reader_len(&mut de_columns).unwrap();
     assert_eq!(row_count, data.len());
     for (row_idx, &expected) in data.iter().enumerate() {
         let val = bool::get(&mut de_columns, row_idx).unwrap().unwrap();

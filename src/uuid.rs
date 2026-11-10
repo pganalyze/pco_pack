@@ -31,8 +31,8 @@ impl PcoSerde for Uuid {
         Ok(UuidReader { values: uuids.into() })
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> anyhow::Result<Option<usize>> {
-        Ok(Some(reader.values.len()))
+    fn reader_len(reader: &mut Self::Reader) -> anyhow::Result<usize> {
+        Ok(reader.values.len())
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> anyhow::Result<Option<Self>> {

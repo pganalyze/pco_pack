@@ -153,7 +153,7 @@ pub fn generate_enum_tokens(
 
             if v.is_unit {
                 quote! {
-                    Self::#variant_ident => {
+                    #name::#variant_ident => {
                         writer.row_variant.values.push(#discriminant);
                     }
                 }
@@ -161,7 +161,7 @@ pub fn generate_enum_tokens(
                 let payload_field = syn::Ident::new(&format!("variant_{}", discriminant), v.ident.span());
                 _ = v.payload_ty.as_ref();
                 quote! {
-                    Self::#variant_ident(inner) => {
+                    #name::#variant_ident(inner) => {
                         writer.row_variant.values.push(#discriminant);
                         writer.#payload_field.push(inner);
                     }
@@ -223,25 +223,86 @@ pub fn generate_enum_tokens(
         })
         .collect();
 
-    let variant_serialize_blocks: proc_macro2::TokenStream = variant_infos
+    let non_unit_variants: Vec<_> = variant_infos.iter().filter(|v| !v.is_unit).collect();
+
+    let float_round_attr = attrs.float_round.unwrap_or(0);
+    let time_round_attr =
+        attrs.time_round.as_ref().map(|expr| quote! { #expr }).unwrap_or(quote! { Default::default() });
+
+    // Chunk fields, per-column staging, and the framing that rebuilds the legacy
+    // nested-blob layout from a Chunk. Each block holds the same compressed bytes the
+    // blob framed, minus the [u64 len] prefixes.
+    let chunk_variant_fields: Vec<proc_macro2::TokenStream> = non_unit_variants
         .iter()
-        .filter(|v| !v.is_unit)
+        .map(|v| {
+            let field_id = syn::Ident::new(&format!("variant_{}", v.discriminant), v.ident.span());
+            quote! { #[serde(default)] pub #field_id: pco_pack::serde_bytes::ByteBuf, }
+        })
+        .collect();
+    let variant_block_stages: Vec<proc_macro2::TokenStream> = non_unit_variants
+        .iter()
         .map(|v| {
             let field_id = syn::Ident::new(&format!("variant_{}", v.discriminant), v.ident.span());
             let payload_ty = v.payload_ty.as_ref().unwrap();
             quote! {
-                if !writer.#field_id.is_empty() {
-                    let compressed = <#payload_ty as pco_pack::PcoSerde>::write(writer.#field_id, float_round, time_round)?;
-                    out.extend_from_slice(&(compressed.len() as u64).to_le_bytes());
-                    out.extend_from_slice(&compressed);
+                let #field_id = if !writer.#field_id.is_empty() {
+                    <#payload_ty as pco_pack::PcoSerde>::write(writer.#field_id, float_round, time_round)?
                 } else {
-                    out.extend_from_slice(&(0u64).to_le_bytes());
-                }
+                    Vec::new()
+                };
             }
         })
         .collect();
-
-    let non_unit_variants: Vec<_> = variant_infos.iter().filter(|v| !v.is_unit).collect();
+    let chunk_variant_assigns: Vec<proc_macro2::TokenStream> = non_unit_variants
+        .iter()
+        .map(|v| {
+            let field_id = syn::Ident::new(&format!("variant_{}", v.discriminant), v.ident.span());
+            quote! { #field_id: #field_id.into(), }
+        })
+        .collect();
+    let framing_blocks: Vec<proc_macro2::TokenStream> = non_unit_variants
+        .iter()
+        .map(|v| {
+            let field_id = syn::Ident::new(&format!("variant_{}", v.discriminant), v.ident.span());
+            quote! {
+                let block = chunk.#field_id.into_vec();
+                out.extend_from_slice(&(block.len() as u64).to_le_bytes());
+                out.extend_from_slice(&block);
+            }
+        })
+        .collect();
+    // Rebuild the lazy Reader straight from Chunk fields; owned takes the bytes out
+    // of the chunk, borrowed copies them out of a reference.
+    let reader_inits = |copy: bool| -> Vec<proc_macro2::TokenStream> {
+        non_unit_variants
+            .iter()
+            .map(|v| {
+                let field_id = syn::Ident::new(&format!("variant_{}", v.discriminant), v.ident.span());
+                let take = if copy {
+                    quote! { chunk.#field_id.to_vec() }
+                } else {
+                    quote! { chunk.#field_id.into_vec() }
+                };
+                quote! {
+                    let #field_id =
+                        pco_pack::LazyReader::new(#take, #float_round_attr, #time_round_attr);
+                }
+            })
+            .collect()
+    };
+    let reader_init_owned = reader_inits(false);
+    let reader_init_borrowed = reader_inits(true);
+    let row_variant_init_owned = quote! { let row_variant = pco_pack::LazyReader::new(chunk.row_variant.into_vec(), #float_round_attr, #time_round_attr); };
+    let row_variant_init_borrowed = quote! { let row_variant = pco_pack::LazyReader::new(chunk.row_variant.to_vec(), #float_round_attr, #time_round_attr); };
+    // A legacy chunk (chunk_size 0) inflates the lazy discriminant reader to count;
+    // a written chunk answers from its own field without touching any column.
+    let row_count_from_chunk = quote! {
+        let row_count = if chunk.chunk_size > 0 {
+            chunk.chunk_size as usize
+        } else {
+            <Self as pco_pack::PcoSerde>::reader_len(&mut reader).context("Invalid enum payload")?
+        };
+    };
     // Cheap only when every variant payload is. Repeated payload types
     // collapse to one term (clippy's eq_op rejects duplicates).
     let mut cheap_seen = std::collections::HashSet::new();
@@ -422,9 +483,6 @@ pub fn generate_enum_tokens(
         })
         .collect();
 
-    let float_round_attr = attrs.float_round.unwrap_or(0);
-    let time_round_attr =
-        attrs.time_round.as_ref().map(|expr| quote! { #expr }).unwrap_or(quote! { Default::default() });
     // Without the attribute the trait's default chunk size applies, so enum writes
     // flush full chunks exactly like struct writes.
     let chunk_size_decl = attrs.chunk_size.map(|v| quote! { const CHUNK_SIZE: usize = #v; });
@@ -460,6 +518,20 @@ pub fn generate_enum_tokens(
                 #(#variant_views)*
             }
 
+            #[doc = concat!(" Chunk payload for ", stringify!(#name), ": rows written plus one compressed column block per payload variant.")]
+            #[derive(pco_pack::serde::Serialize, pco_pack::serde::Deserialize, Clone, PartialEq, Debug)]
+            #[serde(crate = "pco_pack::serde")]
+            pub struct Chunk {
+                /// Actual rows written into this chunk. Unrelated to the `chunk_size` derive
+                /// attribute, which only caps rows per chunk through the `CHUNK_SIZE` constant.
+                #[serde(default)]
+                pub chunk_size: u32,
+                /// Compressed discriminant column.
+                #[serde(default)]
+                pub row_variant: pco_pack::serde_bytes::ByteBuf,
+                #(#chunk_variant_fields)*
+            }
+
             impl pco_pack::PcoSerde for #name {
                 type Writer = Writer;
                 type Reader = Reader;
@@ -467,22 +539,17 @@ pub fn generate_enum_tokens(
                 const CHEAP_TO_CLONE: bool = #cheap_to_clone;
 
                 fn write(data: Vec<Self>, float_round: u32, time_round: pco_pack::chrono::Duration) -> pco_pack::anyhow::Result<Vec<u8>> {
-                    let mut writer = Writer::default();
-                    for item in data {
-                        match item {
-                            #serialize_arms
-                        }
-                    }
+                    let chunk = pco_enum_chunk(data, float_round, time_round)?;
                     let mut out = Vec::new();
                     // Framed like the payload blocks so the reader slices the
                     // discriminant without decoding it; slot-streaming folds never
                     // decode it at all.
-                    let disc_block = <i64 as pco_pack::PcoSerde>::write(writer.row_variant.values, float_round, time_round)?;
+                    let disc_block = chunk.row_variant.into_vec();
                     out.extend_from_slice(&(disc_block.len() as u64).to_le_bytes());
                     out.extend_from_slice(&disc_block);
                     let non_unit_count: usize = #non_unit_count;
                     out.extend_from_slice(&(non_unit_count as u64).to_le_bytes());
-                    #variant_serialize_blocks
+                    #(#framing_blocks)*
                     Ok(out)
                 }
 
@@ -499,8 +566,8 @@ pub fn generate_enum_tokens(
                     Ok(Reader { row_variant, #field_names_only })
                 }
 
-                fn validate_bounds(reader: &mut Self::Reader) -> pco_pack::anyhow::Result<Option<usize>> {
-                    Ok(Some(reader.row_variant.row_count()?))
+                fn reader_len(reader: &mut Self::Reader) -> pco_pack::anyhow::Result<usize> {
+                    reader.row_variant.row_count()
                 }
 
                 fn get(reader: &mut Self::Reader, index: usize) -> pco_pack::anyhow::Result<Option<Self>> {
@@ -515,6 +582,31 @@ pub fn generate_enum_tokens(
                         )),
                     }
                 }
+            }
+
+            /// Stage rows into the per-variant columns and compress them into a Chunk.
+            /// Shared by the nested-blob writer and the PcoPack chunk writer.
+            fn pco_enum_chunk(
+                data: Vec<#name>,
+                float_round: u32,
+                time_round: pco_pack::chrono::Duration,
+            ) -> pco_pack::anyhow::Result<Chunk> {
+                let mut writer = Writer::default();
+                for item in data {
+                    match item {
+                        #serialize_arms
+                    }
+                }
+                let __pco_rows = writer.row_variant.values.len();
+                debug_assert!(__pco_rows <= u32::MAX as usize, "chunk rows must fit the u32 chunk_size field");
+                let row_variant =
+                    <i64 as pco_pack::PcoSerde>::write(writer.row_variant.values, float_round, time_round)?;
+                #(#variant_block_stages)*
+                Ok(Chunk {
+                    chunk_size: __pco_rows as u32,
+                    row_variant: row_variant.into(),
+                    #(#chunk_variant_assigns)*
+                })
             }
 
             /// Slice the next length-prefixed block out of the blob, returning an error
@@ -650,7 +742,7 @@ pub fn generate_enum_tokens(
                 #chunk_size_decl
 
                 type Reader = <Self as pco_pack::PcoSerde>::Reader;
-                type Chunk = pco_pack::serde_bytes::ByteBuf;
+                type Chunk = Chunk;
                 type Filter = serde_json::Value;
                 type Columns<'a> = Columns<'a>;
 
@@ -744,11 +836,9 @@ pub fn generate_enum_tokens(
                     // Scratch mask reused across chunks; sized per chunk in the mask path.
                     let mut matches = pco_pack::FilterMask::ones(0);
                     'chunks: for chunk in chunks {
-                        if chunk.is_empty() {
-                            continue 'chunks;
-                        }
-                        let mut cursor = std::io::Cursor::new(chunk.as_slice());
-                        let mut reader = <Self as pco_pack::PcoSerde>::read(&mut cursor, #float_round_attr, #time_round_attr)?;
+                        #row_variant_init_borrowed
+                        #(#reader_init_borrowed)*
+                        let mut reader = Reader { row_variant, #field_names_only };
 
                         if slot_stream {
                             let slot_count: Option<usize> = match Some(declared[0]) {
@@ -778,9 +868,7 @@ pub fn generate_enum_tokens(
                         #[cfg(debug_assertions)]
                         let mut __pco_delivered = vec![0usize; declared.len()];
 
-                        let row_count: usize = <Self as pco_pack::PcoSerde>::validate_bounds(&mut reader)
-                            .context("Invalid enum payload")?
-                            .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
+                        #row_count_from_chunk
 
                         if stream_all {
                             let mut columns = Columns { reader: &mut reader };
@@ -881,8 +969,8 @@ pub fn generate_enum_tokens(
                         let mut piece = Vec::with_capacity(Self::CHUNK_SIZE);
                         piece.push(first);
                         piece.extend(rows.by_ref().take(Self::CHUNK_SIZE - 1));
-                        let chunk = <Self as pco_pack::PcoSerde>::write(piece, #float_round_attr, #time_round_attr)?;
-                        result.push(chunk.into());
+                        debug_assert!(!piece.is_empty(), "zero-row pieces never reach the chunk writer");
+                        result.push(pco_enum_chunk(piece, #float_round_attr, #time_round_attr)?);
                     }
                     Ok(result)
                 }
@@ -890,11 +978,10 @@ pub fn generate_enum_tokens(
                 fn read(chunks: Vec<Self::Chunk>) -> pco_pack::anyhow::Result<Vec<Self>> {
                     let mut result = Vec::new();
                     for chunk in chunks {
-                        let mut cursor = std::io::Cursor::new(chunk.as_slice());
-                        let mut reader = <Self as pco_pack::PcoSerde>::read(&mut cursor, #float_round_attr, #time_round_attr)?;
-                        let row_count = <Self as pco_pack::PcoSerde>::validate_bounds(&mut reader)
-                            .context("Invalid enum payload")?
-                            .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
+                        #row_variant_init_owned
+                        #(#reader_init_owned)*
+                        let mut reader = Reader { row_variant, #field_names_only };
+                        #row_count_from_chunk
                         for row_idx in 0..row_count {
                             // `get`'s own errors (framing, unknown discriminant) are
                             // descriptive; a blanket context here would mislabel them
@@ -920,14 +1007,10 @@ pub fn generate_enum_tokens(
                     let execution_plan = <Self as pco_pack::PcoFilter>::resolve_query(query)?;
                     let mut result = Vec::new();
                     'chunks: for chunk in chunks {
-                        if chunk.is_empty() {
-                            continue 'chunks;
-                        }
-                        let mut cursor = std::io::Cursor::new(chunk.as_slice());
-                        let mut reader = <Self as pco_pack::PcoSerde>::read(&mut cursor, #float_round_attr, #time_round_attr)?;
-                        let row_count: usize = <Self as pco_pack::PcoSerde>::validate_bounds(&mut reader)
-                            .context("Invalid enum payload")?
-                            .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
+                        #row_variant_init_borrowed
+                        #(#reader_init_borrowed)*
+                        let mut reader = Reader { row_variant, #field_names_only };
+                        #row_count_from_chunk
 
                         let mut matches = pco_pack::FilterMask::ones(row_count);
                         for step in &execution_plan {

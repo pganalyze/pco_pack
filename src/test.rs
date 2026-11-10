@@ -5,6 +5,7 @@
 mod bool;
 mod bool_range_filter;
 mod bytes;
+mod chunk_row_count;
 mod collection_coercion;
 mod datetime;
 mod r#enum;

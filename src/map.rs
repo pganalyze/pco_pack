@@ -145,8 +145,8 @@ where
         Ok(MapReader { keys, values, entry_counts, count_index: 0, cached_offset: 0 })
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> Result<Option<usize>> {
-        Ok(Some(reader.entry_counts.len()))
+    fn reader_len(reader: &mut Self::Reader) -> Result<usize> {
+        Ok(reader.entry_counts.len())
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>> {
@@ -252,9 +252,8 @@ where
         BTreeMap::<K, V>::read(src, float_round, time_round)
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> Result<Option<usize>> {
-        let count = BTreeMap::<K, V>::validate_bounds(reader)?;
-        Ok(count)
+    fn reader_len(reader: &mut Self::Reader) -> Result<usize> {
+        BTreeMap::<K, V>::reader_len(reader)
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>> {

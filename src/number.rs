@@ -55,8 +55,8 @@ macro_rules! impl_pco_number {
                 Ok(NumberReader { values: vals.into(), index: 0 })
             }
 
-            fn validate_bounds(reader: &mut Self::Reader) -> anyhow::Result<Option<usize>> {
-                Ok(Some(reader.values.len()))
+            fn reader_len(reader: &mut Self::Reader) -> anyhow::Result<usize> {
+                Ok(reader.values.len())
             }
 
             fn get(reader: &mut Self::Reader, index: usize) -> anyhow::Result<Option<Self>> {

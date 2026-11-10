@@ -69,8 +69,8 @@ where
         Ok(VecNumberReader { lengths: lengths.into(), length_idx: 0, cached_offset: 0, inner_reader })
     }
 
-    fn validate_vec_bounds(reader: &Self::VecReader) -> Result<Option<usize>> {
-        Ok(Some(reader.lengths.len()))
+    fn reader_len(reader: &Self::VecReader) -> Result<usize> {
+        Ok(reader.lengths.len())
     }
 
     fn get_vec(reader: &mut Self::VecReader, index: usize) -> Result<Option<Vec<T>>> {

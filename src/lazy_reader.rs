@@ -39,7 +39,7 @@ where
     #[inline]
     pub fn row_count(&mut self) -> anyhow::Result<usize> {
         let reader = self.ensure_decompressed()?;
-        Ok(T::validate_bounds(reader)?.unwrap_or(0))
+        T::reader_len(reader)
     }
 
     /// Decompresses if needed and hands out the inner reader. Generated enum fold code
