@@ -12,6 +12,36 @@ pub(crate) const CHUNK_SIZE: usize = 128;
 #[allow(dead_code)]
 pub(crate) const FORMAT_VERSION_CHUNKED: u8 = 1;
 
+/// Bytes targets of a text eq/IN filter. Msgpack `str` payloads are the
+/// exact UTF-8 bytes of the column's values, so comparing payload bytes
+/// against these targets is equivalent to deserializing a row and applying
+/// `filter_match`, but allocates nothing.
+pub(crate) enum TextTargets<'a> {
+    Eq(&'a [u8]),
+    In(ahash::HashSet<&'a [u8]>),
+}
+
+impl TextTargets<'_> {
+    #[inline]
+    fn matches(&self, payload: &[u8]) -> bool {
+        match self {
+            TextTargets::Eq(target) => payload == *target,
+            TextTargets::In(set) => set.contains(payload),
+        }
+    }
+}
+
+/// The set behind an `InclusionString` target is built once per filter call,
+/// not per chunk; non-text filters get `None` and skip the scan entirely.
+#[allow(dead_code)]
+fn text_targets(filter: &crate::Filter) -> Option<TextTargets<'_>> {
+    match filter {
+        crate::Filter::String(s) => Some(TextTargets::Eq(s.as_bytes())),
+        crate::Filter::InclusionString(set) => Some(TextTargets::In(set.iter().map(String::as_bytes).collect())),
+        _ => None,
+    }
+}
+
 /// Helper functions for lazy msgpack deserialization: deserialize or skip chunked arrays from decompressed bytes.
 #[allow(dead_code)]
 pub(crate) mod helpers {
@@ -65,6 +95,117 @@ pub(crate) mod helpers {
         <Vec<serde::de::IgnoredAny>>::deserialize(&mut deserializer).ok()?;
         *pos += deserializer.into_inner().position() as usize;
         Some(())
+    }
+
+    /// Two/four-byte big-endian reads with bounds checks, the msgpack
+    /// header widths the chunk scan needs.
+    #[inline]
+    fn be_u16(bytes: &[u8], p: usize) -> Option<u16> {
+        let a: [u8; 2] = bytes.get(p..p + 2)?.try_into().ok()?;
+        Some(u16::from_be_bytes(a))
+    }
+
+    #[inline]
+    fn be_u32(bytes: &[u8], p: usize) -> Option<u32> {
+        let a: [u8; 4] = bytes.get(p..p + 4)?.try_into().ok()?;
+        Some(u32::from_be_bytes(a))
+    }
+
+    /// In-place text eq/IN scan of one msgpack array chunk. Reads the array
+    /// header, walks every element's length prefix, compares the payload
+    /// bytes against `targets`, and ANDs one predicate bit per row into
+    /// `matches` without materializing a single row value. `pos` advances
+    /// past the chunk on success and returns its row count; any byte the
+    /// scan can't interpret (non-array header, element type outside the
+    /// nil/str family, truncation) returns `None` with `pos` untouched, and
+    /// the caller takes the deserialize-and-predicate path. `row_start` must
+    /// be word-aligned, which every chunk-major walk in this module
+    /// maintains.
+    #[inline]
+    pub(crate) fn scan_chunk(
+        bytes: &[u8], pos: &mut usize, targets: &TextTargets<'_>, row_start: usize, matches: &mut crate::FilterMask,
+    ) -> Option<usize> {
+        if *pos >= bytes.len() || row_start >= matches.len() || !row_start.is_multiple_of(64) {
+            return None;
+        }
+        let mut p = *pos;
+        let n = match *bytes.get(p)? {
+            b if (0x90..=0x9f).contains(&b) => {
+                p += 1;
+                (b & 0x0f) as usize
+            }
+            0xdc => {
+                let n = be_u16(bytes, p + 1)?;
+                p += 3;
+                n as usize
+            }
+            0xdd => {
+                let n = be_u32(bytes, p + 1)?;
+                p += 5;
+                n as usize
+            }
+            _ => return None,
+        };
+        if n > CHUNK_SIZE {
+            return None;
+        }
+        // A chunk running past the mask's last row cannot be walked with the
+        // word-AND below without leaving `pos` mid-chunk (the loop and `pos`
+        // would only cover the clamped prefix). Decline with `pos` untouched
+        // and let the deserialize path, which clamps its own writes, take it.
+        if n > matches.len() - row_start {
+            return None;
+        }
+        let mut words = [0u64; 2];
+        for i in 0..n {
+            let mut matched = false;
+            match *bytes.get(p)? {
+                // Nil is accepted grammar and answers no match: an absent
+                // value never satisfies a text equality, which agrees with
+                // `Option::filter_match`, whose `None` arm is false.
+                0xc0 => p += 1,
+                b if (0xa0..=0xbf).contains(&b) => {
+                    let len = (b & 0x1f) as usize;
+                    let payload = bytes.get(p + 1..p + 1 + len)?;
+                    p += 1 + len;
+                    matched = targets.matches(payload);
+                }
+                0xd9 => {
+                    let len = *bytes.get(p + 1)? as usize;
+                    let payload = bytes.get(p + 2..p + 2 + len)?;
+                    p += 2 + len;
+                    matched = targets.matches(payload);
+                }
+                0xda => {
+                    let len = be_u16(bytes, p + 1)? as usize;
+                    let payload = bytes.get(p + 3..p + 3 + len)?;
+                    p += 3 + len;
+                    matched = targets.matches(payload);
+                }
+                0xdb => {
+                    let len = be_u32(bytes, p + 1)? as usize;
+                    let payload = bytes.get(p + 5..p + 5 + len)?;
+                    p += 5 + len;
+                    matched = targets.matches(payload);
+                }
+                _ => return None,
+            }
+            if matched {
+                words[i / 64] |= 1u64 << (i % 64);
+            }
+        }
+        let raw = matches.as_raw_mut_slice();
+        let w = row_start / 64;
+        let lo_bits = n.min(64);
+        let lo_mask = if lo_bits == 64 { u64::MAX } else { (1u64 << lo_bits) - 1 };
+        raw[w] = (raw[w] & words[0]) | (raw[w] & !lo_mask);
+        if n > 64 {
+            let hi_bits = n - 64;
+            let hi_mask = if hi_bits == 64 { u64::MAX } else { (1u64 << hi_bits) - 1 };
+            raw[w + 1] = (raw[w + 1] & words[1]) | (raw[w + 1] & !hi_mask);
+        }
+        *pos = p;
+        Some(n)
     }
 
     /// Ascending survivor-row cursor over tail-masked mask words with `peek`,
@@ -470,6 +611,64 @@ macro_rules! impl_lazy_msgpack {
         }
 
         impl $reader {
+            /// Chunk-major filter over a whole-frame blob: chunks whose mask
+            /// range is already all-zero are skipped without deserialization.
+            /// Text eq/IN predicates additionally scan the inflated msgpack
+            /// bytes in place (`helpers::scan_chunk`): non-matching rows are
+            /// never deserialized, so the inflate pays length checks and
+            /// memcmps instead of a `String` allocation per row. Any chunk the
+            /// scan can't interpret falls back to deserialize-and-predicate,
+            /// byte-for-byte.
+            pub(crate) fn filter_bulk<F>(
+                &self, filter: &Filter, matches: &mut crate::FilterMask, mut pred: F,
+            ) -> anyhow::Result<()>
+            where
+                F: FnMut(&$ty, &Filter) -> bool,
+            {
+                // Legacy fallback data is fully decoded; apply the predicate
+                // directly.
+                if let Some(ref values) = self.predecoded {
+                    matches.build_into(0, values.as_ref(), |val| pred(val, filter));
+                    return Ok(());
+                }
+                if self.total_rows == 0 || self.msgpack_bytes.is_empty() {
+                    matches.handle_empty_column::<$ty, _>(|val| pred(val, filter));
+                    return Ok(());
+                }
+                let targets = text_targets(filter);
+                // Skip format_version byte, iterate chunks sequentially.
+                let bytes = &self.msgpack_bytes[1..];
+                let mut pos: usize = 0;
+                let mut row_idx: usize = 0;
+                while row_idx < self.total_rows && pos < bytes.len() {
+                    // Skip chunks whose rows are already eliminated.
+                    let chunk_end = (row_idx + self::CHUNK_SIZE).min(self.total_rows);
+                    if !matches.any_set_in_range(row_idx..chunk_end) {
+                        if helpers::skip_chunk(bytes, &mut pos).is_none() {
+                            break;
+                        }
+                        row_idx = chunk_end;
+                        continue;
+                    }
+                    // Raw-byte scan first: a match lands its predicate word
+                    // straight into the mask. A decline leaves `pos` untouched
+                    // so the deserialize path below re-reads the whole chunk.
+                    if let Some(targets) = &targets
+                        && let Some(rows) = helpers::scan_chunk(bytes, &mut pos, targets, row_idx, matches)
+                    {
+                        row_idx += rows;
+                        continue;
+                    }
+                    if let Some(chunk) = helpers::deserialize_chunk::<$ty>(bytes, &mut pos) {
+                        matches.build_into(row_idx, &chunk, |val| pred(val, filter));
+                        row_idx += chunk.len();
+                    } else {
+                        break;
+                    }
+                }
+                Ok(())
+            }
+
             /// Deserialize one item starting at `pos` from a flat (non-chunked) msgpack byte stream.
             #[inline]
             #[allow(dead_code)]
@@ -479,6 +678,7 @@ macro_rules! impl_lazy_msgpack {
 
             /// Deserialize a full chunk (Vec<T>) starting at `pos`. Expected to be a msgpack array.
             #[inline]
+            #[allow(dead_code)]
             pub(crate) fn deserialize_chunk(bytes: &[u8], pos: &mut usize) -> Option<Vec<$ty>> {
                 self::helpers::deserialize_chunk::<$ty>(bytes, pos)
             }

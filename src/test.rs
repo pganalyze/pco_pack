@@ -40,6 +40,7 @@ mod snapshot;
 mod string;
 mod r#struct;
 mod struct_index;
+mod text_raw_scan;
 mod time_round;
 mod timeline;
 mod timeline_edge_cases;

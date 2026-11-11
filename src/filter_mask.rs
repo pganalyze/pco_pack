@@ -83,6 +83,20 @@ impl FilterMask {
         }
     }
 
+    /// Mutable access to the backing words, for scans that compute predicate
+    /// words themselves and AND them in at word-aligned positions.
+    #[inline]
+    pub(crate) fn as_raw_mut_slice(&mut self) -> &mut [u64] {
+        self.0.as_raw_mut_slice()
+    }
+
+    /// Number of valid rows in the mask (padding above this is untouched by
+    /// `build_into` and must stay untouched by scans too).
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+
     /// Calls `f` for every set bit below `row_count`, ascending, stopping at the first
     /// `Err`. Padding bits above `row_count` exist only in the last word; mask them
     /// before scanning.

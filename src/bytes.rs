@@ -47,31 +47,10 @@ impl PcoFilter for serde_bytes::ByteBuf {
     }
 
     fn filter_bulk(reader: &mut Self::Reader, _field: usize, filter: &Filter, matches: &mut FilterMask) -> Result<()> {
-        if reader.total_rows == 0 || reader.msgpack_bytes.is_empty() {
-            matches.handle_empty_column::<serde_bytes::ByteBuf, _>(|val| Self::filter_match(val, filter));
-            return Ok(());
-        }
-        let bytes = &reader.msgpack_bytes[1..];
-        let mut pos: usize = 0;
-        let mut row_idx: usize = 0;
-        while row_idx < reader.total_rows && pos < bytes.len() {
-            // Skip chunks whose rows are already eliminated.
-            let chunk_end = (row_idx + self::CHUNK_SIZE).min(reader.total_rows);
-            if !matches.any_set_in_range(row_idx..chunk_end) {
-                if ByteBufReader::skip_chunk(bytes, &mut pos).is_none() {
-                    break;
-                }
-                row_idx = chunk_end;
-                continue;
-            }
-            if let Some(chunk) = ByteBufReader::deserialize_chunk(bytes, &mut pos) {
-                matches.build_into(row_idx, &chunk, |val| Self::filter_match(val, filter));
-                row_idx += chunk.len();
-            } else {
-                break;
-            }
-        }
-        Ok(())
+        // Bytes filters never yield scan targets, so this stays on the
+        // deserialize-and-predicate loop; only the predecoded fallback branch
+        // is new, and ByteBuf fallbacks never populate it.
+        reader.filter_bulk(filter, matches, Self::filter_match)
     }
 
     fn filter_nested(
