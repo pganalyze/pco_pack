@@ -18,26 +18,53 @@ impl<T> Default for NumberReader<T> {
 }
 
 macro_rules! impl_pco_number {
-    ($t:ty, $filter_variant:ident) => {
+    ($t:ty, $filter_variant:ident, $bounds_kind:ident) => {
         impl PcoSerde for $t {
             type Writer = NumberWriter<$t>;
             type Reader = NumberReader<$t>;
 
             fn write(data: Vec<$t>, _float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
                 let config = pco_util::config();
-                Ok(pco::standalone::simple_compress(&data, &config)?)
+                let mut out = Vec::new();
+                // Exact bounds prefix. `exact` drops to 0 only when a u64 column
+                // crosses i64::MAX, where the i64 projection filters use stops
+                // being contiguous; narrower types always fit.
+                match bounds::fold_int_bounds(&data) {
+                    Some((min, max)) => bounds::push_bounds(
+                        &mut out,
+                        bounds::BoundsKind::$bounds_kind,
+                        <$t>::MIN != 0 || max <= (i64::MAX as $t),
+                        min as i64,
+                        max as i64,
+                        0,
+                    ),
+                    None => bounds::push_bounds(&mut out, bounds::BoundsKind::$bounds_kind, true, 1, 0, 0),
+                }
+                out.extend_from_slice(&pco::standalone::simple_compress(&data, &config)?);
+                Ok(out)
             }
 
             fn read(
                 src: &mut Cursor<&[u8]>, _float_round: u32, _time_round: chrono::Duration,
             ) -> anyhow::Result<Self::Reader> {
                 let buf = *src.get_ref();
-                let pos = src.position() as usize;
+                let mut pos = src.position() as usize;
+                if pos >= buf.len() {
+                    return Ok(NumberReader { values: Vec::new().into(), index: 0 });
+                }
+                pos = bounds::strip_prefix(buf, pos);
+                src.set_position(pos as u64);
                 if pos >= buf.len() {
                     return Ok(NumberReader { values: Vec::new().into(), index: 0 });
                 }
                 if buf[pos] == float_round::FLOAT_ROUND_MAGIC && buf.len() > pos + 1 {
                     let decimals = buf[pos + 1] as u32;
+                    // `float_round` is compile-time capped; an out-of-range decimals
+                    // byte is corruption, and unrounding it would overflow the scale.
+                    anyhow::ensure!(
+                        decimals <= float_round::MAX_FLOAT_ROUND_PRECISION,
+                        "corrupt float_round decimals {decimals}"
+                    );
                     src.set_position((pos + 2) as u64);
                     let i64_vals = pco_util::decompress::<i64>(src)?;
                     if !i64_vals.is_empty() {
@@ -61,6 +88,13 @@ macro_rules! impl_pco_number {
 
             fn get(reader: &mut Self::Reader, index: usize) -> anyhow::Result<Option<Self>> {
                 Ok(reader.values.get(index).copied())
+            }
+
+            /// Rules the column out without decompression, using the write-time
+            /// bounds prefix; no prefix, a foreign kind, or an inexact fold all
+            /// answer false.
+            fn metadata_excludes(compressed: &[u8], filter: &Filter) -> bool {
+                bounds::int_bounds_excludes::<$t>(compressed, filter, bounds::BoundsKind::$bounds_kind)
             }
         }
 
@@ -163,14 +197,14 @@ macro_rules! impl_pco_number {
     };
 }
 
-impl_pco_number!(u8, I64);
-impl_pco_number!(u16, I64);
-impl_pco_number!(u32, I64);
-impl_pco_number!(u64, I64);
-impl_pco_number!(i8, I64);
-impl_pco_number!(i16, I64);
-impl_pco_number!(i32, I64);
-impl_pco_number!(i64, I64);
+impl_pco_number!(u8, I64, U8);
+impl_pco_number!(u16, I64, U16);
+impl_pco_number!(u32, I64, U32);
+impl_pco_number!(u64, I64, U64);
+impl_pco_number!(i8, I64, I8);
+impl_pco_number!(i16, I64, I16);
+impl_pco_number!(i32, I64, I32);
+impl_pco_number!(i64, I64, I64);
 
 pub trait CoercibleNumber: Sized {
     fn coerce_from(filter: &Filter) -> Self;

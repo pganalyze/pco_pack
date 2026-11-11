@@ -25,6 +25,7 @@ mod json_value;
 mod lazy_filter_test;
 mod lazy_msgpack_fallback;
 mod map;
+mod metadata_bounds;
 mod number;
 mod option;
 mod option_nested;

@@ -25,41 +25,65 @@ impl PcoSerde for half::f16 {
     type Writer = NumberWriter<half::f16>;
     type Reader = FloatReader<half::f16>;
 
-    fn write(data: Vec<half::f16>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+    fn write(data: Vec<half::f16>, float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let config = pco_util::config();
+        let mut out = Vec::new();
         if float_round > 0 {
-            let scale = 10i64.pow(float_round) as f64;
-            let rounded: Vec<i64> = data
-                .into_iter()
-                .map(|v| ((v.to_f64() * scale).round().clamp(i64::MIN as f64, i64::MAX as f64)) as i64)
-                .collect();
-            let mut out = Vec::new();
+            // Bounds fold the f64 values the blob will decode to, so filters
+            // consult them in the same domain filter_bulk compares against.
+            let rounded: Vec<i64> = bounds::round_to_i64(data.iter().map(|v| v.to_f64()), float_round);
+            let (min, max) = bounds::fold_int_bounds(&rounded)
+                .map(|(min, max)| {
+                    (float_round::unround_float(min, float_round), float_round::unround_float(max, float_round))
+                })
+                .unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            bounds::push_float_bounds(&mut out, bounds::BoundsKind::F16, min, max, float_round as u8);
             out.push(float_round::FLOAT_ROUND_MAGIC);
             out.push(float_round as u8);
-            out.extend_from_slice(&i64::write(rounded, 0, time_round)?);
+            out.extend_from_slice(&pco::standalone::simple_compress(&rounded, &config)?);
             Ok(out)
         } else {
             // Store as native f16 via f64 compression
-            let config = pco_util::config();
-            Ok(pco::standalone::simple_compress(&data, &config)?)
+            let (min, max) = bounds::fold_float_bounds(data.iter().map(|v| v.to_f64()))
+                .unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            bounds::push_float_bounds(&mut out, bounds::BoundsKind::F16, min, max, 0);
+            out.extend_from_slice(&pco::standalone::simple_compress(&data, &config)?);
+            Ok(out)
         }
     }
 
     fn read(src: &mut Cursor<&[u8]>, _float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Self::Reader> {
-        let buf = src.get_ref();
-        let pos = src.position() as usize;
+        let buf = *src.get_ref();
+        let mut pos = src.position() as usize;
         if pos >= buf.len() {
             return Ok(FloatReader::Raw { values: Vec::new().into() });
         }
-        // Detect format: if first byte is FLOAT_ROUND_MAGIC, it's float_round format.
-        // Store as Rounded variant so filters can apply tolerance-based matching.
+        pos = bounds::strip_prefix(buf, pos);
+        src.set_position(pos as u64);
+        if pos >= buf.len() {
+            return Ok(FloatReader::Raw { values: Vec::new().into() });
+        }
+        // Detect format: if the first body byte is FLOAT_ROUND_MAGIC, it's
+        // float_round format. Store as Rounded variant so filters can apply
+        // tolerance-based matching.
+        // `float_round` is compile-time capped, so an out-of-range decimals byte
+        // is corruption: reject instead of letting `unround_float` overflow.
         if buf[pos] == float_round::FLOAT_ROUND_MAGIC && buf.len() > pos + 1 {
             let decimals = buf[pos + 1];
+            anyhow::ensure!(
+                decimals as u32 <= float_round::MAX_FLOAT_ROUND_PRECISION,
+                "corrupt float_round decimals {decimals}"
+            );
             src.set_position((pos + 2) as u64);
             let i64_vals = pco_util::decompress::<i64>(src)?;
             return Ok(FloatReader::Rounded { decimals, values: i64_vals.into() });
         }
         let vals = pco_util::decompress_as::<half::f16>(src)?;
         Ok(FloatReader::Raw { values: vals.into() })
+    }
+
+    fn metadata_excludes(compressed: &[u8], filter: &Filter) -> bool {
+        bounds::float_bounds_excludes(compressed, filter, bounds::BoundsKind::F16)
     }
 
     fn reader_len(reader: &mut Self::Reader) -> anyhow::Result<usize> {
@@ -201,38 +225,59 @@ impl PcoSerde for f32 {
     type Writer = NumberWriter<f32>;
     type Reader = FloatReader<f32>;
 
-    fn write(data: Vec<f32>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+    fn write(data: Vec<f32>, float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let config = pco_util::config();
+        let mut out = Vec::new();
         if float_round > 0 {
-            let scale = 10i64.pow(float_round) as f64;
-            let rounded: Vec<i64> = data
-                .into_iter()
-                .map(|v| ((v as f64 * scale).round().clamp(i64::MIN as f64, i64::MAX as f64)) as i64)
-                .collect();
-            let mut out = Vec::new();
+            // Bounds fold the f64 values the blob will decode to, so filters
+            // consult them in the same domain filter_bulk compares against.
+            let rounded: Vec<i64> = bounds::round_to_i64(data.iter().map(|v| *v as f64), float_round);
+            let (min, max) = bounds::fold_int_bounds(&rounded)
+                .map(|(min, max)| {
+                    (float_round::unround_float(min, float_round), float_round::unround_float(max, float_round))
+                })
+                .unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            bounds::push_float_bounds(&mut out, bounds::BoundsKind::F32, min, max, float_round as u8);
             out.push(float_round::FLOAT_ROUND_MAGIC);
             out.push(float_round as u8);
-            out.extend_from_slice(&i64::write(rounded, 0, time_round)?);
+            out.extend_from_slice(&pco::standalone::simple_compress(&rounded, &config)?);
             Ok(out)
         } else {
-            let config = pco_util::config();
-            Ok(pco::standalone::simple_compress(&data, &config)?)
+            let (min, max) =
+                bounds::fold_float_bounds(data.iter().map(|v| *v as f64)).unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            bounds::push_float_bounds(&mut out, bounds::BoundsKind::F32, min, max, 0);
+            out.extend_from_slice(&pco::standalone::simple_compress(&data, &config)?);
+            Ok(out)
         }
     }
 
     fn read(src: &mut Cursor<&[u8]>, _float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Self::Reader> {
-        let buf = src.get_ref();
-        let pos = src.position() as usize;
+        let buf = *src.get_ref();
+        let mut pos = src.position() as usize;
+        if pos >= buf.len() {
+            return Ok(FloatReader::Raw { values: Vec::new().into() });
+        }
+        pos = bounds::strip_prefix(buf, pos);
+        src.set_position(pos as u64);
         if pos >= buf.len() {
             return Ok(FloatReader::Raw { values: Vec::new().into() });
         }
         if buf[pos] == float_round::FLOAT_ROUND_MAGIC && buf.len() > pos + 1 {
             let decimals = buf[pos + 1];
+            anyhow::ensure!(
+                decimals as u32 <= float_round::MAX_FLOAT_ROUND_PRECISION,
+                "corrupt float_round decimals {decimals}"
+            );
             src.set_position((pos + 2) as u64);
             let i64_vals = pco_util::decompress::<i64>(src)?;
             return Ok(FloatReader::Rounded { decimals, values: i64_vals.into() });
         }
         let vals = pco_util::decompress_as::<f32>(src)?;
         Ok(FloatReader::Raw { values: vals.into() })
+    }
+
+    fn metadata_excludes(compressed: &[u8], filter: &Filter) -> bool {
+        bounds::float_bounds_excludes(compressed, filter, bounds::BoundsKind::F32)
     }
 
     fn reader_len(reader: &mut Self::Reader) -> anyhow::Result<usize> {
@@ -371,37 +416,60 @@ impl PcoSerde for f64 {
     type Writer = NumberWriter<f64>;
     type Reader = FloatReader<f64>;
 
-    fn write(data: Vec<f64>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+    fn write(data: Vec<f64>, float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
+        let config = pco_util::config();
+        let mut out = Vec::new();
         if float_round > 0 {
-            let scale = 10i64.pow(float_round) as f64;
-            let rounded: Vec<i64> =
-                data.into_iter().map(|v| (v * scale).round().clamp(i64::MIN as f64, i64::MAX as f64) as i64).collect();
-            let mut out = Vec::new();
+            // Bounds fold the f64 values the blob will decode to, so filters
+            // consult them in the same domain filter_bulk compares against.
+            let rounded: Vec<i64> = bounds::round_to_i64(data.iter().copied(), float_round);
+            let (min, max) = bounds::fold_int_bounds(&rounded)
+                .map(|(min, max)| {
+                    (float_round::unround_float(min, float_round), float_round::unround_float(max, float_round))
+                })
+                .unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            bounds::push_float_bounds(&mut out, bounds::BoundsKind::F64, min, max, float_round as u8);
             out.push(float_round::FLOAT_ROUND_MAGIC);
             out.push(float_round as u8);
-            out.extend_from_slice(&i64::write(rounded, 0, time_round)?);
+            out.extend_from_slice(&pco::standalone::simple_compress(&rounded, &config)?);
             Ok(out)
         } else {
             // Store as native f64
-            let config = pco_util::config();
-            Ok(pco::standalone::simple_compress(&data, &config)?)
+            let (min, max) =
+                bounds::fold_float_bounds(data.iter().copied()).unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            bounds::push_float_bounds(&mut out, bounds::BoundsKind::F64, min, max, 0);
+            out.extend_from_slice(&pco::standalone::simple_compress(&data, &config)?);
+            Ok(out)
         }
     }
 
     fn read(src: &mut Cursor<&[u8]>, _float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Self::Reader> {
-        let buf = src.get_ref();
-        let pos = src.position() as usize;
+        let buf = *src.get_ref();
+        let mut pos = src.position() as usize;
+        if pos >= buf.len() {
+            return Ok(FloatReader::Raw { values: Vec::new().into() });
+        }
+        pos = bounds::strip_prefix(buf, pos);
+        src.set_position(pos as u64);
         if pos >= buf.len() {
             return Ok(FloatReader::Raw { values: Vec::new().into() });
         }
         if buf[pos] == float_round::FLOAT_ROUND_MAGIC && buf.len() > pos + 1 {
             let decimals = buf[pos + 1];
+            anyhow::ensure!(
+                decimals as u32 <= float_round::MAX_FLOAT_ROUND_PRECISION,
+                "corrupt float_round decimals {decimals}"
+            );
             src.set_position((pos + 2) as u64);
             let i64_vals = pco_util::decompress::<i64>(src)?;
             return Ok(FloatReader::Rounded { decimals, values: i64_vals.into() });
         }
         let vals = pco_util::decompress_as::<f64>(src)?;
         Ok(FloatReader::Raw { values: vals.into() })
+    }
+
+    fn metadata_excludes(compressed: &[u8], filter: &Filter) -> bool {
+        bounds::float_bounds_excludes(compressed, filter, bounds::BoundsKind::F64)
     }
 
     fn reader_len(reader: &mut Self::Reader) -> anyhow::Result<usize> {

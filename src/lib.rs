@@ -12,6 +12,7 @@ use std::ops::RangeInclusive;
 use std::sync::Arc;
 
 mod bool;
+mod bounds;
 mod bytes;
 mod datetime;
 mod filter_mask;
@@ -275,6 +276,15 @@ pub trait PcoSerde: Sized + Clone {
     /// Get the element at `index`. Iteration always moves forward (never backward),
     /// so lazy decompressors may advance their internal cursor without resetting.
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>>;
+
+    /// True when a compressed column blob's write-time bounds prefix proves no
+    /// row in the blob can match `filter`, letting callers skip decompression
+    /// entirely. Only numeric columns override this; the default never skips,
+    /// which is correct for containers because their blobs start with framing
+    /// bytes where the bounds magic could legitimately appear.
+    fn metadata_excludes(_compressed: &[u8], _filter: &Filter) -> bool {
+        false
+    }
 }
 
 /// Fallback deserialization for types that need to read raw msgpack bytes directly.

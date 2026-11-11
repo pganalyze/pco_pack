@@ -74,6 +74,14 @@ where
 
     #[inline]
     pub fn filter_in_group(&mut self, filter: &Filter, matches: &mut FilterMask) -> anyhow::Result<()> {
+        // Reading write-time bounds metadata costs nanoseconds against
+        // milliseconds of decompression, so try to rule the column out
+        // before touching the compressed body at all.
+        if self.decompressed.is_none() && !self.compressed.is_empty() && T::metadata_excludes(&self.compressed, filter)
+        {
+            matches.fill(false);
+            return Ok(());
+        }
         T::filter_bulk(self.ensure_decompressed()?, 0, filter, matches)?;
         Ok(())
     }
