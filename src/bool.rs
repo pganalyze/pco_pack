@@ -50,6 +50,11 @@ impl PcoSerde for bool {
     fn get(reader: &mut Self::Reader, index: usize) -> anyhow::Result<Option<Self>> {
         Ok(reader.values.get(index).copied())
     }
+
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()> {
+        gather_mask_copy(&reader.values, mask, out);
+        Ok(())
+    }
 }
 
 impl FallbackReader for BoolReader {

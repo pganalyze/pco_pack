@@ -46,7 +46,7 @@ where
     }
 }
 
-impl<T: PcoSerde> PcoSerde for Option<T>
+impl<T: PcoSerde + Default> PcoSerde for Option<T>
 where
     T::Reader: Clone + Default,
 {
@@ -154,11 +154,63 @@ where
         reader.current_idx = index + 1;
         Ok(Some(None))
     }
+
+    /// Chunk-major survivor gather: each surviving row projects onto the
+    /// inner (present-values-only) row space, the inner column gathers there
+    /// with its own typed loop, and rows take ownership of the owned values
+    /// it produced, so the per-survivor clone `get` paid out of the cached
+    /// chunk is gone. Absent rows, rows past the column, and rows the
+    /// forward cursor has already passed read `None` exactly as `get`
+    /// answers; a corrupt inner stream may yield a `Default` value where
+    /// `get` would have answered `None`, matching the inner column's own
+    /// gather contract.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()>
+    where
+        Self: Default,
+    {
+        let inner_count = reader.presence_indices.len();
+        let mut inner_mask = vec![0u64; inner_count.div_ceil(64)];
+        let mut present: Vec<bool> = Vec::new();
+        let mut p = reader.presence_idx;
+        let mut last_row: Option<usize> = None;
+        let mut projected_any = false;
+        for_each_set_bit(mask, |row| {
+            if row >= reader.total_rows || row < reader.current_idx {
+                present.push(false);
+                return;
+            }
+            while p < inner_count && (reader.presence_indices[p] as usize) < row {
+                p += 1;
+            }
+            if p < inner_count && (reader.presence_indices[p] as usize) == row {
+                inner_mask[p >> 6] |= 1 << (p & 63);
+                p += 1;
+                projected_any = true;
+                present.push(true);
+            } else {
+                present.push(false);
+            }
+            last_row = Some(row);
+        });
+        let mut inner: Vec<T> = Vec::new();
+        // An all-`None` survivor set projects no bits: skip the inner gather
+        // entirely so a cursor-advancing inner reader is left untouched.
+        if projected_any {
+            let inner_mask = FilterMask::from_raw_words(inner_mask);
+            T::gather(&mut reader.inner_reader, &inner_mask, &mut inner)?;
+        }
+        let mut it = inner.into_iter();
+        out.extend(present.into_iter().map(|hit| if hit { it.next() } else { None }));
+        reader.presence_idx = p;
+        if let Some(row) = last_row {
+            reader.current_idx = row + 1;
+        }
+        Ok(())
+    }
 }
 
-impl<T> PcoFilter for Option<T>
+impl<T: PcoFilter + Default> PcoFilter for Option<T>
 where
-    T: PcoFilter,
     T::Reader: Clone + Default,
 {
     fn filter_bulk(reader: &mut Self::Reader, field: usize, filter: &Filter, matches: &mut FilterMask) -> Result<()> {

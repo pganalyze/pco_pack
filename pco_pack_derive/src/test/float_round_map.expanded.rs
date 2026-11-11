@@ -729,9 +729,21 @@ const _: () = {
                 loaded_fields,
                 self.chunk_size,
             )?;
-            let mut results = Vec::with_capacity(row_count);
-            for row_idx in 0..row_count {
-                results.push(expand_row(&mut reader, row_idx)?);
+            let mask = pco_pack::FilterMask::ones(row_count);
+            let count = row_count;
+            let mut results: Vec<MetricRecord> = Vec::with_capacity(count);
+            let mut col_id: Vec<i64> = Vec::with_capacity(count);
+            let mut col_metrics: Vec<HashMap<String, f64>> = Vec::with_capacity(count);
+            reader.id.gather_into(&mask, &mut col_id)?;
+            reader.metrics.gather_into(&mask, &mut col_metrics)?;
+            let mut iter_id = col_id.into_iter();
+            let mut iter_metrics = col_metrics.into_iter();
+            for _ in 0..count {
+                results
+                    .push(MetricRecord {
+                        id: iter_id.next().unwrap_or_default(),
+                        metrics: iter_metrics.next().unwrap_or_default(),
+                    });
             }
             Ok(results)
         }
@@ -792,15 +804,21 @@ const _: () = {
                     return Ok(Vec::new());
                 }
             }
-            let mut results = Vec::with_capacity(matches.count_ones());
-            matches
-                .for_each_set_row(
-                    row_count,
-                    |actual_row_index| {
-                        results.push(expand_row(&mut reader, actual_row_index)?);
-                        Ok(())
-                    },
-                )?;
+            let count = matches.count_ones();
+            let mut results: Vec<MetricRecord> = Vec::with_capacity(count);
+            let mut col_id: Vec<i64> = Vec::with_capacity(count);
+            let mut col_metrics: Vec<HashMap<String, f64>> = Vec::with_capacity(count);
+            reader.id.gather_into(&matches, &mut col_id)?;
+            reader.metrics.gather_into(&matches, &mut col_metrics)?;
+            let mut iter_id = col_id.into_iter();
+            let mut iter_metrics = col_metrics.into_iter();
+            for _ in 0..count {
+                results
+                    .push(MetricRecord {
+                        id: iter_id.next().unwrap_or_default(),
+                        metrics: iter_metrics.next().unwrap_or_default(),
+                    });
+            }
             Ok(results)
         }
         /// Validates a projection: an unloaded payload column reads back as
@@ -1658,9 +1676,23 @@ const _: () = {
                 loaded_fields,
                 self.chunk_size,
             )?;
-            let mut results = Vec::with_capacity(row_count);
-            for row_idx in 0..row_count {
-                results.push(expand_row(&mut reader, row_idx)?);
+            let mask = pco_pack::FilterMask::ones(row_count);
+            let count = row_count;
+            let mut results: Vec<MapTupleRecord> = Vec::with_capacity(count);
+            let mut col_id: Vec<i64> = Vec::with_capacity(count);
+            let mut col_metrics: Vec<HashMap<String, (f64, i32)>> = Vec::with_capacity(
+                count,
+            );
+            reader.id.gather_into(&mask, &mut col_id)?;
+            reader.metrics.gather_into(&mask, &mut col_metrics)?;
+            let mut iter_id = col_id.into_iter();
+            let mut iter_metrics = col_metrics.into_iter();
+            for _ in 0..count {
+                results
+                    .push(MapTupleRecord {
+                        id: iter_id.next().unwrap_or_default(),
+                        metrics: iter_metrics.next().unwrap_or_default(),
+                    });
             }
             Ok(results)
         }
@@ -1721,15 +1753,23 @@ const _: () = {
                     return Ok(Vec::new());
                 }
             }
-            let mut results = Vec::with_capacity(matches.count_ones());
-            matches
-                .for_each_set_row(
-                    row_count,
-                    |actual_row_index| {
-                        results.push(expand_row(&mut reader, actual_row_index)?);
-                        Ok(())
-                    },
-                )?;
+            let count = matches.count_ones();
+            let mut results: Vec<MapTupleRecord> = Vec::with_capacity(count);
+            let mut col_id: Vec<i64> = Vec::with_capacity(count);
+            let mut col_metrics: Vec<HashMap<String, (f64, i32)>> = Vec::with_capacity(
+                count,
+            );
+            reader.id.gather_into(&matches, &mut col_id)?;
+            reader.metrics.gather_into(&matches, &mut col_metrics)?;
+            let mut iter_id = col_id.into_iter();
+            let mut iter_metrics = col_metrics.into_iter();
+            for _ in 0..count {
+                results
+                    .push(MapTupleRecord {
+                        id: iter_id.next().unwrap_or_default(),
+                        metrics: iter_metrics.next().unwrap_or_default(),
+                    });
+            }
             Ok(results)
         }
         /// Validates a projection: an unloaded payload column reads back as
@@ -2578,9 +2618,23 @@ const _: () = {
                 loaded_fields,
                 self.chunk_size,
             )?;
-            let mut results = Vec::with_capacity(row_count);
-            for row_idx in 0..row_count {
-                results.push(expand_row(&mut reader, row_idx)?);
+            let mask = pco_pack::FilterMask::ones(row_count);
+            let count = row_count;
+            let mut results: Vec<OptionMapTupleRecord> = Vec::with_capacity(count);
+            let mut col_id: Vec<i64> = Vec::with_capacity(count);
+            let mut col_metrics: Vec<Option<HashMap<String, (f32, i32)>>> = Vec::with_capacity(
+                count,
+            );
+            reader.id.gather_into(&mask, &mut col_id)?;
+            reader.metrics.gather_into(&mask, &mut col_metrics)?;
+            let mut iter_id = col_id.into_iter();
+            let mut iter_metrics = col_metrics.into_iter();
+            for _ in 0..count {
+                results
+                    .push(OptionMapTupleRecord {
+                        id: iter_id.next().unwrap_or_default(),
+                        metrics: iter_metrics.next().unwrap_or_default(),
+                    });
             }
             Ok(results)
         }
@@ -2641,15 +2695,23 @@ const _: () = {
                     return Ok(Vec::new());
                 }
             }
-            let mut results = Vec::with_capacity(matches.count_ones());
-            matches
-                .for_each_set_row(
-                    row_count,
-                    |actual_row_index| {
-                        results.push(expand_row(&mut reader, actual_row_index)?);
-                        Ok(())
-                    },
-                )?;
+            let count = matches.count_ones();
+            let mut results: Vec<OptionMapTupleRecord> = Vec::with_capacity(count);
+            let mut col_id: Vec<i64> = Vec::with_capacity(count);
+            let mut col_metrics: Vec<Option<HashMap<String, (f32, i32)>>> = Vec::with_capacity(
+                count,
+            );
+            reader.id.gather_into(&matches, &mut col_id)?;
+            reader.metrics.gather_into(&matches, &mut col_metrics)?;
+            let mut iter_id = col_id.into_iter();
+            let mut iter_metrics = col_metrics.into_iter();
+            for _ in 0..count {
+                results
+                    .push(OptionMapTupleRecord {
+                        id: iter_id.next().unwrap_or_default(),
+                        metrics: iter_metrics.next().unwrap_or_default(),
+                    });
+            }
             Ok(results)
         }
         /// Validates a projection: an unloaded payload column reads back as
@@ -3496,9 +3558,23 @@ const _: () = {
                 loaded_fields,
                 self.chunk_size,
             )?;
-            let mut results = Vec::with_capacity(row_count);
-            for row_idx in 0..row_count {
-                results.push(expand_row(&mut reader, row_idx)?);
+            let mask = pco_pack::FilterMask::ones(row_count);
+            let count = row_count;
+            let mut results: Vec<VecMapTupleRecord> = Vec::with_capacity(count);
+            let mut col_id: Vec<i64> = Vec::with_capacity(count);
+            let mut col_batches: Vec<Vec<HashMap<String, (half::f16, i32)>>> = Vec::with_capacity(
+                count,
+            );
+            reader.id.gather_into(&mask, &mut col_id)?;
+            reader.batches.gather_into(&mask, &mut col_batches)?;
+            let mut iter_id = col_id.into_iter();
+            let mut iter_batches = col_batches.into_iter();
+            for _ in 0..count {
+                results
+                    .push(VecMapTupleRecord {
+                        id: iter_id.next().unwrap_or_default(),
+                        batches: iter_batches.next().unwrap_or_default(),
+                    });
             }
             Ok(results)
         }
@@ -3559,15 +3635,23 @@ const _: () = {
                     return Ok(Vec::new());
                 }
             }
-            let mut results = Vec::with_capacity(matches.count_ones());
-            matches
-                .for_each_set_row(
-                    row_count,
-                    |actual_row_index| {
-                        results.push(expand_row(&mut reader, actual_row_index)?);
-                        Ok(())
-                    },
-                )?;
+            let count = matches.count_ones();
+            let mut results: Vec<VecMapTupleRecord> = Vec::with_capacity(count);
+            let mut col_id: Vec<i64> = Vec::with_capacity(count);
+            let mut col_batches: Vec<Vec<HashMap<String, (half::f16, i32)>>> = Vec::with_capacity(
+                count,
+            );
+            reader.id.gather_into(&matches, &mut col_id)?;
+            reader.batches.gather_into(&matches, &mut col_batches)?;
+            let mut iter_id = col_id.into_iter();
+            let mut iter_batches = col_batches.into_iter();
+            for _ in 0..count {
+                results
+                    .push(VecMapTupleRecord {
+                        id: iter_id.next().unwrap_or_default(),
+                        batches: iter_batches.next().unwrap_or_default(),
+                    });
+            }
             Ok(results)
         }
         /// Validates a projection: an unloaded payload column reads back as

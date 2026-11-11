@@ -28,6 +28,19 @@ impl PcoSerde for chrono::DateTime<chrono::Utc> {
         Ok(micros.map(|m| Self::from_timestamp_micros(m).unwrap_or(Self::UNIX_EPOCH)))
     }
 
+    /// Typed gather over the stored µs buffer: one loop, no `Option`/dispatch
+    /// per row. Mirrors `get` exactly, including the `UNIX_EPOCH` fallback for
+    /// unrepresentable µs and `Default` for indices past the stored rows.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()> {
+        let values = &reader.values;
+        out.reserve(mask.count_ones().saturating_sub(out.len()));
+        for_each_set_bit(mask, |index| match values.get(index).copied() {
+            Some(m) => out.push(Self::from_timestamp_micros(m).unwrap_or(Self::UNIX_EPOCH)),
+            None => out.push(Self::default()),
+        });
+        Ok(())
+    }
+
     /// Timestamp columns store integer µs through `i64`, whose bounds prefix
     /// bounds the same values `filter_bulk` compares against.
     fn metadata_excludes(compressed: &[u8], filter: &Filter) -> bool {

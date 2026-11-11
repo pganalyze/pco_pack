@@ -667,7 +667,7 @@ impl From<&Work> for WorkF {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 #[pco_pack(float_round = 4)]
 pub struct TopicF {
     pub id: i64,
@@ -691,7 +691,7 @@ impl From<&Topic> for TopicF {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
 #[pco_pack(float_round = 4)]
 pub struct KwF {
     pub id: SmolStr,

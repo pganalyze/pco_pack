@@ -801,9 +801,22 @@ const _: () = {
                 loaded_fields,
                 self.chunk_size,
             )?;
-            let mut results = Vec::with_capacity(row_count);
-            for row_idx in 0..row_count {
-                results.push(expand_row(&mut reader, row_idx)?);
+            let mask = pco_pack::FilterMask::ones(row_count);
+            let count = row_count;
+            let mut results: Vec<DeviceTelemetry> = Vec::with_capacity(count);
+            let mut col_temperature: Vec<i64> = Vec::with_capacity(count);
+            let mut col_humidity: Vec<i64> = Vec::with_capacity(count);
+            reader.temperature.gather_into(&mask, &mut col_temperature)?;
+            reader.humidity.gather_into(&mask, &mut col_humidity)?;
+            let mut iter_temperature = col_temperature.into_iter();
+            let mut iter_humidity = col_humidity.into_iter();
+            for _ in 0..count {
+                results
+                    .push(DeviceTelemetry {
+                        device_id: ::core::clone::Clone::clone(&reader.device_id),
+                        temperature: iter_temperature.next().unwrap_or_default(),
+                        humidity: iter_humidity.next().unwrap_or_default(),
+                    });
             }
             Ok(results)
         }
@@ -869,15 +882,22 @@ const _: () = {
                     return Ok(Vec::new());
                 }
             }
-            let mut results = Vec::with_capacity(matches.count_ones());
-            matches
-                .for_each_set_row(
-                    row_count,
-                    |actual_row_index| {
-                        results.push(expand_row(&mut reader, actual_row_index)?);
-                        Ok(())
-                    },
-                )?;
+            let count = matches.count_ones();
+            let mut results: Vec<DeviceTelemetry> = Vec::with_capacity(count);
+            let mut col_temperature: Vec<i64> = Vec::with_capacity(count);
+            let mut col_humidity: Vec<i64> = Vec::with_capacity(count);
+            reader.temperature.gather_into(&matches, &mut col_temperature)?;
+            reader.humidity.gather_into(&matches, &mut col_humidity)?;
+            let mut iter_temperature = col_temperature.into_iter();
+            let mut iter_humidity = col_humidity.into_iter();
+            for _ in 0..count {
+                results
+                    .push(DeviceTelemetry {
+                        device_id: ::core::clone::Clone::clone(&reader.device_id),
+                        temperature: iter_temperature.next().unwrap_or_default(),
+                        humidity: iter_humidity.next().unwrap_or_default(),
+                    });
+            }
             Ok(results)
         }
         /// Validates a projection: an unloaded payload column reads back as

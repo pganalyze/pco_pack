@@ -32,7 +32,7 @@ where
     }
 }
 
-impl<T: PcoSerde + PcoFilter> VecPackable for T
+impl<T: PcoSerde + PcoFilter + Default> VecPackable for T
 where
     T::Writer: Default,
     T::Reader: Clone + Default,
@@ -90,6 +90,56 @@ where
             row.push(T::get(&mut reader.inner_reader, offset + i)?.context("inner missing")?);
         }
         Ok(Some(row))
+    }
+
+    /// Chunk-major survivor rows: project every surviving row's inner span
+    /// `[offset, offset + len)` onto the flat element stream, gather all of
+    /// them in one inner pass, then move the owned elements into rows.
+    ///
+    /// The scan clamps to the caller's mask word span, which covers every
+    /// row below `mask.len()`: rows past the last survivor but below that
+    /// length select nothing, and the cursor advances past them anyway.
+    /// Surviving rows the forward cursor already passed read as empty rows;
+    /// that is the documented gather leniency for out-of-contract cursor
+    /// reuse, where `get_vec` behind a stuck cursor mis-slices or errors.
+    fn gather_vec(reader: &mut Self::VecReader, mask: &FilterMask, out: &mut Vec<Vec<T>>) -> Result<()> {
+        let mask_words = mask.gather_words();
+        let rows = reader.lengths.len().min(mask_words.len() * 64);
+        let mut inner_mask: Vec<u64> = Vec::new();
+        // (row, start, len) per surviving row, ascending.
+        let mut spans: Vec<(usize, usize, usize)> = Vec::new();
+        let mut offset = reader.cached_offset;
+        for i in reader.length_idx..rows {
+            let len = reader.lengths[i] as usize;
+            if (mask_words[i >> 6] >> (i & 63)) & 1 == 1 {
+                crate::set_bits(&mut inner_mask, offset, len);
+                spans.push((i, offset, len));
+            }
+            offset += len;
+        }
+        reader.cached_offset = offset;
+        reader.length_idx = rows;
+        let mut inner: Vec<T> = Vec::new();
+        if !inner_mask.is_empty() {
+            let inner_mask = FilterMask::from_raw_words(inner_mask);
+            T::gather(&mut reader.inner_reader, &inner_mask, &mut inner)?;
+        }
+        let mut it = inner.into_iter();
+        let mut next = spans.into_iter();
+        let mut pending = next.next();
+        for_each_set_bit(mask, |row| match pending {
+            Some((span_row, _, len)) if span_row == row => {
+                out.push(it.by_ref().take(len).collect());
+                pending = next.next();
+            }
+            Some(_) | None => {
+                // Surviving rows before the forward cursor, and rows past
+                // the lengths column, both read empty: leniency for
+                // out-of-contract reads, not parity with `get_vec`.
+                out.push(Vec::new());
+            }
+        });
+        Ok(())
     }
 
     fn filter_vec(reader: &Self::VecReader, filter: &Filter, matches: &mut FilterMask) -> Result<()> {

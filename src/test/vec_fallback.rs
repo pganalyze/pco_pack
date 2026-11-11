@@ -8,13 +8,13 @@ struct Child {
     name: String,
 }
 
-#[derive(Clone, PcoPack, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, PcoPack, Serialize, Deserialize, Debug, PartialEq, Default)]
 struct Parent {
     label: String,
     children: Vec<Child>,
 }
 
-#[derive(Clone, PcoPack, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, PcoPack, Serialize, Deserialize, Debug, PartialEq, Default)]
 struct Grandparent {
     name: String,
     parents: Vec<Parent>,

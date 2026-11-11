@@ -289,6 +289,47 @@ impl super::PcoSerde for serde_json::Value {
             }
         }
     }
+
+    /// Chunk-major survivor gather. A `serde_json::Value` clone is a deep
+    /// clone of the whole tree, so the row-at-a-time fallback doubles the
+    /// allocation cost of every survivor; this deserializes each chunk once,
+    /// skips chunks with no survivor outright, and moves survivors out.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()>
+    where
+        Self: Default,
+    {
+        if reader.format_version != FORMAT_VERSION_CHUNKED || reader.msgpack_bytes.is_empty() {
+            // `serde_json::Value` has an inherent `get`, so the trait method
+            // must be named explicitly.
+            for_each_set_bit(mask, |i| match <Self as super::PcoSerde>::get(reader, i) {
+                Ok(Some(v)) => out.push(v),
+                Ok(None) | Err(_) => out.push(Self::default()),
+            });
+            return Ok(());
+        }
+        let total_rows = reader.total_rows;
+        let cached = reader.cached_chunk.take();
+        let cached_row_start = reader.cached_row_start;
+        let data_pos = reader.data_pos;
+        let msgpack_bytes = reader.msgpack_bytes.clone();
+        let words = mask.gather_words();
+        crate::lazy_msgpack::helpers::gather_chunked(
+            &msgpack_bytes[1..],
+            total_rows,
+            cached,
+            cached_row_start,
+            data_pos,
+            &words,
+            out,
+        );
+        // Rewind the cursor to its freshly-read state; see the lazy-msgpack
+        // gather for why a drained cache must not be paired with a stale
+        // `data_pos`.
+        reader.cached_chunk = None;
+        reader.cached_row_start = 0;
+        reader.data_pos = 0;
+        Ok(())
+    }
 }
 
 impl FallbackReader for JsonValueReader {

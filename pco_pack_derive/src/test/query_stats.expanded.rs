@@ -1047,9 +1047,25 @@ const _: () = {
                 loaded_fields,
                 self.chunk_size,
             )?;
-            let mut results = Vec::with_capacity(row_count);
-            for row_idx in 0..row_count {
-                results.push(expand_row(&mut reader, row_idx)?);
+            let mask = pco_pack::FilterMask::ones(row_count);
+            let count = row_count;
+            let mut results: Vec<QueryStat> = Vec::with_capacity(count);
+            let mut col_collected_at: Vec<chrono::DateTime<chrono::Utc>> = Vec::with_capacity(
+                count,
+            );
+            let mut col_fingerprint: Vec<i64> = Vec::with_capacity(count);
+            reader.collected_at.gather_into(&mask, &mut col_collected_at)?;
+            reader.fingerprint.gather_into(&mask, &mut col_fingerprint)?;
+            let mut iter_collected_at = col_collected_at.into_iter();
+            let mut iter_fingerprint = col_fingerprint.into_iter();
+            for _ in 0..count {
+                results
+                    .push(QueryStat {
+                        database_id: ::core::clone::Clone::clone(&reader.database_id),
+                        granularity: ::core::clone::Clone::clone(&reader.granularity),
+                        collected_at: iter_collected_at.next().unwrap_or_default(),
+                        fingerprint: iter_fingerprint.next().unwrap_or_default(),
+                    });
             }
             Ok(results)
         }
@@ -1119,15 +1135,25 @@ const _: () = {
                     return Ok(Vec::new());
                 }
             }
-            let mut results = Vec::with_capacity(matches.count_ones());
-            matches
-                .for_each_set_row(
-                    row_count,
-                    |actual_row_index| {
-                        results.push(expand_row(&mut reader, actual_row_index)?);
-                        Ok(())
-                    },
-                )?;
+            let count = matches.count_ones();
+            let mut results: Vec<QueryStat> = Vec::with_capacity(count);
+            let mut col_collected_at: Vec<chrono::DateTime<chrono::Utc>> = Vec::with_capacity(
+                count,
+            );
+            let mut col_fingerprint: Vec<i64> = Vec::with_capacity(count);
+            reader.collected_at.gather_into(&matches, &mut col_collected_at)?;
+            reader.fingerprint.gather_into(&matches, &mut col_fingerprint)?;
+            let mut iter_collected_at = col_collected_at.into_iter();
+            let mut iter_fingerprint = col_fingerprint.into_iter();
+            for _ in 0..count {
+                results
+                    .push(QueryStat {
+                        database_id: ::core::clone::Clone::clone(&reader.database_id),
+                        granularity: ::core::clone::Clone::clone(&reader.granularity),
+                        collected_at: iter_collected_at.next().unwrap_or_default(),
+                        fingerprint: iter_fingerprint.next().unwrap_or_default(),
+                    });
+            }
             Ok(results)
         }
         /// Validates a projection: an unloaded payload column reads back as

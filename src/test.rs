@@ -20,6 +20,7 @@ mod float_round_json;
 mod float_round_nested;
 mod float_round_tuples;
 mod float_special_values;
+mod gather;
 mod index;
 mod json_value;
 mod lazy_filter_test;

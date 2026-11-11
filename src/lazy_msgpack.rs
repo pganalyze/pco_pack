@@ -66,6 +66,125 @@ pub(crate) mod helpers {
         *pos += deserializer.into_inner().position() as usize;
         Some(())
     }
+
+    /// Ascending survivor-row cursor over tail-masked mask words with `peek`,
+    /// so the chunk-major gather below can rule a chunk out before deciding
+    /// between `skip_chunk` and `deserialize_chunk`.
+    pub(crate) struct MaskBits<'a> {
+        words: &'a [u64],
+        word_idx: usize,
+        cur: u64,
+    }
+
+    impl<'a> MaskBits<'a> {
+        pub(crate) fn new(words: &'a [u64]) -> Self {
+            Self { words, word_idx: 0, cur: 0 }
+        }
+
+        /// Row index of the next survivor without consuming it.
+        #[inline]
+        pub(crate) fn peek(&mut self) -> Option<usize> {
+            while self.cur == 0 {
+                if self.word_idx >= self.words.len() {
+                    return None;
+                }
+                self.cur = self.words[self.word_idx];
+                self.word_idx += 1;
+            }
+            Some((self.word_idx - 1) * 64 + self.cur.trailing_zeros() as usize)
+        }
+
+        /// Consume and return the next survivor row.
+        #[inline]
+        pub(crate) fn next(&mut self) -> Option<usize> {
+            let row = self.peek()?;
+            self.cur &= self.cur - 1;
+            Some(row)
+        }
+
+        /// Survivors not yet consumed, including a peeked one.
+        #[inline]
+        pub(crate) fn count_remaining(&self) -> usize {
+            self.cur.count_ones() as usize
+                + self.words[self.word_idx..].iter().map(|w| w.count_ones() as usize).sum::<usize>()
+        }
+    }
+
+    /// Chunk-major gather for lazy-msgpack readers. Walks the set bits of the
+    /// tail-masked `mask_words` forward against the chunk cursor: a chunk with
+    /// no survivor is `skip_chunk`ed without allocating, a chunk with survivors
+    /// is deserialized once and its survivors are moved out with `mem::take`
+    /// (leaving `Default` holes that drop with the chunk). This removes the
+    /// per-survivor `cloned()` the row-at-a-time `get` fallback pays, which
+    /// matters most for text and the deep clone of `serde_json::Value`.
+    ///
+    /// `cached`/`cached_row_start` mirror the reader's forward-cursor state;
+    /// `pos` must point at the byte start of the chunk after `cached` (or at
+    /// 0 with no cache). Survivors at or past `total_rows`, or any survivor
+    /// once the chunk stream runs dry, push `Default`, matching `get` and
+    /// `pop_inner` exactly.
+    #[inline]
+    pub(crate) fn gather_chunked<T: serde::de::DeserializeOwned + Default>(
+        data: &[u8], total_rows: usize, cached: Option<Vec<T>>, cached_row_start: usize, mut pos: usize,
+        mask_words: &[u64], out: &mut Vec<T>,
+    ) {
+        let mut bits = MaskBits::new(mask_words);
+        out.reserve(bits.count_remaining());
+
+        // Drain the reader's cached chunk first; its bytes are behind `pos`.
+        // Rows the cursor has already passed push `Default`, the same answer
+        // `get` gives once its forward-only cursor is stuck ahead of them.
+        let mut scan_row_start = 0usize;
+        if let Some(mut chunk) = cached {
+            while let Some(row) = bits.peek() {
+                if row >= total_rows || row >= cached_row_start + chunk.len() {
+                    break;
+                }
+                if row < cached_row_start {
+                    out.push(T::default());
+                    bits.next();
+                    continue;
+                }
+                out.push(chunk.get_mut(row - cached_row_start).map(std::mem::take).unwrap_or_default());
+                bits.next();
+            }
+            scan_row_start = cached_row_start + chunk.len();
+        }
+
+        loop {
+            let first = match bits.peek() {
+                Some(row) if row < total_rows => row,
+                Some(_) | None => {
+                    out.extend((0..bits.count_remaining()).map(|_| T::default()));
+                    return;
+                }
+            };
+            if first >= scan_row_start + CHUNK_SIZE {
+                if skip_chunk(data, &mut pos).is_none() {
+                    out.extend((0..bits.count_remaining()).map(|_| T::default()));
+                    return;
+                }
+                scan_row_start += std::cmp::min(CHUNK_SIZE, total_rows.saturating_sub(scan_row_start));
+                continue;
+            }
+            let mut chunk = match deserialize_chunk::<T>(data, &mut pos) {
+                Some(chunk) => chunk,
+                None => {
+                    out.extend((0..bits.count_remaining()).map(|_| T::default()));
+                    return;
+                }
+            };
+            let end = scan_row_start + chunk.len();
+            while let Some(row) = bits.peek() {
+                if row >= end {
+                    break;
+                }
+                out.push(chunk.get_mut(row - scan_row_start).map(std::mem::take).unwrap_or_default());
+                bits.next();
+            }
+            scan_row_start = end;
+        }
+    }
 }
 
 /// Generates a lazy-deserialization `PcoSerde` impl for a chunked msgpack+zstd type.
@@ -291,6 +410,53 @@ macro_rules! impl_lazy_msgpack {
                         Ok(None)
                     }
                 }
+            }
+
+            /// Chunk-major survivor gather: text is the dominant cost in the
+            /// row-at-a-time fallback (`cache.get().clone()` per survivor),
+            /// so this skips untouched chunks outright and moves survivors out
+            /// of each deserialized chunk instead of cloning them.
+            fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()>
+            where
+                Self: Default,
+            {
+                // Fallback readers keep every row decoded; clone per
+                // survivor, matching `get` byte for byte.
+                if let Some(values) = reader.predecoded.clone() {
+                    for_each_set_bit(mask, |i| out.push(values.get(i).cloned().unwrap_or_default()));
+                    return Ok(());
+                }
+                if reader.format_version != self::FORMAT_VERSION_CHUNKED || reader.msgpack_bytes.is_empty() {
+                    for_each_set_bit(mask, |i| match <Self as super::PcoSerde>::get(reader, i) {
+                        Ok(Some(v)) => out.push(v),
+                        Ok(None) | Err(_) => out.push(Self::default()),
+                    });
+                    return Ok(());
+                }
+                let total_rows = reader.total_rows;
+                let cached = reader.cached_chunk.take();
+                let cached_row_start = reader.cached_row_start;
+                let data_pos = reader.data_pos;
+                let msgpack_bytes = reader.msgpack_bytes.clone();
+                let words = mask.gather_words();
+                helpers::gather_chunked(
+                    &msgpack_bytes[1..],
+                    total_rows,
+                    cached,
+                    cached_row_start,
+                    data_pos,
+                    &words,
+                    out,
+                );
+                // Rewind the cursor to its freshly-read state: survivors were
+                // moved out of the drained chunks, so leaving a stale `pos`
+                // without a cache would make a later `get` mis-align row
+                // offsets against mid-stream bytes. From `(None, 0, 0)` the
+                // forward scan re-reads every row correctly.
+                reader.cached_chunk = None;
+                reader.cached_row_start = 0;
+                reader.data_pos = 0;
+                Ok(())
             }
         }
 
