@@ -37,6 +37,25 @@ fn expand() {
     }
 }
 
+#[test]
+fn float_index_field_rejected() {
+    let expand_indexed = |ty: &str| -> String {
+        let item: syn::ItemStruct = syn::parse_str(&format!(
+            "#[derive(PcoPack)] #[pco_pack(index = [ratio])] struct S {{ ratio: {ty}, value: i64 }}"
+        ))
+        .unwrap();
+        derive_struct_tokens(&item).to_string()
+    };
+
+    for ty in ["f32", "f64", "half::f16", "Option<f64>", "Vec<Option<f32>>"] {
+        let expanded = expand_indexed(ty);
+        assert!(expanded.contains("compile_error"), "{ty} index field unexpectedly expanded to:\n{expanded}");
+    }
+
+    let expanded = expand_indexed("Option<i64>");
+    assert!(!expanded.contains("compile_error"), "Option<i64> index field was rejected:\n{expanded}");
+}
+
 /// Expands a valid-Rust input file the way the compiler would: derive expansions are
 /// appended after their (stripped) item, and `fold!` invocations are replaced in place
 /// with the block the macro emits at that position.

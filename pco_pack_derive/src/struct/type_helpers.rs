@@ -40,6 +40,42 @@ pub fn is_datetime_type(ty: &syn::Type) -> bool {
     type_last_segment_matches(ty, "DateTime").unwrap_or(false)
 }
 
+/// Check if a type is a float (`f32`, `f64`, or `half::f16`).
+pub fn is_float_type(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(tp) = ty
+        && let Some(seg) = tp.path.segments.last()
+    {
+        return matches!(seg.ident.to_string().as_str(), "f32" | "f64" | "f16");
+    }
+    false
+}
+
+/// Whether an `index` field type embeds a float, directly or under `Option`/`Vec`.
+/// Index values become HashMap group keys, which requires `Eq`; floats are only
+/// `PartialEq`. Wrappers nest arbitrarily; aliases are invisible to syntax, same
+/// limitation as the leaf checks above.
+pub fn contains_float_leaf(ty: &syn::Type) -> bool {
+    if is_float_type(ty) {
+        return true;
+    }
+    let syn::Type::Path(tp) = ty else {
+        return false;
+    };
+    let Some(seg) = tp.path.segments.last() else {
+        return false;
+    };
+    if !matches!(seg.ident.to_string().as_str(), "Option" | "Vec") {
+        return false;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return false;
+    };
+    args.args.iter().any(|arg| match arg {
+        syn::GenericArgument::Type(t) => contains_float_leaf(t),
+        _ => false,
+    })
+}
+
 /// Check if the type is a `Copy` scalar. Templates use this to read such fields
 /// by value instead of emitting a `.clone()`. Unknown shapes conservatively
 /// fall back to `false` so cloning stays available for real `Clone` types.
