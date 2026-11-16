@@ -65,3 +65,7 @@ harness = false
 [[bench]]
 name = "synthetic"
 harness = false
+
+[[bench]]
+name = "prepare_phases"
+harness = false
