@@ -139,6 +139,26 @@ pub trait PcoPack: PcoFilter + Sized {
     where
         C: Consumer<Self>;
 
+    /// A chunk decoded and filtered ahead of the fold. Every decode the fold would
+    /// perform on projected columns has already happened, so folding is the row loop
+    /// alone. No `Send` bound here: parallel callers add `Self::Prepared: Send`, so
+    /// models whose column readers are not `Send` fail at the parallel call site.
+    /// Struct models keep the full guarantee; enum models keep the discriminant and
+    /// query-filtering guarantee and leave variant payload blocks lazy.
+    type Prepared;
+
+    /// Decode and filter one chunk under a resolved plan and projection: the outputs
+    /// of `PcoFilter::resolve_query` and `PcoPack::resolve_fields`. Running
+    /// `prepare` for every chunk and `fold_prepared` in order reproduces
+    /// `fold_value`'s delivered rows exactly.
+    fn prepare(chunk: &Self::Chunk, plan: &[ResolvedFilter], fields: &[&str]) -> Result<Self::Prepared>;
+
+    /// Fold a prepared chunk through `consumer`. Errors and delivered-row semantics
+    /// match `fold_value` exactly.
+    fn fold_prepared<C>(prepared: &mut Self::Prepared, consumer: &mut C) -> Result<()>
+    where
+        C: Consumer<Self>;
+
     /// Streams every row matching the query into `consumer` without materializing a
     /// row vector.
     ///

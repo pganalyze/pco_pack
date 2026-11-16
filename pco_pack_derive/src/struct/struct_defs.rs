@@ -173,5 +173,16 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
         impl Columns<'_> {
             #(#columns_accessors)*
         }
+
+        /// One chunk decoded and filtered ahead of the fold, produced by
+        /// [`Chunk::prepare`] and consumed by [`Chunk::fold_prepared`]. The reader holds
+        /// every projected column decompressed and the mask holds the surviving rows, so
+        /// folding is the row loop alone. `Send` falls out structurally: the readers hold
+        /// owned compressed bytes and decoded columns.
+        pub struct Prepared {
+            reader: Reader,
+            matches: pco_pack::FilterMask,
+            row_count: usize,
+        }
     }
 }

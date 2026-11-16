@@ -460,6 +460,25 @@ pub fn generate_enum_tokens(
                 #(#variant_views)*
             }
 
+            /// Chunk framed, row-count validated, and query-filtered ahead of the
+            /// fold, produced by `PcoPack::prepare` and consumed by
+            /// `PcoPack::fold_prepared`. Struct models additionally warm every
+            /// projected column here; enum models keep the discriminant guarantee and
+            /// leave variant payload blocks lazy, because the folded consumer (invisible
+            /// to `prepare`) decides which blocks are touched.
+            pub struct Prepared {
+                reader: Reader,
+                matches: pco_pack::FilterMask,
+                row_count: usize,
+                /// Variants the plan pins the discriminant to; `None` when the plan is
+                /// empty or a range step bounds without enumerating.
+                pinned: Option<Vec<i64>>,
+                bounded: bool,
+                /// `false` when an empty plan left row-count validation to the fold: a
+                /// slot-streaming fold never needs the discriminant at all.
+                planned: bool,
+            }
+
             impl pco_pack::PcoSerde for #name {
                 type Writer = Writer;
                 type Reader = Reader;
@@ -678,34 +697,53 @@ pub fn generate_enum_tokens(
                             stringify!(#name)
                         ));
                     }
-                    // A pattern fold declares its variants through FIELDS (one or more
-                    // variant names); hydrating consumers declare nothing. The declared
-                    // set narrows the mask.
-                    let mut declared: Vec<i64> = Vec::new();
-                    for &name in <C as pco_pack::Consumer<Self>>::FIELDS {
-                        let disc: Option<i64> = match name {
+                    // Map the pattern fold's declared variants through the variant
+                    // table before touching a chunk, so a hand-written consumer naming
+                    // a missing variant errors even over an empty stream. fold_prepared
+                    // remaps them to decide its per-chunk walk.
+                    for &decl_name in <C as pco_pack::Consumer<Self>>::FIELDS {
+                        let disc: Option<i64> = match decl_name {
                             #variant_disc_arms
                             _ => None,
                         };
-                        let Some(disc) = disc else {
+                        let Some(_disc) = disc else {
                             return Err(pco_pack::anyhow::anyhow!(
                                 "Enum '{}' has no variant '{}'",
                                 stringify!(#name),
-                                name
+                                decl_name
                             ));
                         };
-                        declared.push(disc);
                     }
                     let execution_plan = <Self as pco_pack::PcoFilter>::resolve_query(query)?;
-                    // With nothing to filter, every row streams; skip the mask entirely.
-                    let stream_all = execution_plan.is_empty() && declared.is_empty();
+                    // Same prepare-then-fold shape the parallel pipeline uses.
+                    for chunk in chunks {
+                        let mut prepared = Self::prepare(chunk, &execution_plan, fields)?;
+                        Self::fold_prepared(&mut prepared, consumer)?;
+                    }
+                    Ok(())
+                }
+
+                type Prepared = Prepared;
+
+                fn prepare(
+                    chunk: &Self::Chunk,
+                    plan: &[pco_pack::ResolvedFilter],
+                    fields: &[&str],
+                ) -> pco_pack::anyhow::Result<Self::Prepared> {
+                    if !fields.is_empty() {
+                        return Err(pco_pack::anyhow::anyhow!(
+                            "Enum '{}' does not support field matches",
+                            stringify!(#name)
+                        ));
+                    }
                     // Every enum filter tests the discriminant column, so equality and
                     // inclusion steps together bound exactly which variants survive; a
                     // range step bounds without enumerating and clears the pin set.
-                    // Serves the fast path and the narrowing check below.
+                    // Serves the slot-streaming fast path and the narrowing check in
+                    // fold_prepared.
                     let mut pinned: Option<Vec<i64>> = None;
                     let mut bounded = true;
-                    for step in &execution_plan {
+                    for step in plan {
                         if !bounded {
                             break;
                         }
@@ -725,148 +763,213 @@ pub fn generate_enum_tokens(
                             _ => bounded = false,
                         }
                     }
+                    // Empty chunks carry nothing to frame or fold.
+                    if chunk.is_empty() {
+                        return Ok(Prepared {
+                            reader: Reader::default(),
+                            matches: pco_pack::FilterMask::ones(0),
+                            row_count: 0,
+                            pinned,
+                            bounded,
+                            planned: true,
+                        });
+                    }
+                    let mut cursor = std::io::Cursor::new(chunk.as_slice());
+                    let mut reader = <Self as pco_pack::PcoSerde>::read(&mut cursor, #float_round_attr, #time_round_attr)?;
+                    if plan.is_empty() {
+                        // No query to honor: defer row-count validation and the mask to
+                        // fold_prepared. A slot-streaming fold never reads the
+                        // discriminant, so this keeps its decode set empty.
+                        return Ok(Prepared {
+                            reader,
+                            matches: pco_pack::FilterMask::ones(0),
+                            row_count: 0,
+                            pinned,
+                            bounded,
+                            planned: false,
+                        });
+                    }
+                    let row_count: usize = <Self as pco_pack::PcoSerde>::validate_bounds(&mut reader)
+                        .context("Invalid enum payload")?
+                        .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
+                    let mut matches = pco_pack::FilterMask::ones(row_count);
+                    for step in plan {
+                        <Self as pco_pack::PcoFilter>::filter_step(&mut reader, &step.path, &step.filter, &mut matches)?;
+                        // This chunk contributes no survivors; the fold delivers nothing.
+                        if !matches.any_set_in_range(0..row_count) {
+                            return Ok(Prepared { reader, matches, row_count, pinned, bounded, planned: true });
+                        }
+                    }
+                    Ok(Prepared { reader, matches, row_count, pinned, bounded, planned: true })
+                }
+
+                fn fold_prepared<C>(
+                    prepared: &mut Self::Prepared,
+                    consumer: &mut C,
+                ) -> pco_pack::anyhow::Result<()>
+                where
+                    C: pco_pack::Consumer<Self>,
+                {
+                    // A pattern fold declares its variants through FIELDS (one or more
+                    // variant names); hydrating consumers declare nothing. The declared
+                    // set narrows the mask.
+                    let mut declared: Vec<i64> = Vec::new();
+                    for &decl_name in <C as pco_pack::Consumer<Self>>::FIELDS {
+                        let disc: Option<i64> = match decl_name {
+                            #variant_disc_arms
+                            _ => None,
+                        };
+                        let Some(disc) = disc else {
+                            return Err(pco_pack::anyhow::anyhow!(
+                                "Enum '{}' has no variant '{}'",
+                                stringify!(#name),
+                                decl_name
+                            ));
+                        };
+                        declared.push(disc);
+                    }
                     // Pattern and binding folds over a single payload variant stream
-                    // slots directly - no discriminant decode, row-count validation, or
-                    // mask - whenever no query step can drop a declared row: no steps at
-                    // all, or every step pins exactly that variant. Membership folds
-                    // read no slots and keep the mask path, which counts rows through
-                    // the discriminant without decoding the payload. Unit variants have
-                    // no slots, and a multi-arm fold needs the discriminant to dispatch.
+                    // slots directly - no mask - whenever no query step can drop a
+                    // declared row: no steps at all (an unplanned prepared value proves
+                    // the plan was empty), or every step pins exactly that variant.
+                    // Membership folds read no slots and keep the mask path; unit
+                    // variants have no slots, and a multi-arm fold needs the
+                    // discriminant to dispatch.
                     let pops = <C as pco_pack::Consumer<Self>>::POPS_PAYLOAD;
-                    let slot_stream = bounded
+                    let slot_stream = prepared.bounded
                         && declared.len() == 1
                         && pops.len() == 1
                         && pops[0]
-                        && match &pinned {
+                        && match &prepared.pinned {
                             Some(pins) => pins.as_slice() == declared.as_slice(),
-                            None => execution_plan.is_empty(),
+                            None => !prepared.planned,
                         };
-                    // Scratch mask reused across chunks; sized per chunk in the mask path.
-                    let mut matches = pco_pack::FilterMask::ones(0);
-                    'chunks: for chunk in chunks {
-                        if chunk.is_empty() {
-                            continue 'chunks;
-                        }
-                        let mut cursor = std::io::Cursor::new(chunk.as_slice());
-                        let mut reader = <Self as pco_pack::PcoSerde>::read(&mut cursor, #float_round_attr, #time_round_attr)?;
-
-                        if slot_stream {
-                            let slot_count: Option<usize> = match Some(declared[0]) {
+                    if slot_stream {
+                        let slot_count: Option<usize> = {
+                            let reader = &mut prepared.reader;
+                            match Some(declared[0]) {
                                 #slot_count_arms
                                 _ => None,
-                            };
-                            if let Some(slot_count) = slot_count {
-                                let mut columns = Columns { reader: &mut reader };
-                                for slot in 0..slot_count {
-                                    consumer.consume(&mut columns, slot)?;
-                                }
-                                // `slot_stream` already implies `pops[0]`, so the
-                                // chain needs no extra guard; it matches the single
-                                // declared variant's discriminant and checks its
-                                // cursor against the streamed slot count.
-                                #[cfg(debug_assertions)]
-                                {
-                                    #slot_stream_cursor_arms;
-                                }
-                                continue 'chunks;
                             }
+                        };
+                        if let Some(slot_count) = slot_count {
+                            let mut columns = Columns { reader: &mut prepared.reader };
+                            for slot in 0..slot_count {
+                                consumer.consume(&mut columns, slot)?;
+                            }
+                            // `slot_stream` already implies `pops[0]`, so the chain
+                            // needs no extra guard; it matches the single declared
+                            // variant's discriminant and checks its cursor against the
+                            // streamed slot count.
+                            #[cfg(debug_assertions)]
+                            {
+                                let reader = &prepared.reader;
+                                #slot_stream_cursor_arms;
+                            }
+                            return Ok(());
                         }
+                    }
 
-                        // Debug-only tally of rows delivered to each declared arm, so
-                        // the cursor cross-check below can tell a fold that skipped a
-                        // row from one that double-consumed.
-                        #[cfg(debug_assertions)]
-                        let mut __pco_delivered = vec![0usize; declared.len()];
+                    // Debug-only tally of rows delivered to each declared arm, so the
+                    // cursor cross-check below can tell a fold that skipped a row from
+                    // one that double-consumed.
+                    #[cfg(debug_assertions)]
+                    let mut __pco_delivered = vec![0usize; declared.len()];
 
-                        let row_count: usize = <Self as pco_pack::PcoSerde>::validate_bounds(&mut reader)
+                    let row_count: usize = if prepared.planned {
+                        prepared.row_count
+                    } else {
+                        // An empty plan deferred validation; every surviving row still
+                        // pays for the discriminant decode here.
+                        let row_count = <Self as pco_pack::PcoSerde>::validate_bounds(&mut prepared.reader)
                             .context("Invalid enum payload")?
                             .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
+                        prepared.matches.reset_ones(row_count);
+                        row_count
+                    };
+                    if !prepared.matches.any_set_in_range(0..row_count) {
+                        return Ok(());
+                    }
 
-                        if stream_all {
-                            let mut columns = Columns { reader: &mut reader };
-                            for row_index in 0..row_count {
-                                consumer.consume(&mut columns, row_index)?;
-                            }
-                            continue 'chunks;
+                    if !declared.is_empty() {
+                        // The narrowing keeps declared variants' rows. It is redundant
+                        // when the query steps already pin the discriminant inside the
+                        // declared set; the walk then touches the column once instead
+                        // of twice.
+                        let redundant = prepared
+                            .pinned
+                            .as_ref()
+                            .is_some_and(|pins| prepared.bounded && pins.iter().all(|d| declared.contains(d)));
+                        if !redundant {
+                            // Narrow the whole declared set in one pass over the column.
+                            let disc_filter = if declared.len() == 1 {
+                                pco_pack::Filter::I64(declared[0])
+                            } else {
+                                pco_pack::Filter::InclusionI64(declared.iter().copied().collect())
+                            };
+                            <Self as pco_pack::PcoFilter>::filter_bulk(
+                                &mut prepared.reader,
+                                0,
+                                &disc_filter,
+                                &mut prepared.matches,
+                            )?;
                         }
-
-                        matches.reset_ones(row_count);
-                        for step in &execution_plan {
-                            <Self as pco_pack::PcoFilter>::filter_step(&mut reader, &step.path, &step.filter, &mut matches)?;
-                            // This chunk contributed no survivors; try the next one.
-                            if !matches.any_set_in_range(0..row_count) {
-                                continue 'chunks;
-                            }
+                        if !prepared.matches.any_set_in_range(0..row_count) {
+                            return Ok(());
                         }
-
-                        if !declared.is_empty() {
-                            // The narrowing keeps declared variants' rows. It is
-                            // redundant when the query steps already pin the
-                            // discriminant inside the declared set; the walk then
-                            // touches the column once instead of twice.
-                            let redundant = pinned
-                                .as_ref()
-                                .is_some_and(|pins| bounded && pins.iter().all(|d| declared.contains(d)));
-                            if !redundant {
-                                // Narrow the whole declared set in one pass over the column.
-                                let disc_filter = if declared.len() == 1 {
-                                    pco_pack::Filter::I64(declared[0])
-                                } else {
-                                    pco_pack::Filter::InclusionI64(declared.iter().copied().collect())
-                                };
-                                <Self as pco_pack::PcoFilter>::filter_bulk(&mut reader, 0, &disc_filter, &mut matches)?;
-                                if !matches.any_set_in_range(0..row_count) {
-                                    continue 'chunks;
-                                }
-                            }
-                        }
-                        if declared.len() > 1 {
-                            // Multi-arm fold: every declared variant is already pinned
-                            // into the mask, so each row dispatches to the arm at its
-                            // discriminant's position. The column decodes once and
-                            // lookups are random access, one read per surviving row.
-                            matches.for_each_set_row(row_count, |row_index| {
-                                let disc = <i64 as pco_pack::PcoSerde>::get(reader.row_variant.reader_mut()?, row_index)?
-                                    .ok_or_else(|| pco_pack::anyhow::anyhow!("Missing discriminant at row {}", row_index))?;
-                                let Some(variant) = declared.iter().position(|&d| d == disc) else {
-                                    return Err(pco_pack::anyhow::anyhow!(
-                                        "Row {} carries discriminant {} outside the declared variants",
-                                        row_index,
-                                        disc
-                                    ));
-                                };
-                                #[cfg(debug_assertions)]
-                                {
-                                    __pco_delivered[variant] += 1;
-                                }
-                                let mut columns = Columns { reader: &mut reader };
-                                consumer.consume_variant(&mut columns, row_index, variant)
+                    }
+                    if declared.len() > 1 {
+                        // Multi-arm fold: every declared variant is already pinned into
+                        // the mask, so each row dispatches to the arm at its
+                        // discriminant's position. The column decodes once and lookups
+                        // are random access, one read per surviving row.
+                        prepared.matches.for_each_set_row(row_count, |row_index| {
+                            let disc = <i64 as pco_pack::PcoSerde>::get(
+                                prepared.reader.row_variant.reader_mut()?,
+                                row_index,
+                            )?
+                            .ok_or_else(|| {
+                                pco_pack::anyhow::anyhow!("Missing discriminant at row {}", row_index)
                             })?;
-                        } else {
-                            let mut columns = Columns { reader: &mut reader };
-                            matches.for_each_set_row(row_count, |row_index| {
-                                #[cfg(debug_assertions)]
-                                if let Some(n) = __pco_delivered.first_mut() {
-                                    *n += 1;
-                                }
-                                consumer.consume(&mut columns, row_index)
-                            })?;
-                        }
-                        // A payload arm that skipped or repeated its view call misaligns
-                        // every later slot; this is the last place the engine can still
-                        // see the discrepancy.
-                        #[cfg(debug_assertions)]
-                        if !pops.is_empty() {
-                            debug_assert!(
-                                pops.len() == declared.len(),
-                                "Consumer::POPS_PAYLOAD must align with FIELDS"
-                            );
-                            for __pco_arm in 0..pops.len().min(declared.len()) {
-                                if !pops[__pco_arm] {
-                                    continue;
-                                }
-                                #delivered_cursor_arms;
+                            let Some(variant) = declared.iter().position(|&d| d == disc) else {
+                                return Err(pco_pack::anyhow::anyhow!(
+                                    "Row {} carries discriminant {} outside the declared variants",
+                                    row_index,
+                                    disc
+                                ));
+                            };
+                            #[cfg(debug_assertions)]
+                            {
+                                __pco_delivered[variant] += 1;
                             }
+                            let mut columns = Columns { reader: &mut prepared.reader };
+                            consumer.consume_variant(&mut columns, row_index, variant)
+                        })?;
+                    } else {
+                        let mut columns = Columns { reader: &mut prepared.reader };
+                        prepared.matches.for_each_set_row(row_count, |row_index| {
+                            #[cfg(debug_assertions)]
+                            if let Some(n) = __pco_delivered.first_mut() {
+                                *n += 1;
+                            }
+                            consumer.consume(&mut columns, row_index)
+                        })?;
+                    }
+                    // A payload arm that skipped or repeated its view call misaligns
+                    // every later slot; this is the last place the engine can still see
+                    // the discrepancy.
+                    #[cfg(debug_assertions)]
+                    if !pops.is_empty() {
+                        debug_assert!(
+                            pops.len() == declared.len(),
+                            "Consumer::POPS_PAYLOAD must align with FIELDS"
+                        );
+                        let reader = &prepared.reader;
+                        for __pco_arm in 0..pops.len().min(declared.len()) {
+                            if !pops[__pco_arm] {
+                                continue;
+                            }
+                            #delivered_cursor_arms;
                         }
                     }
                     Ok(())

@@ -155,15 +155,35 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
                 base.extend_from_slice(<C as pco_pack::Consumer<Self>>::FIELDS);
                 let fields = <#name as pco_pack::PcoPack>::resolve_fields(query, &base)?;
                 let plan = <#name as pco_pack::PcoFilter>::resolve_query(query)?;
-                // Validate once up front even when there are no chunks; the order
-                // buffer and mask are scratch reused per chunk.
+                // Validate once up front even when there are no chunks.
                 Self::Chunk::validate_projection(&fields)?;
-                let mut order: Vec<usize> = Vec::new();
-                let mut matches = pco_pack::FilterMask::ones(0);
+                // Same prepare-then-fold shape the parallel pipeline uses: decode and
+                // filter one chunk, then hand the finished value to the consumer.
                 for c in chunks {
-                    c.fold_chunk(&plan, &fields, &mut order, &mut matches, consumer)?;
+                    let mut prepared = Self::Chunk::prepare(c, &plan, &fields)?;
+                    Self::Chunk::fold_prepared(&mut prepared, consumer)?;
                 }
                 Ok(())
+            }
+
+            type Prepared = Prepared;
+
+            fn prepare(
+                chunk: &Self::Chunk,
+                plan: &[pco_pack::ResolvedFilter],
+                fields: &[&str],
+            ) -> pco_pack::anyhow::Result<Self::Prepared> {
+                Chunk::prepare(chunk, plan, fields)
+            }
+
+            fn fold_prepared<C>(
+                prepared: &mut Self::Prepared,
+                consumer: &mut C,
+            ) -> pco_pack::anyhow::Result<()>
+            where
+                C: pco_pack::Consumer<Self>,
+            {
+                Chunk::fold_prepared(prepared, consumer)
             }
 
             fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
