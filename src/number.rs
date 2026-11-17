@@ -92,6 +92,13 @@ macro_rules! impl_pco_number {
                 Ok(reader.values.get(index).copied())
             }
 
+            /// Typed gather over the decoded value buffer: fully selected mask
+            /// words extend contiguously, no per-row dispatch.
+            fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()> {
+                gather_mask_copy(&reader.values, mask, out);
+                Ok(())
+            }
+
             /// Rules the column out without decompression, using the write-time
             /// bounds prefix; no prefix, a foreign kind, or an inexact fold all
             /// answer false.

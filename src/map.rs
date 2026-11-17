@@ -89,8 +89,8 @@ where
 
 impl<K, V> PcoSerde for BTreeMap<K, V>
 where
-    K: PcoSerde + Hash + Eq + Ord,
-    V: PcoSerde,
+    K: PcoSerde + Hash + Eq + Ord + Default,
+    V: PcoSerde + Default,
     K::Reader: Clone + Default,
     V::Reader: Clone + Default,
 {
@@ -165,12 +165,71 @@ where
         }
         Ok(Some(map))
     }
+
+    /// Chunk-major survivor rows: project each surviving row's entry span onto
+    /// the flat key/value streams, gather both once through their own typed
+    /// loops, and move the owned pairs into rows. The deep clone of every
+    /// survivor that the row-at-a-time fallback paid (a `serde_json::Value`
+    /// tree clone is many allocations) is gone. The scan clamps to the
+    /// caller's mask word span, which covers every row below the mask's
+    /// length: rows past the last survivor but below that length select
+    /// nothing, and the cursor advances past them anyway. Rows the forward
+    /// cursor has passed read empty as the documented gather leniency for
+    /// out-of-contract cursor reuse, not parity with `get`.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> Result<()>
+    where
+        Self: Default,
+    {
+        let mask_words = mask.gather_words();
+        let rows = reader.entry_counts.len().min(mask_words.len() * 64);
+        let mut inner_mask: Vec<u64> = Vec::new();
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        let mut offset = reader.cached_offset;
+        for i in reader.count_index..rows {
+            let count = reader.entry_counts[i] as usize;
+            if (mask_words[i >> 6] >> (i & 63)) & 1 == 1 {
+                crate::set_bits(&mut inner_mask, offset, count);
+                spans.push((i, count));
+            }
+            offset += count;
+        }
+        reader.cached_offset = offset;
+        reader.count_index = rows;
+        let mut keys: Vec<K> = Vec::new();
+        let mut values: Vec<V> = Vec::new();
+        if !inner_mask.is_empty() {
+            let inner_mask = FilterMask::from_raw_words(inner_mask);
+            K::gather(&mut reader.keys, &inner_mask, &mut keys)?;
+            V::gather(&mut reader.values, &inner_mask, &mut values)?;
+        }
+        let mut kit = keys.into_iter();
+        let mut vit = values.into_iter();
+        let mut next = spans.into_iter();
+        let mut pending = next.next();
+        for_each_set_bit(mask, |row| {
+            match pending {
+                Some((span_row, count)) if span_row == row => {
+                    let mut map = BTreeMap::new();
+                    for _ in 0..count {
+                        if let (Some(k), Some(v)) = (kit.next(), vit.next()) {
+                            map.insert(k, v);
+                        }
+                    }
+                    out.push(map);
+                    pending = next.next();
+                }
+                Some(_) | None => out.push(BTreeMap::new()),
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
 }
 
 impl<K, V> PcoFilter for BTreeMap<K, V>
 where
-    K: PcoFilter + Hash + Eq + Ord,
-    V: PcoSerde,
+    K: PcoFilter + Hash + Eq + Ord + Default,
+    V: PcoSerde + Default,
     K::Reader: Clone + Default,
     V::Reader: Clone + Default,
 {
@@ -212,8 +271,8 @@ where
 // at the cost of slightly higher serialization times.
 impl<K, V> PcoSerde for HashMap<K, V>
 where
-    K: PcoSerde + Hash + Eq + Ord,
-    V: PcoSerde,
+    K: PcoSerde + Hash + Eq + Ord + Default,
+    V: PcoSerde + Default,
     K::Reader: Clone + Default,
     V::Reader: Clone + Default,
 {
@@ -272,12 +331,64 @@ where
         }
         Ok(Some(map))
     }
+
+    /// The storage is BTreeMap's, so the surviving rows project onto the same
+    /// flat entry spans `BTreeMap::gather` uses; pairs move into each HashMap.
+    /// The scan clamps to the caller's mask word span.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> Result<()>
+    where
+        Self: Default,
+    {
+        let mask_words = mask.gather_words();
+        let rows = reader.entry_counts.len().min(mask_words.len() * 64);
+        let mut inner_mask: Vec<u64> = Vec::new();
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        let mut offset = reader.cached_offset;
+        for i in reader.count_index..rows {
+            let count = reader.entry_counts[i] as usize;
+            if (mask_words[i >> 6] >> (i & 63)) & 1 == 1 {
+                crate::set_bits(&mut inner_mask, offset, count);
+                spans.push((i, count));
+            }
+            offset += count;
+        }
+        reader.cached_offset = offset;
+        reader.count_index = rows;
+        let mut keys: Vec<K> = Vec::new();
+        let mut values: Vec<V> = Vec::new();
+        if !inner_mask.is_empty() {
+            let inner_mask = FilterMask::from_raw_words(inner_mask);
+            K::gather(&mut reader.keys, &inner_mask, &mut keys)?;
+            V::gather(&mut reader.values, &inner_mask, &mut values)?;
+        }
+        let mut kit = keys.into_iter();
+        let mut vit = values.into_iter();
+        let mut next = spans.into_iter();
+        let mut pending = next.next();
+        for_each_set_bit(mask, |row| {
+            match pending {
+                Some((span_row, count)) if span_row == row => {
+                    let mut map = HashMap::with_capacity(count);
+                    for _ in 0..count {
+                        if let (Some(k), Some(v)) = (kit.next(), vit.next()) {
+                            map.insert(k, v);
+                        }
+                    }
+                    out.push(map);
+                    pending = next.next();
+                }
+                Some(_) | None => out.push(HashMap::new()),
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
 }
 
 impl<K, V> PcoFilter for HashMap<K, V>
 where
-    K: PcoFilter + Hash + Eq + Ord,
-    V: PcoSerde,
+    K: PcoFilter + Hash + Eq + Ord + Default,
+    V: PcoSerde + Default,
     K::Reader: Clone + Default,
     V::Reader: Clone + Default,
 {

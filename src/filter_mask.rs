@@ -14,6 +14,13 @@ impl FilterMask {
         Self(bitvec![u64, Lsb0; 1; len])
     }
 
+    /// Adopts already tail-clean raw words as a mask, for container gathers
+    /// that project a row-space mask into inner row space word by word.
+    #[inline]
+    pub(crate) fn from_raw_words(words: Vec<u64>) -> Self {
+        Self(BitVec::from_slice(&words))
+    }
+
     /// Fill all bits with the given value.
     #[inline]
     pub fn fill(&mut self, val: bool) {
@@ -57,6 +64,23 @@ impl FilterMask {
     #[inline]
     pub fn as_raw_slice(&self) -> &[u64] {
         self.0.as_raw_slice()
+    }
+
+    /// The raw words covering this mask's bits, with any bits beyond its length
+    /// cleared: the span positional gathers traverse. Borrows unless a writer
+    /// left tail bits behind.
+    #[inline]
+    pub fn gather_words(&self) -> std::borrow::Cow<'_, [u64]> {
+        let len = self.0.len();
+        let raw = &self.0.as_raw_slice()[..len.div_ceil(64)];
+        let rem = len % 64;
+        if rem == 0 || raw.last().is_none_or(|w| w >> rem == 0) {
+            std::borrow::Cow::Borrowed(raw)
+        } else {
+            let mut owned = raw.to_vec();
+            *owned.last_mut().unwrap() &= (1u64 << rem) - 1;
+            std::borrow::Cow::Owned(owned)
+        }
     }
 
     /// Calls `f` for every set bit below `row_count`, ascending, stopping at the first

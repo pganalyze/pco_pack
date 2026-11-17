@@ -11,7 +11,7 @@ struct VecF64 {
     values: Vec<f64>,
 }
 
-#[derive(Clone, PcoPack, Debug, PartialEq)]
+#[derive(Clone, PcoPack, Debug, PartialEq, Default)]
 struct NestedRow {
     id: u32,
     label: String,

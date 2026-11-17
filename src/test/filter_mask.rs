@@ -200,3 +200,20 @@ fn from_bool_slice_word_content() {
     assert_eq!(raw[1], 1 | (1 << 63));
     assert_eq!(raw[2], 1 << 1);
 }
+
+#[test]
+fn gather_words_clears_dirty_padding() {
+    // Defense in depth: a writer that left bits set past the mask's length
+    // must not leak them into the word span the positional gathers scan.
+    // (`FilterMask::ones` itself can leave padding set, so this is not a
+    // hypothetical.)
+    let mut m = FilterMask::ones(70);
+    m.0.as_raw_mut_slice()[1] |= !((1u64 << 6) - 1);
+    let words = m.gather_words();
+    assert_eq!(words.len(), 2);
+    assert_eq!(words[0], u64::MAX);
+    assert_eq!(words[1], (1u64 << 6) - 1);
+    // A mask whose tail is already clean costs no copy.
+    let clean = FilterMask::from_bool_slice(&[true; 70]);
+    assert!(matches!(clean.gather_words(), std::borrow::Cow::Borrowed(_)));
+}

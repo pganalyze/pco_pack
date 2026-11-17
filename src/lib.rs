@@ -245,6 +245,88 @@ pub fn projection_fields<R: PcoPack, C: Consumer<R>>() -> &'static [&'static str
     C::FIELDS
 }
 
+/// Visit each set bit of `mask` by its absolute row index, in ascending order,
+/// stopping at the first `Err`. The word span stops at the mask's length, so
+/// the indices never reach past the last valid row.
+pub(crate) fn for_each_set_bit(mask: &FilterMask, mut visit: impl FnMut(usize) -> Result<()>) -> Result<()> {
+    let mut base = 0usize;
+    for &word in mask.gather_words().iter() {
+        let mut word = word;
+        while word != 0 {
+            visit(base + word.trailing_zeros() as usize)?;
+            word &= word - 1;
+        }
+        base += 64;
+    }
+    Ok(())
+}
+
+/// Row-at-a-time gather for readers without a typed-buffer override. A missing
+/// row (`get` answering `Ok(None)`) reads `Default`, matching `pop_inner` for
+/// schema-evolution-short columns, but a `get` error propagates so corrupt
+/// data fails loudly instead of zero-filling survivors.
+pub(crate) fn gather_via_get<T: PcoSerde + Default>(
+    reader: &mut T::Reader, mask: &FilterMask, out: &mut Vec<T>,
+) -> Result<()> {
+    for_each_set_bit(mask, |index| match T::get(reader, index) {
+        Ok(Some(v)) => {
+            out.push(v);
+            Ok(())
+        }
+        Ok(None) => {
+            out.push(T::default());
+            Ok(())
+        }
+        Err(e) => Err(e),
+    })
+}
+
+/// Set `len` bits starting at `start`, growing `mask` with zero words as
+/// needed. Containers project a survivor row's contiguous inner span
+/// `[start, start + len)` onto the inner row space with this, so the inner
+/// column's own gather can answer every survivor span in one typed pass.
+pub(crate) fn set_bits(mask: &mut Vec<u64>, start: usize, len: usize) {
+    if len == 0 {
+        return;
+    }
+    let end = start + len;
+    mask.resize(mask.len().max(end.div_ceil(64)), 0);
+    let mut pos = start;
+    while pos < end {
+        let w = pos >> 6;
+        let bit = pos & 63;
+        let run = (64 - bit).min(end - pos);
+        mask[w] |= if run == 64 { u64::MAX } else { ((1u64 << run) - 1) << bit };
+        pos += run;
+    }
+}
+
+/// Column-major gather of `Copy` values from a decoded buffer, appending survivors
+/// to `out` in ascending row order. A fully selected word extends from the buffer
+/// in one contiguous block instead of an indexed walk. Indices past the end of
+/// the buffer push `Default`, matching `pop_inner` semantics for absent columns.
+pub(crate) fn gather_mask_copy<T: Copy + Default>(values: &[T], mask: &FilterMask, out: &mut Vec<T>) {
+    out.reserve(mask.count_ones().saturating_sub(out.len()));
+    let mut base = 0usize;
+    for &word in mask.gather_words().iter() {
+        if word == u64::MAX {
+            let available = values.len().saturating_sub(base).min(64);
+            if available > 0 {
+                out.extend_from_slice(&values[base..base + available]);
+            }
+            out.extend((0..64 - available).map(|_| T::default()));
+        } else {
+            let mut word = word;
+            while word != 0 {
+                let index = base + word.trailing_zeros() as usize;
+                out.push(values.get(index).copied().unwrap_or_default());
+                word &= word - 1;
+            }
+        }
+        base += 64;
+    }
+}
+
 /// Basic columnar write and read for a single type.
 pub trait PcoSerde: Sized + Clone {
     type Writer: Default;
@@ -276,6 +358,25 @@ pub trait PcoSerde: Sized + Clone {
     /// Get the element at `index`. Iteration always moves forward (never backward),
     /// so lazy decompressors may advance their internal cursor without resetting.
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>>;
+
+    /// Append every survivor to `out`, in ascending row order, reading `mask`
+    /// through its tail-clean word span. Readers over fully decoded column
+    /// buffers override this with one typed loop per column. Forward-cursor
+    /// containers override it by projecting the row-space mask onto their
+    /// inner row space and moving the inner column's owned values into each
+    /// row; the row-at-a-time fallback below remains for readers that cannot,
+    /// and visits indices in ascending order matching `pop_inner` semantics
+    /// (missing rows push `Default`).
+    ///
+    /// Missing rows are legitimate (schema evolution shortens a column) and
+    /// answer `Default`, but a decode failure is corrupt data and must surface:
+    /// a gather either answers exactly one value per set bit or returns `Err`.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> Result<()>
+    where
+        Self: Default,
+    {
+        gather_via_get(reader, mask, out)
+    }
 
     /// True when a compressed column blob's write-time bounds prefix proves no
     /// row in the blob can match `filter`, letting callers skip decompression
@@ -417,7 +518,11 @@ impl Filter {
 
 /// Dispatch trait for `Vec<T>`, serializing inner elements via `T::write()`
 /// for optimal per-field compression.
-pub trait VecPackable: PcoSerde {
+///
+/// `Default` is a supertrait because `gather_vec` moves rows through the
+/// inner column's `gather`, whose bound requires it, and absent or
+/// before-cursor spans must still push exactly one empty `Vec` per mask bit.
+pub trait VecPackable: PcoSerde + Default {
     type VecWriter: Default;
     type VecReader;
 
@@ -433,6 +538,11 @@ pub trait VecPackable: PcoSerde {
     fn reader_len(reader: &Self::VecReader) -> Result<usize>;
 
     fn get_vec(reader: &mut Self::VecReader, index: usize) -> Result<Option<Vec<Self>>>;
+
+    /// Append every survivor row to `out`, moving owned inner values out of one
+    /// `Self::gather` call over the concatenated inner span of the surviving rows
+    /// instead of cloning element by element like `get_vec` does.
+    fn gather_vec(reader: &mut Self::VecReader, mask: &FilterMask, out: &mut Vec<Vec<Self>>) -> Result<()>;
 
     fn filter_vec(reader: &Self::VecReader, filter: &Filter, matches: &mut FilterMask) -> Result<()>;
 

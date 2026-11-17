@@ -149,13 +149,13 @@ First four rows use native `vortex.map`, the rest struct promotion. Struct promo
 | Metric           | PcoPack | Vortex   | columnar | serde_columnar | msgpack |
 |------------------|---------|----------|----------|----------------|---------|
 | Size             | 6.2 MB  | 6.5 MB   | 8.1 MB   | 7.1 MB         | 9.9 MB  |
-| Serialize        | 73.4 ms | 123.3 ms | 57.4 ms  | 61.8 ms        | 83.2 ms |
-| Deserialize      | 36.9 ms | 50.7 ms  | 19.2 ms  | 36.9 ms        | 68.0 ms |
-| Filter 20%       | 7.3 ms  | 1.4 ms   | 20.5 ms  | 37.8 ms        | 73.4 ms |
-| Filter <0.01%    | 3.0 ms  | 0.7 ms   | 21.2 ms  | 38.1 ms        | 75.5 ms |
+| Serialize        | 73.5 ms | 123.3 ms | 57.4 ms  | 61.8 ms        | 83.2 ms |
+| Deserialize      | 32.0 ms | 50.7 ms  | 19.2 ms  | 36.9 ms        | 68.0 ms |
+| Filter 20%       | 6.4 ms  | 1.4 ms   | 20.5 ms  | 37.8 ms        | 73.4 ms |
+| Filter <0.01%    | 3.1 ms  | 0.7 ms   | 21.2 ms  | 38.1 ms        | 75.5 ms |
 | Text eq (1 rows) | 14.9 ms | 5.5 ms   | 21.1 ms  | 37.9 ms        | 76.5 ms |
 | Text miss        | 13.2 ms | 0.0 ms   | 20.4 ms  | 37.6 ms        | 74.6 ms |
-| Text IN (2 rows) | 15.8 ms | 11.4 ms  | 22.0 ms  | 38.8 ms        | 75.1 ms |
+| Text IN (2 rows) | 16.0 ms | 11.4 ms  | 22.0 ms  | 38.8 ms        | 75.1 ms |
 | Reduce 70.04%    | 4.6 ms  | 5.1 ms   | 23.7 ms  | 40.9 ms        | 78.6 ms |
 | Reduce <0.01%    | 1.6 ms  | 0.7 ms   | 21.4 ms  | 39.0 ms        | 77.9 ms |
 
@@ -168,13 +168,13 @@ First four rows use native `vortex.map`, the rest struct promotion. Struct promo
 | Metric                  | PcoPack | Vortex  | columnar | serde_columnar | msgpack |
 |-------------------------|---------|---------|----------|----------------|---------|
 | Size                    | 1542 KB | 1743 KB | 2.2 MB   | 1579 KB        | 2.1 MB  |
-| Serialize               | 29.7 ms | 97.5 ms | 34.7 ms  | 41.0 ms        | 23.1 ms |
-| Deserialize             | 32.0 ms | 29.2 ms | 21.6 ms  | 25.5 ms        | 30.0 ms |
+| Serialize               | 29.2 ms | 97.5 ms | 34.7 ms  | 41.0 ms        | 23.1 ms |
+| Deserialize             | 32.3 ms | 29.2 ms | 21.6 ms  | 25.5 ms        | 30.0 ms |
 | Filter Tick 10%         | 7.5 ms  | 0.1 ms  | 22.3 ms  | 26.3 ms        | 30.2 ms |
-| Filter Note 60%         | 23.0 ms | 0.1 ms  | 22.4 ms  | 26.1 ms        | 30.3 ms |
-| Filter Tick or Note 70% | 32.0 ms | 0.1 ms  | 22.4 ms  | 26.2 ms        | 30.4 ms |
+| Filter Note 60%         | 23.5 ms | 0.1 ms  | 22.4 ms  | 26.1 ms        | 30.3 ms |
+| Filter Tick or Note 70% | 32.4 ms | 0.1 ms  | 22.4 ms  | 26.2 ms        | 30.4 ms |
 | Reduce Tick 10%         | 0.7 ms  | 1.7 ms  | 22.1 ms  | 26.6 ms        | 30.2 ms |
-| Reduce Note 60%         | 22.3 ms | 17.4 ms | 26.5 ms  | 31.1 ms        | 32.4 ms |
+| Reduce Note 60%         | 22.6 ms | 17.4 ms | 26.5 ms  | 31.1 ms        | 32.4 ms |
 
 ## Timeline
 
@@ -200,8 +200,8 @@ First four rows use native `vortex.map`, the rest struct promotion. Struct promo
 | 10%        | 1.3 ms   | 7.2 ms   | 6.9 ms        | 5.5x               | 1.04x              |
 | 20%        | 2.3 ms   | 7.3 ms   | 7.1 ms        | 3.2x               | 1.03x              |
 | 50%        | 5.1 ms   | 6.4 ms   | 6.2 ms        | 1.3x               | 1.03x              |
-| 80%        | 7.9 ms   | 4.5 ms   | 4.2 ms        | 0.6x               | 1.07x              |
-| 90%        | 8.8 ms   | 4.5 ms   | 4.3 ms        | 0.5x               | 1.05x              |
+| 80%        | 7.8 ms   | 4.5 ms   | 4.2 ms        | 0.6x               | 1.07x              |
+| 90%        | 8.8 ms   | 4.5 ms   | 4.2 ms        | 0.5x               | 1.07x              |
 
 ## chunk_size
 
@@ -211,37 +211,37 @@ First four rows use native `vortex.map`, the rest struct promotion. Struct promo
 
 | Chunk size    | Size   | Serialize | Deserialize | Chunks | Write peak | Read peak |
 |---------------|--------|-----------|-------------|--------|------------|-----------|
-| 2^13 = 8192   | 163 KB | 22.9 ms   | 7.9 ms      | 64     | 6.0 MB     | 24.4 MB   |
-| 2^14 = 16384  | 150 KB | 20.0 ms   | 7.6 ms      | 32     | 6.0 MB     | 24.6 MB   |
-| 2^15 = 32768  | 143 KB | 17.7 ms   | 7.4 ms      | 16     | 6.5 MB     | 25.1 MB   |
-| 2^16 = 65536  | 140 KB | 16.3 ms   | 7.2 ms      | 8      | 8.8 MB     | 26.1 MB   |
-| 2^17 = 131072 | 139 KB | 15.6 ms   | 7.1 ms      | 4      | 13.4 MB    | 28.1 MB   |
-| 2^18 = 262144 | 138 KB | 16.0 ms   | 7.2 ms      | 2      | 22.6 MB    | 32.1 MB   |
-| 2^19 = 524288 | 138 KB | 15.9 ms   | 7.1 ms      | 1      | 27.1 MB    | 32.1 MB   |
+| 2^13 = 8192   | 163 KB | 22.9 ms   | 7.3 ms      | 64     | 6.0 MB     | 24.4 MB   |
+| 2^14 = 16384  | 150 KB | 20.0 ms   | 6.8 ms      | 32     | 6.0 MB     | 24.6 MB   |
+| 2^15 = 32768  | 143 KB | 17.7 ms   | 6.5 ms      | 16     | 6.5 MB     | 25.1 MB   |
+| 2^16 = 65536  | 140 KB | 16.3 ms   | 6.4 ms      | 8      | 8.8 MB     | 26.1 MB   |
+| 2^17 = 131072 | 139 KB | 15.5 ms   | 6.3 ms      | 4      | 13.4 MB    | 28.1 MB   |
+| 2^18 = 262144 | 138 KB | 16.0 ms   | 6.5 ms      | 2      | 22.6 MB    | 32.1 MB   |
+| 2^19 = 524288 | 138 KB | 15.9 ms   | 6.3 ms      | 1      | 27.1 MB    | 41.4 MB   |
 
 ### MediumStruct (80 bytes/row)
 
 | Chunk size    | Size   | Serialize | Deserialize | Chunks | Write peak | Read peak |
 |---------------|--------|-----------|-------------|--------|------------|-----------|
-| 2^13 = 8192   | 691 KB | 63.0 ms   | 38.1 ms     | 64     | 6.0 MB     | 65.9 MB   |
-| 2^14 = 16384  | 670 KB | 58.4 ms   | 37.7 ms     | 32     | 6.7 MB     | 66.6 MB   |
-| 2^15 = 32768  | 775 KB | 57.3 ms   | 37.2 ms     | 16     | 8.8 MB     | 68.3 MB   |
-| 2^16 = 65536  | 572 KB | 52.1 ms   | 36.5 ms     | 8      | 12.5 MB    | 71.1 MB   |
-| 2^17 = 131072 | 556 KB | 51.3 ms   | 36.5 ms     | 4      | 20.5 MB    | 77.2 MB   |
-| 2^18 = 262144 | 661 KB | 52.8 ms   | 36.2 ms     | 2      | 36.4 MB    | 89.5 MB   |
-| 2^19 = 524288 | 715 KB | 53.4 ms   | 36.1 ms     | 1      | 68.0 MB    | 89.6 MB   |
+| 2^13 = 8192   | 691 KB | 62.7 ms   | 31.6 ms     | 64     | 6.0 MB     | 65.9 MB   |
+| 2^14 = 16384  | 670 KB | 58.4 ms   | 31.1 ms     | 32     | 6.7 MB     | 66.6 MB   |
+| 2^15 = 32768  | 775 KB | 57.2 ms   | 30.5 ms     | 16     | 8.8 MB     | 68.3 MB   |
+| 2^16 = 65536  | 572 KB | 52.6 ms   | 29.9 ms     | 8      | 12.5 MB    | 71.1 MB   |
+| 2^17 = 131072 | 556 KB | 51.6 ms   | 29.7 ms     | 4      | 20.5 MB    | 79.4 MB   |
+| 2^18 = 262144 | 661 KB | 52.9 ms   | 29.4 ms     | 2      | 36.4 MB    | 89.5 MB   |
+| 2^19 = 524288 | 715 KB | 53.5 ms   | 29.4 ms     | 1      | 68.0 MB    | 129.6 MB  |
 
 ### LargeStruct (176 bytes/row)
 
 | Chunk size    | Size    | Serialize | Deserialize | Chunks | Write peak | Read peak |
 |---------------|---------|-----------|-------------|--------|------------|-----------|
-| 2^13 = 8192   | 1324 KB | 157.8 ms  | 80.6 ms     | 64     | 7.1 MB     | 146.7 MB  |
-| 2^14 = 16384  | 1254 KB | 145.1 ms  | 79.5 ms     | 32     | 8.9 MB     | 148.4 MB  |
-| 2^15 = 32768  | 1219 KB | 138.2 ms  | 79.1 ms     | 16     | 12.4 MB    | 151.8 MB  |
-| 2^16 = 65536  | 1204 KB | 136.0 ms  | 78.5 ms     | 8      | 19.6 MB    | 158.7 MB  |
-| 2^17 = 131072 | 1198 KB | 135.6 ms  | 78.3 ms     | 4      | 34.0 MB    | 172.6 MB  |
-| 2^18 = 262144 | 1194 KB | 138.7 ms  | 77.6 ms     | 2      | 62.7 MB    | 200.5 MB  |
-| 2^19 = 524288 | 1193 KB | 137.3 ms  | 77.5 ms     | 1      | 120.2 MB   | 200.5 MB  |
+| 2^13 = 8192   | 1324 KB | 159.1 ms  | 69.5 ms     | 64     | 7.1 MB     | 146.7 MB  |
+| 2^14 = 16384  | 1254 KB | 149.3 ms  | 68.1 ms     | 32     | 8.9 MB     | 148.4 MB  |
+| 2^15 = 32768  | 1219 KB | 142.1 ms  | 67.5 ms     | 16     | 12.4 MB    | 151.8 MB  |
+| 2^16 = 65536  | 1204 KB | 138.4 ms  | 66.8 ms     | 8      | 19.6 MB    | 158.7 MB  |
+| 2^17 = 131072 | 1198 KB | 138.7 ms  | 66.7 ms     | 4      | 34.0 MB    | 178.4 MB  |
+| 2^18 = 262144 | 1194 KB | 138.4 ms  | 65.9 ms     | 2      | 62.7 MB    | 200.5 MB  |
+| 2^19 = 524288 | 1193 KB | 138.6 ms  | 65.6 ms     | 1      | 120.2 MB   | 288.3 MB  |
 
 ## Filters
 
@@ -249,53 +249,53 @@ PcoPack skips deserializing non-matching rows: a 1%-selective filter pays ~20% o
 
 | Filter                                               | Time (ms) | Rows   |
 |------------------------------------------------------|-----------|--------|
-| no filter                                            | 31.7 ms   | 100000 |
-| empty filter                                         | 31.9 ms   | 100000 |
+| no filter                                            | 24.3 ms   | 100000 |
+| empty filter                                         | 24.4 ms   | 100000 |
 | i64 exact (id == 50_000)                             | 5.9 ms    | 1000   |
 | i64 range (50_000..=50_999)                          | 5.9 ms    | 1000   |
-| i64 inclusion (100 values, 1 match)                  | 6.4 ms    | 1000   |
-| i32 exact (int32_val == 50)                          | 5.8 ms    | 1000   |
-| i32 range (50..=50.99)                               | 5.8 ms    | 1000   |
-| i32 inclusion (100 values, 1 match)                  | 5.9 ms    | 1000   |
-| i8 exact (int8_val == 50)                            | 5.8 ms    | 1000   |
-| i8 range (50..=50.99)                                | 5.8 ms    | 1000   |
+| i64 inclusion (100 values, 1 match)                  | 6.0 ms    | 1000   |
+| i32 exact (int32_val == 50)                          | 5.9 ms    | 1000   |
+| i32 range (50..=50.99)                               | 5.9 ms    | 1000   |
+| i32 inclusion (100 values, 1 match)                  | 6.0 ms    | 1000   |
+| i8 exact (int8_val == 50)                            | 5.9 ms    | 1000   |
+| i8 range (50..=50.99)                                | 5.9 ms    | 1000   |
 | i8 inclusion (100 values, 1 match)                   | 6.0 ms    | 1000   |
-| u8 exact (u8_val == 50)                              | 6.3 ms    | 1000   |
-| u8 range (50..=50.99)                                | 6.3 ms    | 1000   |
-| u8 inclusion (100 values, 1 match)                   | 5.9 ms    | 1000   |
-| f64 exact (float64_val == 50.0)                      | 5.8 ms    | 1000   |
-| f64 range (50.0..=50.99)                             | 5.8 ms    | 1000   |
-| f64 inclusion (100 values, 1 match)                  | 8.1 ms    | 1000   |
-| f32 exact (float32_val == 50.0)                      | 5.8 ms    | 1000   |
+| u8 exact (u8_val == 50)                              | 5.9 ms    | 1000   |
+| u8 range (50..=50.99)                                | 5.9 ms    | 1000   |
+| u8 inclusion (100 values, 1 match)                   | 6.0 ms    | 1000   |
+| f64 exact (float64_val == 50.0)                      | 5.9 ms    | 1000   |
+| f64 range (50.0..=50.99)                             | 5.9 ms    | 1000   |
+| f64 inclusion (100 values, 1 match)                  | 8.2 ms    | 1000   |
+| f32 exact (float32_val == 50.0)                      | 5.9 ms    | 1000   |
 | f32 range (50.0..=50.99)                             | 5.9 ms    | 1000   |
 | f32 inclusion (100 values, 1 match)                  | 8.5 ms    | 1000   |
-| f16 exact (f16_val == 50.0)                          | 5.8 ms    | 1000   |
-| f16 range (50.0..=50.99)                             | 5.8 ms    | 1000   |
-| f16 inclusion (100 values, 1 match)                  | 8.5 ms    | 1000   |
-| string exact                                         | 7.5 ms    | 1000   |
-| string inclusion (10 values)                         | 7.8 ms    | 10000  |
-| bool exact (bool_val == true)                        | 13.5 ms   | 1000   |
-| bool exact (bool_val == false)                       | 31.6 ms   | 99000  |
-| enum exact (status == V50)                           | 5.8 ms    | 1000   |
-| enum inclusion (status in 0..9)                      | 6.0 ms    | 10000  |
-| option exact (option_val == 50)                      | 5.8 ms    | 1000   |
-| option range (50..=50.99)                            | 6.3 ms    | 1000   |
-| option inclusion (100 values, 1 match)               | 6.4 ms    | 1000   |
-| vec contains (vec_val has 5000)                      | 5.9 ms    | 1000   |
-| vec contains inclusion (any of 10 values)            | 6.1 ms    | 10000  |
-| bytes exact (hex match)                              | 7.5 ms    | 1000   |
-| map exact (has key 'key_50')                         | 11.4 ms   | 1000   |
-| map inclusion (any of key_0..key_9)                  | 11.8 ms   | 10000  |
-| json exact (tag_50 string)                           | 7.8 ms    | 1000   |
-| uuid exact (bucket 50)                               | 5.8 ms    | 1000   |
-| uuid inclusion (100 values, 1 match)                 | 6.4 ms    | 1000   |
-| nested (nested.inner_id == 50_000)                   | 6.3 ms    | 1000   |
-| nested (nested.inner_id range 50_000..=50_000.99)    | 6.2 ms    | 1000   |
-| nested (nested.inner_name exact)                     | 8.1 ms    | 1000   |
-| nested (nested.inner_name inclusion, 10 values)      | 7.8 ms    | 10000  |
+| f16 exact (f16_val == 50.0)                          | 6.0 ms    | 1000   |
+| f16 range (50.0..=50.99)                             | 5.9 ms    | 1000   |
+| f16 inclusion (100 values, 1 match)                  | 8.6 ms    | 1000   |
+| string exact                                         | 7.6 ms    | 1000   |
+| string inclusion (10 values)                         | 7.3 ms    | 10000  |
+| bool exact (bool_val == true)                        | 12.9 ms   | 1000   |
+| bool exact (bool_val == false)                       | 24.6 ms   | 99000  |
+| enum exact (status == V50)                           | 5.9 ms    | 1000   |
+| enum inclusion (status in 0..9)                      | 5.5 ms    | 10000  |
+| option exact (option_val == 50)                      | 5.9 ms    | 1000   |
+| option range (50..=50.99)                            | 5.9 ms    | 1000   |
+| option inclusion (100 values, 1 match)               | 6.0 ms    | 1000   |
+| vec contains (vec_val has 5000)                      | 6.0 ms    | 1000   |
+| vec contains inclusion (any of 10 values)            | 5.7 ms    | 10000  |
+| bytes exact (hex match)                              | 7.7 ms    | 1000   |
+| map exact (has key 'key_50')                         | 11.7 ms   | 1000   |
+| map inclusion (any of key_0..key_9)                  | 11.3 ms   | 10000  |
+| json exact (tag_50 string)                           | 8.0 ms    | 1000   |
+| uuid exact (bucket 50)                               | 6.0 ms    | 1000   |
+| uuid inclusion (100 values, 1 match)                 | 6.1 ms    | 1000   |
+| nested (nested.inner_id == 50_000)                   | 6.0 ms    | 1000   |
+| nested (nested.inner_id range 50_000..=50_000.99)    | 6.0 ms    | 1000   |
+| nested (nested.inner_name exact)                     | 7.7 ms    | 1000   |
+| nested (nested.inner_name inclusion, 10 values)      | 7.3 ms    | 10000  |
 | partial fields (id + string_val)                     | 0.7 ms    | 1000   |
-| multi-field (id + int32_val)                         | 5.9 ms    | 1000   |
-| multi-field (bytes_val + u8_val)                     | 6.5 ms    | 1000   |
-| multi-field (string_val + u8_val)                    | 6.6 ms    | 1000   |
-| multi-field (json_val + u8_val)                      | 6.6 ms    | 1000   |
+| multi-field (id + int32_val)                         | 6.0 ms    | 1000   |
+| multi-field (bytes_val + u8_val)                     | 6.6 ms    | 1000   |
+| multi-field (string_val + u8_val)                    | 6.7 ms    | 1000   |
+| multi-field (json_val + u8_val)                      | 6.7 ms    | 1000   |
 | multi-field zero-match (id + int32_val + string_val) | 0.3 ms    | 0      |

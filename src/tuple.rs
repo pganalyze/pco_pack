@@ -33,7 +33,7 @@ fn tuple_index_error(root: &str) -> Result<ResolvedFilter> {
 
 impl<T1, T2> PcoSerde for (T1, T2)
 where
-    T1: PcoSerde,
+    T1: PcoSerde + Default,
     T2: PcoSerde + Default,
     T1::Reader: Clone,
     T2::Reader: Clone,
@@ -83,11 +83,35 @@ where
         let v1 = T2::get(c1, index)?.unwrap_or_default();
         Ok(Some((v0, v1)))
     }
+
+    /// Column-major gather: the slots share the tuple's row space, so each
+    /// slot answers the same row mask with its own typed loop and the slot
+    /// vectors assemble back into rows. A gather always answers one value per
+    /// survivor, so short slot vectors pad with `Default` rather than error
+    /// like `get` does on a missing element 0; malformed rows are out of
+    /// contract.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> Result<()>
+    where
+        Self: Default,
+    {
+        let survivors = mask.count_ones();
+        let mut slot0 = Vec::with_capacity(survivors);
+        let mut slot1 = Vec::with_capacity(survivors);
+        T1::gather(&mut reader.0, mask, &mut slot0)?;
+        T2::gather(&mut reader.1, mask, &mut slot1)?;
+        let mut slot0 = slot0.into_iter();
+        let mut slot1 = slot1.into_iter();
+        out.reserve(survivors);
+        for _ in 0..survivors {
+            out.push((slot0.next().unwrap_or_default(), slot1.next().unwrap_or_default()));
+        }
+        Ok(())
+    }
 }
 
 impl<T1, T2> PcoFilter for (T1, T2)
 where
-    T1: PcoFilter,
+    T1: PcoFilter + Default,
     T2: PcoFilter + Default,
     T1::Reader: Clone,
     T2::Reader: Clone,
@@ -153,7 +177,7 @@ where
 
 impl<T1, T2, T3> PcoSerde for (T1, T2, T3)
 where
-    T1: PcoSerde,
+    T1: PcoSerde + Default,
     T2: PcoSerde + Default,
     T3: PcoSerde + Default,
     T1::Reader: Clone,
@@ -216,11 +240,40 @@ where
         let v2 = T3::get(c2, index)?.unwrap_or_default();
         Ok(Some((v0, v1, v2)))
     }
+
+    /// Column-major gather: every slot answers the same row mask with its own
+    /// typed loop; slot vectors assemble back into rows, padding `Default`
+    /// past a short slot instead of erroring like `get`. Malformed rows are
+    /// out of contract.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> Result<()>
+    where
+        Self: Default,
+    {
+        let survivors = mask.count_ones();
+        let mut slot0 = Vec::with_capacity(survivors);
+        let mut slot1 = Vec::with_capacity(survivors);
+        let mut slot2 = Vec::with_capacity(survivors);
+        T1::gather(&mut reader.0, mask, &mut slot0)?;
+        T2::gather(&mut reader.1, mask, &mut slot1)?;
+        T3::gather(&mut reader.2, mask, &mut slot2)?;
+        let mut slot0 = slot0.into_iter();
+        let mut slot1 = slot1.into_iter();
+        let mut slot2 = slot2.into_iter();
+        out.reserve(survivors);
+        for _ in 0..survivors {
+            out.push((
+                slot0.next().unwrap_or_default(),
+                slot1.next().unwrap_or_default(),
+                slot2.next().unwrap_or_default(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl<T1, T2, T3> PcoFilter for (T1, T2, T3)
 where
-    T1: PcoFilter,
+    T1: PcoFilter + Default,
     T2: PcoFilter + Default,
     T3: PcoFilter + Default,
     T1::Reader: Clone,
@@ -301,7 +354,7 @@ where
 
 impl<T1, T2, T3, T4> PcoSerde for (T1, T2, T3, T4)
 where
-    T1: PcoSerde,
+    T1: PcoSerde + Default,
     T2: PcoSerde + Default,
     T3: PcoSerde + Default,
     T4: PcoSerde + Default,
@@ -385,11 +438,44 @@ where
         let v3 = T4::get(c3, index)?.unwrap_or_default();
         Ok(Some((v0, v1, v2, v3)))
     }
+
+    /// Column-major gather: every slot answers the same row mask with its own
+    /// typed loop; slot vectors assemble back into rows, padding `Default`
+    /// past a short slot instead of erroring like `get`. Malformed rows are
+    /// out of contract.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> Result<()>
+    where
+        Self: Default,
+    {
+        let survivors = mask.count_ones();
+        let mut slot0 = Vec::with_capacity(survivors);
+        let mut slot1 = Vec::with_capacity(survivors);
+        let mut slot2 = Vec::with_capacity(survivors);
+        let mut slot3 = Vec::with_capacity(survivors);
+        T1::gather(&mut reader.0, mask, &mut slot0)?;
+        T2::gather(&mut reader.1, mask, &mut slot1)?;
+        T3::gather(&mut reader.2, mask, &mut slot2)?;
+        T4::gather(&mut reader.3, mask, &mut slot3)?;
+        let mut slot0 = slot0.into_iter();
+        let mut slot1 = slot1.into_iter();
+        let mut slot2 = slot2.into_iter();
+        let mut slot3 = slot3.into_iter();
+        out.reserve(survivors);
+        for _ in 0..survivors {
+            out.push((
+                slot0.next().unwrap_or_default(),
+                slot1.next().unwrap_or_default(),
+                slot2.next().unwrap_or_default(),
+                slot3.next().unwrap_or_default(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl<T1, T2, T3, T4> PcoFilter for (T1, T2, T3, T4)
 where
-    T1: PcoFilter,
+    T1: PcoFilter + Default,
     T2: PcoFilter + Default,
     T3: PcoFilter + Default,
     T4: PcoFilter + Default,
@@ -496,7 +582,7 @@ where
 
 impl<T1, T2, T3, T4, T5> PcoSerde for (T1, T2, T3, T4, T5)
 where
-    T1: PcoSerde,
+    T1: PcoSerde + Default,
     T2: PcoSerde + Default,
     T3: PcoSerde + Default,
     T4: PcoSerde + Default,
@@ -594,11 +680,48 @@ where
         let v4 = T5::get(c4, index)?.unwrap_or_default();
         Ok(Some((v0, v1, v2, v3, v4)))
     }
+
+    /// Column-major gather: every slot answers the same row mask with its own
+    /// typed loop; slot vectors assemble back into rows, padding `Default`
+    /// past a short slot instead of erroring like `get`. Malformed rows are
+    /// out of contract.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> Result<()>
+    where
+        Self: Default,
+    {
+        let survivors = mask.count_ones();
+        let mut slot0 = Vec::with_capacity(survivors);
+        let mut slot1 = Vec::with_capacity(survivors);
+        let mut slot2 = Vec::with_capacity(survivors);
+        let mut slot3 = Vec::with_capacity(survivors);
+        let mut slot4 = Vec::with_capacity(survivors);
+        T1::gather(&mut reader.0, mask, &mut slot0)?;
+        T2::gather(&mut reader.1, mask, &mut slot1)?;
+        T3::gather(&mut reader.2, mask, &mut slot2)?;
+        T4::gather(&mut reader.3, mask, &mut slot3)?;
+        T5::gather(&mut reader.4, mask, &mut slot4)?;
+        let mut slot0 = slot0.into_iter();
+        let mut slot1 = slot1.into_iter();
+        let mut slot2 = slot2.into_iter();
+        let mut slot3 = slot3.into_iter();
+        let mut slot4 = slot4.into_iter();
+        out.reserve(survivors);
+        for _ in 0..survivors {
+            out.push((
+                slot0.next().unwrap_or_default(),
+                slot1.next().unwrap_or_default(),
+                slot2.next().unwrap_or_default(),
+                slot3.next().unwrap_or_default(),
+                slot4.next().unwrap_or_default(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl<T1, T2, T3, T4, T5> PcoFilter for (T1, T2, T3, T4, T5)
 where
-    T1: PcoFilter,
+    T1: PcoFilter + Default,
     T2: PcoFilter + Default,
     T3: PcoFilter + Default,
     T4: PcoFilter + Default,
@@ -723,7 +846,7 @@ where
 
 impl<T1, T2, T3, T4, T5, T6> PcoSerde for (T1, T2, T3, T4, T5, T6)
 where
-    T1: PcoSerde,
+    T1: PcoSerde + Default,
     T2: PcoSerde + Default,
     T3: PcoSerde + Default,
     T4: PcoSerde + Default,
@@ -836,11 +959,52 @@ where
         let v5 = T6::get(c5, index)?.unwrap_or_default();
         Ok(Some((v0, v1, v2, v3, v4, v5)))
     }
+
+    /// Column-major gather: every slot answers the same row mask with its own
+    /// typed loop; slot vectors assemble back into rows, padding `Default`
+    /// past a short slot instead of erroring like `get`. Malformed rows are
+    /// out of contract.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> Result<()>
+    where
+        Self: Default,
+    {
+        let survivors = mask.count_ones();
+        let mut slot0 = Vec::with_capacity(survivors);
+        let mut slot1 = Vec::with_capacity(survivors);
+        let mut slot2 = Vec::with_capacity(survivors);
+        let mut slot3 = Vec::with_capacity(survivors);
+        let mut slot4 = Vec::with_capacity(survivors);
+        let mut slot5 = Vec::with_capacity(survivors);
+        T1::gather(&mut reader.0, mask, &mut slot0)?;
+        T2::gather(&mut reader.1, mask, &mut slot1)?;
+        T3::gather(&mut reader.2, mask, &mut slot2)?;
+        T4::gather(&mut reader.3, mask, &mut slot3)?;
+        T5::gather(&mut reader.4, mask, &mut slot4)?;
+        T6::gather(&mut reader.5, mask, &mut slot5)?;
+        let mut slot0 = slot0.into_iter();
+        let mut slot1 = slot1.into_iter();
+        let mut slot2 = slot2.into_iter();
+        let mut slot3 = slot3.into_iter();
+        let mut slot4 = slot4.into_iter();
+        let mut slot5 = slot5.into_iter();
+        out.reserve(survivors);
+        for _ in 0..survivors {
+            out.push((
+                slot0.next().unwrap_or_default(),
+                slot1.next().unwrap_or_default(),
+                slot2.next().unwrap_or_default(),
+                slot3.next().unwrap_or_default(),
+                slot4.next().unwrap_or_default(),
+                slot5.next().unwrap_or_default(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl<T1, T2, T3, T4, T5, T6> PcoFilter for (T1, T2, T3, T4, T5, T6)
 where
-    T1: PcoFilter,
+    T1: PcoFilter + Default,
     T2: PcoFilter + Default,
     T3: PcoFilter + Default,
     T4: PcoFilter + Default,

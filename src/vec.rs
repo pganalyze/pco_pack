@@ -40,6 +40,17 @@ where
     fn metadata_excludes(compressed: &[u8], filter: &Filter) -> bool {
         T::metadata_excludes(compressed, filter)
     }
+
+    /// Project the surviving rows' inner spans onto the flat element stream,
+    /// gather every element once through the inner column's own typed loop,
+    /// and move the owned elements into rows instead of cloning them
+    /// element by element like `get` does.
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> Result<()>
+    where
+        Self: Default,
+    {
+        T::gather_vec(reader, mask, out)
+    }
 }
 
 impl<T: VecPackable + PcoFilter> PcoFilter for Vec<T>

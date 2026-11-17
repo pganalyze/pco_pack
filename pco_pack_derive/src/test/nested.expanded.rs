@@ -704,9 +704,27 @@ const _: () = {
                 loaded_fields,
                 self.chunk_size,
             )?;
-            let mut results = Vec::with_capacity(row_count);
-            for row_idx in 0..row_count {
-                results.push(expand_row(&mut reader, row_idx)?);
+            let mask = pco_pack::FilterMask::ones(row_count);
+            let count = row_count;
+            let mut results: Vec<Outer> = Vec::with_capacity(count);
+            let mut col_name: Vec<String> = Vec::with_capacity(count);
+            let mut col_inner: Vec<Inner> = Vec::with_capacity(count);
+            reader
+                .name
+                .gather_into(&mask, &mut col_name)
+                .with_context(|| "reading field 'name'")?;
+            reader
+                .inner
+                .gather_into(&mask, &mut col_inner)
+                .with_context(|| "reading field 'inner'")?;
+            let mut iter_name = col_name.into_iter();
+            let mut iter_inner = col_inner.into_iter();
+            for _ in 0..count {
+                results
+                    .push(Outer {
+                        name: iter_name.next().unwrap_or_default(),
+                        inner: iter_inner.next().unwrap_or_default(),
+                    });
             }
             Ok(results)
         }
@@ -762,15 +780,27 @@ const _: () = {
                     return Ok(Vec::new());
                 }
             }
-            let mut results = Vec::with_capacity(matches.count_ones());
-            matches
-                .for_each_set_row(
-                    row_count,
-                    |actual_row_index| {
-                        results.push(expand_row(&mut reader, actual_row_index)?);
-                        Ok(())
-                    },
-                )?;
+            let count = matches.count_ones();
+            let mut results: Vec<Outer> = Vec::with_capacity(count);
+            let mut col_name: Vec<String> = Vec::with_capacity(count);
+            let mut col_inner: Vec<Inner> = Vec::with_capacity(count);
+            reader
+                .name
+                .gather_into(&matches, &mut col_name)
+                .with_context(|| "reading field 'name'")?;
+            reader
+                .inner
+                .gather_into(&matches, &mut col_inner)
+                .with_context(|| "reading field 'inner'")?;
+            let mut iter_name = col_name.into_iter();
+            let mut iter_inner = col_inner.into_iter();
+            for _ in 0..count {
+                results
+                    .push(Outer {
+                        name: iter_name.next().unwrap_or_default(),
+                        inner: iter_inner.next().unwrap_or_default(),
+                    });
+            }
             Ok(results)
         }
         /// Validates a projection: an unloaded payload column reads back as
@@ -1583,9 +1613,27 @@ const _: () = {
                 loaded_fields,
                 self.chunk_size,
             )?;
-            let mut results = Vec::with_capacity(row_count);
-            for row_idx in 0..row_count {
-                results.push(expand_row(&mut reader, row_idx)?);
+            let mask = pco_pack::FilterMask::ones(row_count);
+            let count = row_count;
+            let mut results: Vec<Inner> = Vec::with_capacity(count);
+            let mut col_x: Vec<i32> = Vec::with_capacity(count);
+            let mut col_label: Vec<String> = Vec::with_capacity(count);
+            reader
+                .x
+                .gather_into(&mask, &mut col_x)
+                .with_context(|| "reading field 'x'")?;
+            reader
+                .label
+                .gather_into(&mask, &mut col_label)
+                .with_context(|| "reading field 'label'")?;
+            let mut iter_x = col_x.into_iter();
+            let mut iter_label = col_label.into_iter();
+            for _ in 0..count {
+                results
+                    .push(Inner {
+                        x: iter_x.next().unwrap_or_default(),
+                        label: iter_label.next().unwrap_or_default(),
+                    });
             }
             Ok(results)
         }
@@ -1641,15 +1689,27 @@ const _: () = {
                     return Ok(Vec::new());
                 }
             }
-            let mut results = Vec::with_capacity(matches.count_ones());
-            matches
-                .for_each_set_row(
-                    row_count,
-                    |actual_row_index| {
-                        results.push(expand_row(&mut reader, actual_row_index)?);
-                        Ok(())
-                    },
-                )?;
+            let count = matches.count_ones();
+            let mut results: Vec<Inner> = Vec::with_capacity(count);
+            let mut col_x: Vec<i32> = Vec::with_capacity(count);
+            let mut col_label: Vec<String> = Vec::with_capacity(count);
+            reader
+                .x
+                .gather_into(&matches, &mut col_x)
+                .with_context(|| "reading field 'x'")?;
+            reader
+                .label
+                .gather_into(&matches, &mut col_label)
+                .with_context(|| "reading field 'label'")?;
+            let mut iter_x = col_x.into_iter();
+            let mut iter_label = col_label.into_iter();
+            for _ in 0..count {
+                results
+                    .push(Inner {
+                        x: iter_x.next().unwrap_or_default(),
+                        label: iter_label.next().unwrap_or_default(),
+                    });
+            }
             Ok(results)
         }
         /// Validates a projection: an unloaded payload column reads back as

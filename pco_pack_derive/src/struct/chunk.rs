@@ -1,6 +1,6 @@
 use super::parse::{FieldRole, StructGen};
 use super::type_helpers::is_copy_scalar;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
 use quote::quote;
 
 /// Generate expand() and filter() methods on the compressed wrapper struct.
@@ -200,6 +200,81 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
         names
     };
 
+    // Column-major survivor materialization: gather every payload column into a
+    // typed temp with one `gather_into` call over the FilterMask, then assemble
+    // rows in a single sweep moving values out of the temps. The per-row
+    // per-column `pop_inner` dispatch disappears from the hot path. Index fields
+    // are constant within a chunk and clone straight from the reader; the
+    // qualified call form keeps clippy's clone_on_copy quiet for Copy index
+    // types while still compiling for owned ones.
+    let payload = sg.all_payload();
+    let index_asgns: Vec<TokenStream2> = sg
+        .index_fields()
+        .iter()
+        .map(|fi| {
+            let ident = &fi.ident;
+            quote! { #ident: ::core::clone::Clone::clone(&reader.#ident), }
+        })
+        .collect();
+    let span = Span::call_site();
+    let gather_block = |count_expr: TokenStream2, mask_expr: TokenStream2| -> TokenStream2 {
+        if payload.is_empty() {
+            return quote! {
+                let count = #count_expr;
+                let mut results: Vec<#name> = Vec::with_capacity(count);
+                for _ in 0..count {
+                    results.push(#name { #(#index_asgns)* });
+                }
+                Ok(results)
+            };
+        }
+        let mut col_decls = Vec::new();
+        let mut gather_calls = Vec::new();
+        let mut iter_decls = Vec::new();
+        let mut payload_asgns = Vec::new();
+        for fi in &payload {
+            let ident = &fi.ident;
+            let ty = &fi.ty;
+            let col = Ident::new(&format!("col_{ident}"), span);
+            let iter = Ident::new(&format!("iter_{ident}"), span);
+            // Decode failures must say which column died. The message is a
+            // literal so the closure allocates nothing on the success path.
+            let context = syn::LitStr::new(&format!("reading field '{ident}'"), span);
+            col_decls.push(quote! { let mut #col: Vec<#ty> = Vec::with_capacity(count); });
+            gather_calls.push(quote! { reader.#ident.gather_into(#mask_expr, &mut #col).with_context(|| #context)?; });
+            iter_decls.push(quote! { let mut #iter = #col.into_iter(); });
+            payload_asgns.push(quote! { #ident: #iter.next().unwrap_or_default(), });
+        }
+        quote! {
+            let count = #count_expr;
+            let mut results: Vec<#name> = Vec::with_capacity(count);
+            #(#col_decls)*
+            #(#gather_calls)*
+            #(#iter_decls)*
+            for _ in 0..count {
+                results.push(#name { #(#index_asgns)* #(#payload_asgns)* });
+            }
+            Ok(results)
+        }
+    };
+    // expand() selects every row; FilterMask::ones is the all-set mask whose
+    // word span stops at `row_count`, so buffer-backed columns degenerate into
+    // contiguous copies without any per-row tail handling.
+    let expand_body = {
+        let block = gather_block(quote! { row_count }, quote! { &mask });
+        if payload.is_empty() {
+            block
+        } else {
+            quote! {
+                let mask = pco_pack::FilterMask::ones(row_count);
+                #block
+            }
+        }
+    };
+    // filter() gathers at the final mask's set bits; `gather_words` keeps the
+    // tail beyond `row_count` out of the word span the readers traverse.
+    let filter_body = gather_block(quote! { matches.count_ones() }, quote! { &matches });
+
     quote! {
         impl Chunk {
             #compute_row_count_fn
@@ -213,11 +288,7 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
                 };
                 let loaded_fields: &[&str] = &[#(#all_field_names),*];
                 let row_count = Self::compute_row_count(&mut reader, loaded_fields, self.chunk_size)?;
-                let mut results = Vec::with_capacity(row_count);
-                for row_idx in 0..row_count {
-                    results.push(expand_row(&mut reader, row_idx)?);
-                }
-                Ok(results)
+                #expand_body
             }
 
             /// Filters rows from compressed form using a JSON query.
@@ -246,12 +317,7 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
                         return Ok(Vec::new());
                     }
                 }
-                let mut results = Vec::with_capacity(matches.count_ones());
-                matches.for_each_set_row(row_count, |actual_row_index| {
-                    results.push(expand_row(&mut reader, actual_row_index)?);
-                    Ok(())
-                })?;
-                Ok(results)
+                #filter_body
             }
 
             /// Validates a projection: an unloaded payload column reads back as

@@ -72,6 +72,21 @@ where
         }
     }
 
+    /// Append the survivor rows at the set-bit positions of `mask` to `out`,
+    /// in ascending order. This is the column-major counterpart of calling
+    /// `pop_inner` once per survivor: buffer-backed columns answer it with one
+    /// typed loop instead of per-row dispatch.
+    #[inline]
+    pub fn gather_into(&mut self, mask: &FilterMask, out: &mut Vec<T>) -> anyhow::Result<()> {
+        // A column outside the loaded projection carries no bytes; the trait
+        // default answers every survivor with `Default`, matching `pop_inner`.
+        if self.compressed.is_empty() {
+            let mut reader = T::Reader::default();
+            return T::gather(&mut reader, mask, out);
+        }
+        T::gather(self.ensure_decompressed()?, mask, out)
+    }
+
     #[inline]
     pub fn filter_in_group(&mut self, filter: &Filter, matches: &mut FilterMask) -> anyhow::Result<()> {
         // Reading write-time bounds metadata costs nanoseconds against

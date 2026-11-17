@@ -104,6 +104,25 @@ impl PcoSerde for half::f16 {
             }
         }
     }
+
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()> {
+        match reader {
+            FloatReader::Raw { values } => gather_mask_copy(values, mask, out),
+            FloatReader::Rounded { decimals, values } => {
+                out.reserve(mask.count_ones().saturating_sub(out.len()));
+                for_each_set_bit(mask, |index| {
+                    out.push(
+                        values
+                            .get(index)
+                            .map(|&v| half::f16::from_f64(float_round::unround_float(v, *decimals as u32)))
+                            .unwrap_or_default(),
+                    );
+                    Ok(())
+                })?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl PcoFilter for half::f16 {
@@ -301,6 +320,25 @@ impl PcoSerde for f32 {
             }
         }
     }
+
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()> {
+        match reader {
+            FloatReader::Raw { values } => gather_mask_copy(values, mask, out),
+            FloatReader::Rounded { decimals, values } => {
+                out.reserve(mask.count_ones().saturating_sub(out.len()));
+                for_each_set_bit(mask, |index| {
+                    out.push(
+                        values
+                            .get(index)
+                            .map(|&v| float_round::unround_float(v, *decimals as u32) as f32)
+                            .unwrap_or_default(),
+                    );
+                    Ok(())
+                })?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl PcoFilter for f32 {
@@ -495,6 +533,22 @@ impl PcoSerde for f64 {
                 Ok(values.get(index).map(|&v| float_round::unround_float(v, *decimals as u32)))
             }
         }
+    }
+
+    fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()> {
+        match reader {
+            FloatReader::Raw { values } => gather_mask_copy(values, mask, out),
+            FloatReader::Rounded { decimals, values } => {
+                out.reserve(mask.count_ones().saturating_sub(out.len()));
+                for_each_set_bit(mask, |index| {
+                    out.push(
+                        values.get(index).map(|&v| float_round::unround_float(v, *decimals as u32)).unwrap_or_default(),
+                    );
+                    Ok(())
+                })?;
+            }
+        }
+        Ok(())
     }
 }
 
