@@ -26,8 +26,8 @@ where
         T::read_vec(src, float_round, time_round)
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> Result<Option<usize>> {
-        T::validate_vec_bounds(reader)
+    fn reader_len(reader: &mut Self::Reader) -> Result<usize> {
+        <T as VecPackable>::reader_len(reader)
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>> {

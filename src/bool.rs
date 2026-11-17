@@ -42,8 +42,8 @@ impl PcoSerde for bool {
         anyhow::bail!("Failed to deserialize bool column")
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> anyhow::Result<Option<usize>> {
-        Ok(Some(reader.values.len()))
+    fn reader_len(reader: &mut Self::Reader) -> anyhow::Result<usize> {
+        Ok(reader.values.len())
     }
 
     #[inline(always)]

@@ -1,7 +1,7 @@
 use super::*;
 
 fn filter_tuple_element<T: PcoFilter>(reader: &mut T::Reader, filter: &Filter, matches: &mut FilterMask) -> Result<()> {
-    let len = T::validate_bounds(reader)?.unwrap_or(0);
+    let len = T::reader_len(reader)?;
     if len == 0 {
         return Ok(());
     }
@@ -71,25 +71,10 @@ where
         Ok((T1::read(src, float_round, time_round)?, T2::read(src, float_round, time_round)?))
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> Result<Option<usize>> {
-        let mut max_rows: Option<usize> = None;
-        match T1::validate_bounds(&mut reader.0)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T2::validate_bounds(&mut reader.1)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        if max_rows.is_none() {
-            let has_any =
-                T1::validate_bounds(&mut reader.0)?.is_some() || T2::validate_bounds(&mut reader.1)?.is_some();
-            if has_any {
-                return Ok(Some(0));
-            }
-            return Ok(None);
-        }
-        Ok(max_rows)
+    fn reader_len(reader: &mut Self::Reader) -> Result<usize> {
+        // Widest slot wins: slots that decode empty are defaults, not evidence of fewer rows.
+        let lens = [T1::reader_len(&mut reader.0)?, T2::reader_len(&mut reader.1)?];
+        Ok(lens.into_iter().max().unwrap_or(0))
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>> {
@@ -218,31 +203,10 @@ where
         ))
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> Result<Option<usize>> {
-        // Find the max row count across all elements, treating 0-length as "missing" (defaults).
-        let mut max_rows: Option<usize> = None;
-        match T1::validate_bounds(&mut reader.0)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T2::validate_bounds(&mut reader.1)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T3::validate_bounds(&mut reader.2)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        if max_rows.is_none() {
-            let has_any = T1::validate_bounds(&mut reader.0)?.is_some()
-                || T2::validate_bounds(&mut reader.1)?.is_some()
-                || T3::validate_bounds(&mut reader.2)?.is_some();
-            if has_any {
-                return Ok(Some(0));
-            }
-            return Ok(None);
-        }
-        Ok(max_rows)
+    fn reader_len(reader: &mut Self::Reader) -> Result<usize> {
+        // Widest slot wins: slots that decode empty are defaults, not evidence of fewer rows.
+        let lens = [T1::reader_len(&mut reader.0)?, T2::reader_len(&mut reader.1)?, T3::reader_len(&mut reader.2)?];
+        Ok(lens.into_iter().max().unwrap_or(0))
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>> {
@@ -402,35 +366,15 @@ where
         ))
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> Result<Option<usize>> {
-        let mut max_rows: Option<usize> = None;
-        match T1::validate_bounds(&mut reader.0)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T2::validate_bounds(&mut reader.1)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T3::validate_bounds(&mut reader.2)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T4::validate_bounds(&mut reader.3)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        if max_rows.is_none() {
-            let has_any = T1::validate_bounds(&mut reader.0)?.is_some()
-                || T2::validate_bounds(&mut reader.1)?.is_some()
-                || T3::validate_bounds(&mut reader.2)?.is_some()
-                || T4::validate_bounds(&mut reader.3)?.is_some();
-            if has_any {
-                return Ok(Some(0));
-            }
-            return Ok(None);
-        }
-        Ok(max_rows)
+    fn reader_len(reader: &mut Self::Reader) -> Result<usize> {
+        // Widest slot wins: slots that decode empty are defaults, not evidence of fewer rows.
+        let lens = [
+            T1::reader_len(&mut reader.0)?,
+            T2::reader_len(&mut reader.1)?,
+            T3::reader_len(&mut reader.2)?,
+            T4::reader_len(&mut reader.3)?,
+        ];
+        Ok(lens.into_iter().max().unwrap_or(0))
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>> {
@@ -629,41 +573,16 @@ where
         ))
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> Result<Option<usize>> {
-        // Find the max row count across all elements, treating 0-length as "missing" (defaults).
-        let mut max_rows: Option<usize> = None;
-        match T1::validate_bounds(&mut reader.0)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T2::validate_bounds(&mut reader.1)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T3::validate_bounds(&mut reader.2)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T4::validate_bounds(&mut reader.3)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T5::validate_bounds(&mut reader.4)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        if max_rows.is_none() {
-            let has_any = T1::validate_bounds(&mut reader.0)?.is_some()
-                || T2::validate_bounds(&mut reader.1)?.is_some()
-                || T3::validate_bounds(&mut reader.2)?.is_some()
-                || T4::validate_bounds(&mut reader.3)?.is_some()
-                || T5::validate_bounds(&mut reader.4)?.is_some();
-            if has_any {
-                return Ok(Some(0));
-            }
-            return Ok(None);
-        }
-        Ok(max_rows)
+    fn reader_len(reader: &mut Self::Reader) -> Result<usize> {
+        // Widest slot wins: slots that decode empty are defaults, not evidence of fewer rows.
+        let lens = [
+            T1::reader_len(&mut reader.0)?,
+            T2::reader_len(&mut reader.1)?,
+            T3::reader_len(&mut reader.2)?,
+            T4::reader_len(&mut reader.3)?,
+            T5::reader_len(&mut reader.4)?,
+        ];
+        Ok(lens.into_iter().max().unwrap_or(0))
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>> {
@@ -894,46 +813,17 @@ where
         ))
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> Result<Option<usize>> {
-        // Find the max row count across all elements, treating 0-length as "missing" (defaults).
-        let mut max_rows: Option<usize> = None;
-        match T1::validate_bounds(&mut reader.0)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T2::validate_bounds(&mut reader.1)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T3::validate_bounds(&mut reader.2)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T4::validate_bounds(&mut reader.3)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T5::validate_bounds(&mut reader.4)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        match T6::validate_bounds(&mut reader.5)? {
-            Some(r) if r > 0 => max_rows = Some(max_rows.map_or(r, |prev| prev.max(r))),
-            _ => {}
-        }
-        if max_rows.is_none() {
-            let has_any = T1::validate_bounds(&mut reader.0)?.is_some()
-                || T2::validate_bounds(&mut reader.1)?.is_some()
-                || T3::validate_bounds(&mut reader.2)?.is_some()
-                || T4::validate_bounds(&mut reader.3)?.is_some()
-                || T5::validate_bounds(&mut reader.4)?.is_some()
-                || T6::validate_bounds(&mut reader.5)?.is_some();
-            if has_any {
-                return Ok(Some(0));
-            }
-            return Ok(None);
-        }
-        Ok(max_rows)
+    fn reader_len(reader: &mut Self::Reader) -> Result<usize> {
+        // Widest slot wins: slots that decode empty are defaults, not evidence of fewer rows.
+        let lens = [
+            T1::reader_len(&mut reader.0)?,
+            T2::reader_len(&mut reader.1)?,
+            T3::reader_len(&mut reader.2)?,
+            T4::reader_len(&mut reader.3)?,
+            T5::reader_len(&mut reader.4)?,
+            T6::reader_len(&mut reader.5)?,
+        ];
+        Ok(lens.into_iter().max().unwrap_or(0))
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>> {

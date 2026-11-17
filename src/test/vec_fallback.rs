@@ -210,7 +210,7 @@ fn filtered_reader_vec_child() {
 }
 
 #[test]
-fn vec_child_validate_bounds() {
+fn vec_child_roundtrip() {
     let data: Vec<Vec<Child>> = vec![
         vec![Child { id: 1, name: "a".to_string() }],
         vec![Child { id: 2, name: "b".to_string() }, Child { id: 3, name: "c".to_string() }],

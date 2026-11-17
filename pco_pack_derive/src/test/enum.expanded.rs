@@ -12,9 +12,19 @@ const _: () = {
     /// Intermediate compressed form for [Task] with metadata fields
     /// (index, timestamp bounds) uncompressed and payload columns
     /// stored as compressed ByteBuf. One instance per logical group.
-    #[derive(pco_pack::serde::Serialize, pco_pack::serde::Deserialize, Default, Clone)]
+    #[derive(
+        pco_pack::serde::Serialize,
+        pco_pack::serde::Deserialize,
+        Default,
+        Clone,
+        PartialEq
+    )]
     #[serde(crate = "pco_pack::serde")]
     pub struct Chunk {
+        /// Actual rows written into this chunk. Unrelated to the `chunk_size` derive
+        /// attribute, which only caps rows per chunk through the `CHUNK_SIZE` constant.
+        #[serde(default)]
+        pub chunk_size: u32,
         #[serde(default)]
         pub id: pco_pack::serde_bytes::ByteBuf,
         #[serde(default)]
@@ -220,8 +230,17 @@ const _: () = {
                         Default::default(),
                     )?
                 };
+                debug_assert!(
+                    ! indices.is_empty(), "zero-row groups never reach the chunk writer"
+                );
+                let __pco_rows = indices.len();
+                debug_assert!(
+                    __pco_rows <= u32::MAX as usize,
+                    "chunk rows must fit the u32 chunk_size field"
+                );
                 records
                     .push(Chunk {
+                        chunk_size: __pco_rows as u32,
                         id: cb_id.into(),
                         value: cb_value.into(),
                         label: cb_label.into(),
@@ -330,8 +349,17 @@ const _: () = {
                         Default::default(),
                     )?
                 };
+                debug_assert!(
+                    ! indices.is_empty(), "zero-row groups never reach the chunk writer"
+                );
+                let __pco_rows = indices.len();
+                debug_assert!(
+                    __pco_rows <= u32::MAX as usize,
+                    "chunk rows must fit the u32 chunk_size field"
+                );
                 records
                     .push(Chunk {
+                        chunk_size: __pco_rows as u32,
                         id: cb_id.into(),
                         value: cb_value.into(),
                         label: cb_label.into(),
@@ -408,10 +436,8 @@ const _: () = {
                 ),
             })
         }
-        fn validate_bounds(
-            reader: &mut Self::Reader,
-        ) -> pco_pack::anyhow::Result<Option<usize>> {
-            row_count(reader).map(Some)
+        fn reader_len(reader: &mut Self::Reader) -> pco_pack::anyhow::Result<usize> {
+            row_count(reader)
         }
         fn get(
             reader: &mut Self::Reader,
@@ -683,7 +709,17 @@ const _: () = {
                             Default::default(),
                         )?
                     };
+                    debug_assert!(
+                        ! group_indices.is_empty(),
+                        "zero-row groups never reach the chunk writer"
+                    );
+                    let __pco_rows = group_indices.len();
+                    debug_assert!(
+                        __pco_rows <= u32::MAX as usize,
+                        "chunk rows must fit the u32 chunk_size field"
+                    );
                     let rec = Chunk {
+                        chunk_size: __pco_rows as u32,
                         id: cb_id.into(),
                         value: cb_value.into(),
                         label: cb_label.into(),
@@ -819,18 +855,19 @@ const _: () = {
         fn compute_row_count(
             reader: &mut Reader,
             fields: &[&str],
+            chunk_size: u32,
         ) -> pco_pack::anyhow::Result<usize> {
-            let mut count = 0usize;
-            if count == 0 && fields.contains(&"state") {
-                let r = reader.state.row_count();
-                match r {
-                    Ok(n) if n > 0 => count = n,
-                    Err(e) => return Err(e),
-                    _ => {}
-                }
+            let has_loaded_payload = fields.contains(&"id") || fields.contains(&"value")
+                || fields.contains(&"label") || fields.contains(&"state") || false;
+            if !has_loaded_payload && false {
+                return Ok(1);
             }
-            if count == 0 && fields.contains(&"label") {
-                let r = reader.label.row_count();
+            if chunk_size > 0 {
+                return Ok(chunk_size as usize);
+            }
+            let mut count = 0usize;
+            if count == 0 && fields.contains(&"id") {
+                let r = reader.id.row_count();
                 match r {
                     Ok(n) if n > 0 => count = n,
                     Err(e) => return Err(e),
@@ -845,8 +882,16 @@ const _: () = {
                     _ => {}
                 }
             }
-            if count == 0 && fields.contains(&"id") {
-                let r = reader.id.row_count();
+            if count == 0 && fields.contains(&"label") {
+                let r = reader.label.row_count();
+                match r {
+                    Ok(n) if n > 0 => count = n,
+                    Err(e) => return Err(e),
+                    _ => {}
+                }
+            }
+            if count == 0 && fields.contains(&"state") {
+                let r = reader.state.row_count();
                 match r {
                     Ok(n) if n > 0 => count = n,
                     Err(e) => return Err(e),
@@ -854,11 +899,6 @@ const _: () = {
                 }
             }
             let count = count;
-            let has_loaded_payload = fields.contains(&"id") || fields.contains(&"value")
-                || fields.contains(&"label") || fields.contains(&"state") || false;
-            if count == 0 && !has_loaded_payload && false {
-                return Ok(1);
-            }
             if count == 0 {
                 return Err(
                     pco_pack::anyhow::anyhow!(
@@ -885,7 +925,11 @@ const _: () = {
                 >>::new(self.state.into_vec(), 0u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["id", "value", "label", "state"];
-            let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;
+            let row_count = Self::compute_row_count(
+                &mut reader,
+                loaded_fields,
+                self.chunk_size,
+            )?;
             let mut results = Vec::with_capacity(row_count);
             for row_idx in 0..row_count {
                 results.push(expand_row(&mut reader, row_idx)?);
@@ -946,10 +990,14 @@ const _: () = {
                     Default::default(),
                 ),
             };
-            let row_count = Self::compute_row_count(&mut reader, &fields)?;
+            let row_count = Self::compute_row_count(
+                &mut reader,
+                &fields,
+                self.chunk_size,
+            )?;
             let mut matches = pco_pack::FilterMask::ones(row_count);
             let mut plan: Vec<usize> = (0..execution_plan.len()).collect();
-            let sizes = [
+            let sizes: [usize; 4usize] = [
                 self.id.len(),
                 self.value.len(),
                 self.label.len(),
@@ -1078,7 +1126,11 @@ const _: () = {
                     Default::default(),
                 ),
             };
-            let row_count = Self::compute_row_count(&mut reader, fields)?;
+            let row_count = Self::compute_row_count(
+                &mut reader,
+                fields,
+                self.chunk_size,
+            )?;
             if plan.is_empty() {
                 let mut columns = Columns { reader: &mut reader };
                 for row_index in 0..row_count {
@@ -1089,7 +1141,7 @@ const _: () = {
             matches.reset_ones(row_count);
             order.clear();
             order.extend(0..plan.len());
-            let sizes = [
+            let sizes: [usize; 4usize] = [
                 self.id.len(),
                 self.value.len(),
                 self.label.len(),
@@ -1171,6 +1223,29 @@ const _: () = {
             Ok((&mut self.reader.variant_1, slot))
         }
     }
+    #[doc = concat!(
+        " Chunk payload for ", stringify!(State),
+        ": rows written plus one compressed column block per payload variant."
+    )]
+    #[derive(
+        pco_pack::serde::Serialize,
+        pco_pack::serde::Deserialize,
+        Clone,
+        PartialEq,
+        Debug
+    )]
+    #[serde(crate = "pco_pack::serde")]
+    pub struct Chunk {
+        /// Actual rows written into this chunk. Unrelated to the `chunk_size` derive
+        /// attribute, which only caps rows per chunk through the `CHUNK_SIZE` constant.
+        #[serde(default)]
+        pub chunk_size: u32,
+        /// Compressed discriminant column.
+        #[serde(default)]
+        pub row_variant: pco_pack::serde_bytes::ByteBuf,
+        #[serde(default)]
+        pub variant_1: pco_pack::serde_bytes::ByteBuf,
+    }
     impl pco_pack::PcoSerde for State {
         type Writer = Writer;
         type Reader = Reader;
@@ -1180,42 +1255,16 @@ const _: () = {
             float_round: u32,
             time_round: pco_pack::chrono::Duration,
         ) -> pco_pack::anyhow::Result<Vec<u8>> {
-            let mut writer = Writer::default();
-            for item in data {
-                match item {
-                    Self::Idle => {
-                        writer.row_variant.values.push(0i64);
-                    }
-                    Self::Running(inner) => {
-                        writer.row_variant.values.push(1i64);
-                        writer.variant_1.push(inner);
-                    }
-                    Self::Paused => {
-                        writer.row_variant.values.push(2i64);
-                    }
-                }
-            }
+            let chunk = pco_enum_chunk(data, float_round, time_round)?;
             let mut out = Vec::new();
-            let disc_block = <i64 as pco_pack::PcoSerde>::write(
-                writer.row_variant.values,
-                float_round,
-                time_round,
-            )?;
+            let disc_block = chunk.row_variant.into_vec();
             out.extend_from_slice(&(disc_block.len() as u64).to_le_bytes());
             out.extend_from_slice(&disc_block);
             let non_unit_count: usize = 1usize;
             out.extend_from_slice(&(non_unit_count as u64).to_le_bytes());
-            if !writer.variant_1.is_empty() {
-                let compressed = <i32 as pco_pack::PcoSerde>::write(
-                    writer.variant_1,
-                    float_round,
-                    time_round,
-                )?;
-                out.extend_from_slice(&(compressed.len() as u64).to_le_bytes());
-                out.extend_from_slice(&compressed);
-            } else {
-                out.extend_from_slice(&(0u64).to_le_bytes());
-            }
+            let block = chunk.variant_1.into_vec();
+            out.extend_from_slice(&(block.len() as u64).to_le_bytes());
+            out.extend_from_slice(&block);
             Ok(out)
         }
         fn read(
@@ -1241,10 +1290,8 @@ const _: () = {
                 variant_1_last_row: None,
             })
         }
-        fn validate_bounds(
-            reader: &mut Self::Reader,
-        ) -> pco_pack::anyhow::Result<Option<usize>> {
-            Ok(Some(reader.row_variant.row_count()?))
+        fn reader_len(reader: &mut Self::Reader) -> pco_pack::anyhow::Result<usize> {
+            reader.row_variant.row_count()
         }
         fn get(
             reader: &mut Self::Reader,
@@ -1273,6 +1320,53 @@ const _: () = {
                 }
             }
         }
+    }
+    /// Stage rows into the per-variant columns and compress them into a Chunk.
+    /// Shared by the nested-blob writer and the PcoPack chunk writer.
+    fn pco_enum_chunk(
+        data: Vec<State>,
+        float_round: u32,
+        time_round: pco_pack::chrono::Duration,
+    ) -> pco_pack::anyhow::Result<Chunk> {
+        let mut writer = Writer::default();
+        for item in data {
+            match item {
+                State::Idle => {
+                    writer.row_variant.values.push(0i64);
+                }
+                State::Running(inner) => {
+                    writer.row_variant.values.push(1i64);
+                    writer.variant_1.push(inner);
+                }
+                State::Paused => {
+                    writer.row_variant.values.push(2i64);
+                }
+            }
+        }
+        let __pco_rows = writer.row_variant.values.len();
+        debug_assert!(
+            __pco_rows <= u32::MAX as usize,
+            "chunk rows must fit the u32 chunk_size field"
+        );
+        let row_variant = <i64 as pco_pack::PcoSerde>::write(
+            writer.row_variant.values,
+            float_round,
+            time_round,
+        )?;
+        let variant_1 = if !writer.variant_1.is_empty() {
+            <i32 as pco_pack::PcoSerde>::write(
+                writer.variant_1,
+                float_round,
+                time_round,
+            )?
+        } else {
+            Vec::new()
+        };
+        Ok(Chunk {
+            chunk_size: __pco_rows as u32,
+            row_variant: row_variant.into(),
+            variant_1: variant_1.into(),
+        })
     }
     /// Slice the next length-prefixed block out of the blob, returning an error
     /// for truncated or format-mismatched blobs.
@@ -1449,7 +1543,7 @@ const _: () = {
     }
     impl pco_pack::PcoPack for State {
         type Reader = <Self as pco_pack::PcoSerde>::Reader;
-        type Chunk = pco_pack::serde_bytes::ByteBuf;
+        type Chunk = Chunk;
         type Filter = serde_json::Value;
         type Columns<'a> = Columns<'a>;
         fn hydrate(
@@ -1542,15 +1636,23 @@ const _: () = {
                 };
             let mut matches = pco_pack::FilterMask::ones(0);
             'chunks: for chunk in chunks {
-                if chunk.is_empty() {
-                    continue 'chunks;
-                }
-                let mut cursor = std::io::Cursor::new(chunk.as_slice());
-                let mut reader = <Self as pco_pack::PcoSerde>::read(
-                    &mut cursor,
+                let row_variant = pco_pack::LazyReader::new(
+                    chunk.row_variant.to_vec(),
                     0u32,
                     Default::default(),
-                )?;
+                );
+                let variant_1 = pco_pack::LazyReader::new(
+                    chunk.variant_1.to_vec(),
+                    0u32,
+                    Default::default(),
+                );
+                let mut reader = Reader {
+                    row_variant,
+                    variant_1,
+                    variant_1_index: 0,
+                    #[cfg(debug_assertions)]
+                    variant_1_last_row: None,
+                };
                 if slot_stream {
                     let slot_count: Option<usize> = match Some(declared[0]) {
                         Some(1i64) => Some(reader.variant_1.row_count()?),
@@ -1576,11 +1678,12 @@ const _: () = {
                 }
                 #[cfg(debug_assertions)]
                 let mut __pco_delivered = vec![0usize; declared.len()];
-                let row_count: usize = <Self as pco_pack::PcoSerde>::validate_bounds(
-                        &mut reader,
-                    )
-                    .context("Invalid enum payload")?
-                    .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
+                let row_count = if chunk.chunk_size > 0 {
+                    chunk.chunk_size as usize
+                } else {
+                    <Self as pco_pack::PcoSerde>::reader_len(&mut reader)
+                        .context("Invalid enum payload")?
+                };
                 if stream_all {
                     let mut columns = Columns { reader: &mut reader };
                     for row_index in 0..row_count {
@@ -1700,29 +1803,39 @@ const _: () = {
                 let mut piece = Vec::with_capacity(Self::CHUNK_SIZE);
                 piece.push(first);
                 piece.extend(rows.by_ref().take(Self::CHUNK_SIZE - 1));
-                let chunk = <Self as pco_pack::PcoSerde>::write(
-                    piece,
-                    0u32,
-                    Default::default(),
-                )?;
-                result.push(chunk.into());
+                debug_assert!(
+                    ! piece.is_empty(), "zero-row pieces never reach the chunk writer"
+                );
+                result.push(pco_enum_chunk(piece, 0u32, Default::default())?);
             }
             Ok(result)
         }
         fn read(chunks: Vec<Self::Chunk>) -> pco_pack::anyhow::Result<Vec<Self>> {
             let mut result = Vec::new();
             for chunk in chunks {
-                let mut cursor = std::io::Cursor::new(chunk.as_slice());
-                let mut reader = <Self as pco_pack::PcoSerde>::read(
-                    &mut cursor,
+                let row_variant = pco_pack::LazyReader::new(
+                    chunk.row_variant.into_vec(),
                     0u32,
                     Default::default(),
-                )?;
-                let row_count = <Self as pco_pack::PcoSerde>::validate_bounds(
-                        &mut reader,
-                    )
-                    .context("Invalid enum payload")?
-                    .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
+                );
+                let variant_1 = pco_pack::LazyReader::new(
+                    chunk.variant_1.into_vec(),
+                    0u32,
+                    Default::default(),
+                );
+                let mut reader = Reader {
+                    row_variant,
+                    variant_1,
+                    variant_1_index: 0,
+                    #[cfg(debug_assertions)]
+                    variant_1_last_row: None,
+                };
+                let row_count = if chunk.chunk_size > 0 {
+                    chunk.chunk_size as usize
+                } else {
+                    <Self as pco_pack::PcoSerde>::reader_len(&mut reader)
+                        .context("Invalid enum payload")?
+                };
                 for row_idx in 0..row_count {
                     result
                         .push(
@@ -1752,20 +1865,29 @@ const _: () = {
             let execution_plan = <Self as pco_pack::PcoFilter>::resolve_query(query)?;
             let mut result = Vec::new();
             'chunks: for chunk in chunks {
-                if chunk.is_empty() {
-                    continue 'chunks;
-                }
-                let mut cursor = std::io::Cursor::new(chunk.as_slice());
-                let mut reader = <Self as pco_pack::PcoSerde>::read(
-                    &mut cursor,
+                let row_variant = pco_pack::LazyReader::new(
+                    chunk.row_variant.to_vec(),
                     0u32,
                     Default::default(),
-                )?;
-                let row_count: usize = <Self as pco_pack::PcoSerde>::validate_bounds(
-                        &mut reader,
-                    )
-                    .context("Invalid enum payload")?
-                    .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
+                );
+                let variant_1 = pco_pack::LazyReader::new(
+                    chunk.variant_1.to_vec(),
+                    0u32,
+                    Default::default(),
+                );
+                let mut reader = Reader {
+                    row_variant,
+                    variant_1,
+                    variant_1_index: 0,
+                    #[cfg(debug_assertions)]
+                    variant_1_last_row: None,
+                };
+                let row_count = if chunk.chunk_size > 0 {
+                    chunk.chunk_size as usize
+                } else {
+                    <Self as pco_pack::PcoSerde>::reader_len(&mut reader)
+                        .context("Invalid enum payload")?
+                };
                 let mut matches = pco_pack::FilterMask::ones(row_count);
                 for step in &execution_plan {
                     <Self as pco_pack::PcoFilter>::filter_step(

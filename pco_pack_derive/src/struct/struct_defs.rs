@@ -7,8 +7,15 @@ use quote::quote;
 pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
     let has_timestamp = sg.has_timestamp;
 
-    // Wrapper struct fields: index raw fields, start_at/end_at i64, payload ByteBufs
-    let mut chunk_fields: Vec<proc_macro2::TokenStream> = sg
+    // Wrapper struct fields: actual rows written, index raw fields, start_at/end_at i64,
+    // payload ByteBufs
+    let mut chunk_fields: Vec<proc_macro2::TokenStream> = vec![quote! {
+        /// Actual rows written into this chunk. Unrelated to the `chunk_size` derive
+        /// attribute, which only caps rows per chunk through the `CHUNK_SIZE` constant.
+        #[serde(default)]
+        pub chunk_size: u32,
+    }];
+    let mut index_fields: Vec<proc_macro2::TokenStream> = sg
         .index_fields()
         .iter()
         .map(|fi| {
@@ -17,6 +24,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
             quote! { pub #ident: #ty, }
         })
         .collect();
+    chunk_fields.append(&mut index_fields);
     if has_timestamp {
         chunk_fields.push(quote! {
             #[serde(with = "pco_pack::chrono::serde::ts_microseconds")]
@@ -153,7 +161,7 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
         #[doc = #wrapper_doc]
         /// (index, timestamp bounds) uncompressed and payload columns
         /// stored as compressed ByteBuf. One instance per logical group.
-        #[derive(pco_pack::serde::Serialize, pco_pack::serde::Deserialize, Default, Clone)]
+        #[derive(pco_pack::serde::Serialize, pco_pack::serde::Deserialize, Default, Clone, PartialEq)]
         #[serde(crate = "pco_pack::serde")]
         pub struct Chunk { #(#chunk_fields)* }
         #[derive(Clone, Default)]

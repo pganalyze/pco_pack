@@ -62,10 +62,10 @@ impl PcoSerde for half::f16 {
         Ok(FloatReader::Raw { values: vals.into() })
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> anyhow::Result<Option<usize>> {
+    fn reader_len(reader: &mut Self::Reader) -> anyhow::Result<usize> {
         match reader {
-            FloatReader::Raw { values } => Ok(Some(values.len())),
-            FloatReader::Rounded { values, .. } => Ok(Some(values.len())),
+            FloatReader::Raw { values } => Ok(values.len()),
+            FloatReader::Rounded { values, .. } => Ok(values.len()),
         }
     }
 
@@ -235,10 +235,10 @@ impl PcoSerde for f32 {
         Ok(FloatReader::Raw { values: vals.into() })
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> anyhow::Result<Option<usize>> {
+    fn reader_len(reader: &mut Self::Reader) -> anyhow::Result<usize> {
         match reader {
-            FloatReader::Raw { values } => Ok(Some(values.len())),
-            FloatReader::Rounded { values, .. } => Ok(Some(values.len())),
+            FloatReader::Raw { values } => Ok(values.len()),
+            FloatReader::Rounded { values, .. } => Ok(values.len()),
         }
     }
 
@@ -404,10 +404,10 @@ impl PcoSerde for f64 {
         Ok(FloatReader::Raw { values: vals.into() })
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> anyhow::Result<Option<usize>> {
+    fn reader_len(reader: &mut Self::Reader) -> anyhow::Result<usize> {
         match reader {
-            FloatReader::Raw { values } => Ok(Some(values.len())),
-            FloatReader::Rounded { values, .. } => Ok(Some(values.len())),
+            FloatReader::Raw { values } => Ok(values.len()),
+            FloatReader::Rounded { values, .. } => Ok(values.len()),
         }
     }
 

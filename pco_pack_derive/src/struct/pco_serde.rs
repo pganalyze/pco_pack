@@ -27,6 +27,31 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
     let col_vectors_push = sg.col_vectors_push();
     let cheap_to_clone = sg.cheap_to_clone_expr();
 
+    // Bind the staged row count right before each chunk build; wrapper_assigns turns
+    // it into the chunk_size field. Index-only structs stage no rows and answer 1.
+    let has_payload = !sg.all_payload().is_empty();
+    let staged_rows = |vec: &str| {
+        let vec = syn::Ident::new(vec, proc_macro2::Span::call_site());
+        (has_payload).then(|| {
+            quote! {
+                let __pco_rows = #vec.len();
+                debug_assert!(__pco_rows <= u32::MAX as usize, "chunk rows must fit the u32 chunk_size field");
+            }
+        })
+    };
+    let staged_group_rows = staged_rows("group_rows");
+    let staged_indices = staged_rows("indices");
+    let stage_indices = if has_payload {
+        quote! {
+            for &idx in indices.iter() {
+                let rec = &data[idx];
+                #(#col_vectors_push)*
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     let group_enum_loop = if has_index {
         quote! {
             for (i, rec) in data.iter().enumerate() {
@@ -59,6 +84,8 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
                 }
                 #(#compress_payload)*
                 #timestamp_start_end
+                debug_assert!(!group_rows.is_empty(), "zero-row groups never reach the chunk writer");
+                #staged_group_rows
                 records.push(Chunk { #(#wrapper_assigns)* });
             }
         }
@@ -73,12 +100,11 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
             for (#key_pat, mut indices) in groups {
                 #timestamp_sort_indices
                 #(#col_vectors_init)*
-                for &idx in indices.iter() {
-                    let rec = &data[idx];
-                    #(#col_vectors_push)*
-                }
+                #stage_indices
                 #(#compress_payload)*
                 #timestamp_start_end_from_indices_var
+                debug_assert!(!indices.is_empty(), "zero-row groups never reach the chunk writer");
+                #staged_indices
                 records.push(Chunk { #(#wrapper_assigns)* });
             }
         }
@@ -92,11 +118,10 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
             let mut records: Vec<Chunk> = Vec::with_capacity(groups.len());
             for (#key_pat, indices) in groups {
                 #(#col_vectors_init)*
-                for &idx in indices.iter() {
-                    let rec = &data[idx];
-                    #(#col_vectors_push)*
-                }
+                #stage_indices
                 #(#compress_payload)*
+                debug_assert!(!indices.is_empty(), "zero-row groups never reach the chunk writer");
+                #staged_indices
                 records.push(Chunk { #(#wrapper_assigns)* });
             }
         }
@@ -153,8 +178,8 @@ pub fn generate(sg: &StructGen) -> proc_macro2::TokenStream {
                 };
                 Ok(Reader { #(#reader_fields)* })
             }
-            fn validate_bounds(reader: &mut Self::Reader) -> pco_pack::anyhow::Result<Option<usize>> {
-                row_count(reader).map(Some)
+            fn reader_len(reader: &mut Self::Reader) -> pco_pack::anyhow::Result<usize> {
+                row_count(reader)
             }
             fn get(reader: &mut Self::Reader, index: usize) -> pco_pack::anyhow::Result<Option<Self>> {
                 let row_count = row_count(reader)?;

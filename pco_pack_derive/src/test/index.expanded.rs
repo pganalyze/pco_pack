@@ -11,9 +11,19 @@ const _: () = {
     /// Intermediate compressed form for [DeviceTelemetry] with metadata fields
     /// (index, timestamp bounds) uncompressed and payload columns
     /// stored as compressed ByteBuf. One instance per logical group.
-    #[derive(pco_pack::serde::Serialize, pco_pack::serde::Deserialize, Default, Clone)]
+    #[derive(
+        pco_pack::serde::Serialize,
+        pco_pack::serde::Deserialize,
+        Default,
+        Clone,
+        PartialEq
+    )]
     #[serde(crate = "pco_pack::serde")]
     pub struct Chunk {
+        /// Actual rows written into this chunk. Unrelated to the `chunk_size` derive
+        /// attribute, which only caps rows per chunk through the `CHUNK_SIZE` constant.
+        #[serde(default)]
+        pub chunk_size: u32,
         pub device_id: i64,
         #[serde(default)]
         pub temperature: pco_pack::serde_bytes::ByteBuf,
@@ -179,8 +189,17 @@ const _: () = {
                         Default::default(),
                     )?
                 };
+                debug_assert!(
+                    ! indices.is_empty(), "zero-row groups never reach the chunk writer"
+                );
+                let __pco_rows = indices.len();
+                debug_assert!(
+                    __pco_rows <= u32::MAX as usize,
+                    "chunk rows must fit the u32 chunk_size field"
+                );
                 records
                     .push(Chunk {
+                        chunk_size: __pco_rows as u32,
                         device_id: key.0,
                         temperature: cb_temperature.into(),
                         humidity: cb_humidity.into(),
@@ -253,8 +272,17 @@ const _: () = {
                         Default::default(),
                     )?
                 };
+                debug_assert!(
+                    ! indices.is_empty(), "zero-row groups never reach the chunk writer"
+                );
+                let __pco_rows = indices.len();
+                debug_assert!(
+                    __pco_rows <= u32::MAX as usize,
+                    "chunk rows must fit the u32 chunk_size field"
+                );
                 records
                     .push(Chunk {
+                        chunk_size: __pco_rows as u32,
                         device_id: key.0,
                         temperature: cb_temperature.into(),
                         humidity: cb_humidity.into(),
@@ -321,10 +349,8 @@ const _: () = {
                 ),
             })
         }
-        fn validate_bounds(
-            reader: &mut Self::Reader,
-        ) -> pco_pack::anyhow::Result<Option<usize>> {
-            row_count(reader).map(Some)
+        fn reader_len(reader: &mut Self::Reader) -> pco_pack::anyhow::Result<usize> {
+            row_count(reader)
         }
         fn get(
             reader: &mut Self::Reader,
@@ -588,7 +614,17 @@ const _: () = {
                             Default::default(),
                         )?
                     };
+                    debug_assert!(
+                        ! group_indices.is_empty(),
+                        "zero-row groups never reach the chunk writer"
+                    );
+                    let __pco_rows = group_indices.len();
+                    debug_assert!(
+                        __pco_rows <= u32::MAX as usize,
+                        "chunk rows must fit the u32 chunk_size field"
+                    );
                     let rec = Chunk {
+                        chunk_size: __pco_rows as u32,
                         device_id: key.0,
                         temperature: cb_temperature.into(),
                         humidity: cb_humidity.into(),
@@ -711,16 +747,17 @@ const _: () = {
         fn compute_row_count(
             reader: &mut Reader,
             fields: &[&str],
+            chunk_size: u32,
         ) -> pco_pack::anyhow::Result<usize> {
-            let mut count = 0usize;
-            if count == 0 && fields.contains(&"humidity") {
-                let r = reader.humidity.row_count();
-                match r {
-                    Ok(n) if n > 0 => count = n,
-                    Err(e) => return Err(e),
-                    _ => {}
-                }
+            let has_loaded_payload = fields.contains(&"temperature")
+                || fields.contains(&"humidity") || false;
+            if !has_loaded_payload && true {
+                return Ok(1);
             }
+            if chunk_size > 0 {
+                return Ok(chunk_size as usize);
+            }
+            let mut count = 0usize;
             if count == 0 && fields.contains(&"temperature") {
                 let r = reader.temperature.row_count();
                 match r {
@@ -729,12 +766,15 @@ const _: () = {
                     _ => {}
                 }
             }
-            let count = count;
-            let has_loaded_payload = fields.contains(&"temperature")
-                || fields.contains(&"humidity") || false;
-            if count == 0 && !has_loaded_payload && true {
-                return Ok(1);
+            if count == 0 && fields.contains(&"humidity") {
+                let r = reader.humidity.row_count();
+                match r {
+                    Ok(n) if n > 0 => count = n,
+                    Err(e) => return Err(e),
+                    _ => {}
+                }
             }
+            let count = count;
             if count == 0 {
                 return Err(
                     pco_pack::anyhow::anyhow!(
@@ -756,7 +796,11 @@ const _: () = {
                 >>::new(self.humidity.into_vec(), 0u32, Default::default()),
             };
             let loaded_fields: &[&str] = &["temperature", "humidity"];
-            let row_count = Self::compute_row_count(&mut reader, loaded_fields)?;
+            let row_count = Self::compute_row_count(
+                &mut reader,
+                loaded_fields,
+                self.chunk_size,
+            )?;
             let mut results = Vec::with_capacity(row_count);
             for row_idx in 0..row_count {
                 results.push(expand_row(&mut reader, row_idx)?);
@@ -801,10 +845,18 @@ const _: () = {
                     Default::default(),
                 ),
             };
-            let row_count = Self::compute_row_count(&mut reader, &fields)?;
+            let row_count = Self::compute_row_count(
+                &mut reader,
+                &fields,
+                self.chunk_size,
+            )?;
             let mut matches = pco_pack::FilterMask::ones(row_count);
             let mut plan: Vec<usize> = (0..execution_plan.len()).collect();
-            let sizes = [0, self.temperature.len(), self.humidity.len()];
+            let sizes: [usize; 3usize] = [
+                0,
+                self.temperature.len(),
+                self.humidity.len(),
+            ];
             plan.sort_by_key(|&i| sizes[execution_plan[i].path[0]]);
             for i in plan {
                 <DeviceTelemetry as pco_pack::PcoFilter>::filter_step(
@@ -907,7 +959,11 @@ const _: () = {
                     Default::default(),
                 ),
             };
-            let row_count = Self::compute_row_count(&mut reader, fields)?;
+            let row_count = Self::compute_row_count(
+                &mut reader,
+                fields,
+                self.chunk_size,
+            )?;
             if plan.is_empty() {
                 let mut columns = Columns { reader: &mut reader };
                 for row_index in 0..row_count {
@@ -918,7 +974,11 @@ const _: () = {
             matches.reset_ones(row_count);
             order.clear();
             order.extend(0..plan.len());
-            let sizes = [0, self.temperature.len(), self.humidity.len()];
+            let sizes: [usize; 3usize] = [
+                0,
+                self.temperature.len(),
+                self.humidity.len(),
+            ];
             order.sort_by_key(|&i| sizes[plan[i].path[0]]);
             for &i in order.iter() {
                 <DeviceTelemetry as pco_pack::PcoFilter>::filter_step(

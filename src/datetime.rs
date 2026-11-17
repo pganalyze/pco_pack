@@ -19,8 +19,8 @@ impl PcoSerde for chrono::DateTime<chrono::Utc> {
         i64::read(src, float_round, time_round)
     }
 
-    fn validate_bounds(reader: &mut Self::Reader) -> anyhow::Result<Option<usize>> {
-        i64::validate_bounds(reader)
+    fn reader_len(reader: &mut Self::Reader) -> anyhow::Result<usize> {
+        <i64 as PcoSerde>::reader_len(reader)
     }
 
     fn get(reader: &mut Self::Reader, index: usize) -> anyhow::Result<Option<Self>> {

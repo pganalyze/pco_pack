@@ -41,11 +41,11 @@ fn string_fallback_deserialize_unicode() {
 }
 
 #[test]
-fn string_fallback_validate_bounds() {
+fn string_fallback_reader_len() {
     let original = "test".to_string();
     let raw = legacy_compress(std::slice::from_ref(&original));
     let mut reader = <StringReader as FallbackReader>::read_fallback(&raw).unwrap();
-    assert_eq!(String::validate_bounds(&mut reader).unwrap(), Some(1));
+    assert_eq!(String::reader_len(&mut reader).unwrap(), 1);
 }
 
 #[test]
@@ -53,7 +53,7 @@ fn string_fallback_multiple_items() {
     let items = vec!["first".to_string(), "second".to_string(), "third".to_string()];
     let raw = legacy_compress(&items);
     let mut reader = <StringReader as FallbackReader>::read_fallback(&raw).unwrap();
-    assert_eq!(String::validate_bounds(&mut reader).unwrap(), Some(3));
+    assert_eq!(String::reader_len(&mut reader).unwrap(), 3);
     for (i, item) in items.iter().enumerate() {
         assert_eq!(<String as PcoSerde>::get(&mut reader, i).unwrap().unwrap(), *item);
     }
@@ -84,7 +84,7 @@ fn string_read_falls_back_to_legacy() {
 
     let mut cursor = Cursor::new(legacy_buf.as_slice());
     let mut reader = <String as PcoSerde>::read(&mut cursor, 0, chrono::Duration::zero()).unwrap();
-    assert_eq!(String::validate_bounds(&mut reader).unwrap(), Some(2));
+    assert_eq!(String::reader_len(&mut reader).unwrap(), 2);
 
     let mut reader_mut = reader;
     assert_eq!(<String as PcoSerde>::get(&mut reader_mut, 0).unwrap().unwrap(), "mountpoint1");
@@ -119,11 +119,11 @@ fn smol_str_fallback_deserialize_unicode() {
 }
 
 #[test]
-fn smol_str_fallback_validate_bounds() {
+fn smol_str_fallback_reader_len() {
     let original = SmolStr::from("test");
     let raw = legacy_compress(std::slice::from_ref(&original));
     let mut reader = <SmolStrReader as FallbackReader>::read_fallback(&raw).unwrap();
-    assert_eq!(<SmolStr as PcoSerde>::validate_bounds(&mut reader).unwrap(), Some(1));
+    assert_eq!(<SmolStr as PcoSerde>::reader_len(&mut reader).unwrap(), 1);
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn smol_str_fallback_multiple_items() {
     let items = vec![SmolStr::from("first"), SmolStr::from("second"), SmolStr::from("third")];
     let raw = legacy_compress(&items);
     let mut reader = <SmolStrReader as FallbackReader>::read_fallback(&raw).unwrap();
-    assert_eq!(<SmolStr as PcoSerde>::validate_bounds(&mut reader).unwrap(), Some(3));
+    assert_eq!(<SmolStr as PcoSerde>::reader_len(&mut reader).unwrap(), 3);
     for (i, item) in items.iter().enumerate() {
         assert_eq!(<SmolStr as PcoSerde>::get(&mut reader, i).unwrap().unwrap(), *item);
     }
@@ -162,7 +162,7 @@ fn smol_str_read_falls_back_to_legacy() {
 
     let mut cursor = Cursor::new(legacy_buf.as_slice());
     let mut reader = <SmolStr as PcoSerde>::read(&mut cursor, 0, chrono::Duration::zero()).unwrap();
-    assert_eq!(<SmolStr as PcoSerde>::validate_bounds(&mut reader).unwrap(), Some(2));
+    assert_eq!(<SmolStr as PcoSerde>::reader_len(&mut reader).unwrap(), 2);
 
     let mut reader_mut = reader;
     assert_eq!(<SmolStr as PcoSerde>::get(&mut reader_mut, 0).unwrap().unwrap(), SmolStr::from("mountpoint1"));
