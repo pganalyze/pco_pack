@@ -628,6 +628,178 @@ fn fold_into_rejects_unresolved_fields() {
     assert!(total > 0);
 }
 
+/// The pipeline `fold_value` runs internally, driven chunk by chunk through the
+/// public `prepare`/`fold_prepared` pair: resolve once, then prepare and fold each
+/// chunk. Delivered rows must match `for_each` exactly, chunk for chunk.
+fn prepared_pipeline<R, C>(
+    chunks: &[<R as PcoPack>::Chunk], query: &serde_json::Value, fields: &[&str], consumer: &mut C,
+) -> Result<()>
+where
+    R: PcoPack,
+    C: Consumer<R>,
+{
+    let mut base: Vec<&str> = fields.to_vec();
+    base.extend_from_slice(C::FIELDS);
+    let projection = R::resolve_fields(query, &base)?;
+    let plan = <R as pco_pack::PcoFilter>::resolve_query(query)?;
+    for chunk in chunks {
+        let mut prepared = R::prepare(chunk, &plan, &projection)?;
+        R::fold_prepared(&mut prepared, consumer)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn prepared_pipeline_matches_fold_value() {
+    let chunks = sample_chunks();
+    let queries = [
+        serde_json::json!({}),
+        serde_json::json!({"device_id": 1}),
+        serde_json::json!({"fingerprint": {"start": 20, "end": 100}}),
+        serde_json::json!({"calls": {"start": 0, "end": 3}, "name": "a"}),
+    ];
+    for query in queries {
+        // A projected `fold!` consumer: order-sensitive equality, both paths walk
+        // the same chunk vec in the same order.
+        let mut via_fold = Vec::new();
+        Wide::for_each(
+            &chunks,
+            query.clone(),
+            &[],
+            fold!(Wide, |fingerprint: u64, calls: u32| via_fold.push((fingerprint, calls))),
+        )
+        .unwrap();
+        let mut via_pipeline = Vec::new();
+        prepared_pipeline::<Wide, _>(
+            &chunks,
+            &query,
+            &[],
+            &mut fold!(Wide, |fingerprint: u64, calls: u32| via_pipeline.push((fingerprint, calls))),
+        )
+        .unwrap();
+        assert_eq!(via_fold, via_pipeline, "{query}");
+
+        // A hydrating closure consumer.
+        let mut rows_fold = Vec::new();
+        Wide::for_each(&chunks, query.clone(), &[], |row: Wide| rows_fold.push(row.fingerprint)).unwrap();
+        let mut rows_pipeline = Vec::new();
+        prepared_pipeline(&chunks, &query, &[], &mut |row: Wide| rows_pipeline.push(row.fingerprint)).unwrap();
+        assert_eq!(rows_fold, rows_pipeline, "{query}");
+    }
+
+    // Corrupted data fails both paths identically, with rows from earlier chunks
+    // already delivered to neither (chunk 2 is the last one here).
+    let mut damaged = sample_chunks();
+    for byte in damaged[1].fingerprint.iter_mut() {
+        *byte = !*byte;
+    }
+    let err_fold = Wide::for_each(
+        &damaged,
+        serde_json::json!({}),
+        &[],
+        fold!(Wide, |fingerprint: u64| {
+            let _: u64 = fingerprint;
+        }),
+    )
+    .unwrap_err()
+    .to_string();
+    let err_pipeline = prepared_pipeline(
+        &damaged,
+        &serde_json::json!({}),
+        &[],
+        &mut fold!(Wide, |fingerprint: u64| {
+            let _: u64 = fingerprint;
+        }),
+    )
+    .unwrap_err()
+    .to_string();
+    assert_eq!(err_fold, err_pipeline);
+}
+
+#[test]
+fn enum_prepared_pipeline_matches_fold_value() {
+    let chunks = Stream::write(stream_data()).unwrap();
+    let queries = [serde_json::json!({}), serde_json::json!({"Tick": true}), serde_json::json!({"Idle": true})];
+    for query in queries {
+        // Pattern fold: slot-streaming when unpinning, mask walk when pinned.
+        let mut via_fold = Vec::new();
+        Stream::for_each(
+            &chunks,
+            query.clone(),
+            &[],
+            fold!(Stream, |Tick(Reading { sensor: u32, value: f64 })| via_fold.push((sensor, value))),
+        )
+        .unwrap();
+        let mut via_pipeline = Vec::new();
+        prepared_pipeline::<Stream, _>(
+            &chunks,
+            &query,
+            &[],
+            &mut fold!(Stream, |Tick(Reading { sensor: u32, value: f64 })| via_pipeline.push((sensor, value))),
+        )
+        .unwrap();
+        assert_eq!(via_fold, via_pipeline, "{query}");
+
+        // Membership fold counts rows without decoding payload blocks.
+        let mut via_fold = 0usize;
+        Stream::for_each(&chunks, query.clone(), &[], fold!(Stream, |Note| via_fold += 1)).unwrap();
+        let mut via_pipeline = 0usize;
+        prepared_pipeline(&chunks, &query, &[], &mut fold!(Stream, |Note| via_pipeline += 1)).unwrap();
+        assert_eq!(via_fold, via_pipeline, "{query}");
+
+        // Multi-arm fold dispatches on the discriminant.
+        let mut via_ticks = 0usize;
+        let mut via_idle = 0usize;
+        Stream::for_each(
+            &chunks,
+            query.clone(),
+            &[],
+            fold!(
+                Stream,
+                |Tick(Reading { value: f64 })| {
+                    let _ = value;
+                    via_ticks += 1;
+                },
+                |Idle| via_idle += 1
+            ),
+        )
+        .unwrap();
+        let mut pipeline_ticks = 0usize;
+        let mut pipeline_idle = 0usize;
+        prepared_pipeline(
+            &chunks,
+            &query,
+            &[],
+            &mut fold!(
+                Stream,
+                |Tick(Reading { value: f64 })| {
+                    let _ = value;
+                    pipeline_ticks += 1;
+                },
+                |Idle| pipeline_idle += 1
+            ),
+        )
+        .unwrap();
+        assert_eq!((via_ticks, via_idle), (pipeline_ticks, pipeline_idle), "{query}");
+
+        // Hydrating closure.
+        let mut via_fold = Vec::new();
+        Stream::for_each(&chunks, query.clone(), &[], |s: Stream| via_fold.push(s)).unwrap();
+        let mut via_pipeline = Vec::new();
+        prepared_pipeline(&chunks, &query, &[], &mut |s: Stream| via_pipeline.push(s)).unwrap();
+        assert_eq!(via_fold, via_pipeline, "{query}");
+    }
+}
+
+/// Sendness of prepared chunks is the prerequisite for preparing them on worker
+/// threads; regressions here must fail the build, not the parallel call site only.
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    let () = assert_send::<<Wide as PcoPack>::Prepared>();
+    let () = assert_send::<<Reading as PcoPack>::Prepared>();
+    let () = assert_send::<<Stream as PcoPack>::Prepared>();
+};
+
 #[test]
 fn lazy_reader_pop_error_and_default_semantics() {
     // Corrupted bytes fail loudly instead of reading back as the default value.

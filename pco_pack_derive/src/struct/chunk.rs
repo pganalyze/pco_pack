@@ -161,6 +161,23 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
         })
         .collect();
 
+    // Per-chunk warm statements for `prepare`: projected columns decode here instead
+    // of lazily during the fold, so a matching chunk's fold is the row loop alone.
+    // Non-projected columns carry no bytes and need no warm.
+    let warm_stmts: Vec<TokenStream2> = sg
+        .all_payload()
+        .iter()
+        .map(|fi| {
+            let ident = &fi.ident;
+            let field_name = ident.to_string();
+            quote! {
+                if fields.is_empty() || fields.contains(&#field_name) {
+                    reader.#ident.reader_mut()?;
+                }
+            }
+        })
+        .collect();
+
     // Names `fold_into` accepts, mirroring `resolve_fields`' known set (which
     // gains start_at/end_at only for timestamped structs).
     let known_field_names: Vec<TokenStream2> = {
@@ -248,9 +265,8 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
             /// Streams this chunk's matching rows into a consumer, mirroring `filter`
             /// but never materializing a row vector or a full row struct. `plan` and
             /// `fields` are the outputs of `PcoFilter::resolve_query` and
-            /// `PcoPack::resolve_fields`; direct callers use this one-shot path, while
-            /// `for_each` resolves once per stream and reuses scratch buffers via
-            /// `fold_chunk`.
+            /// `PcoPack::resolve_fields`; one-shot path over a single chunk, composing
+            /// `prepare` and `fold_prepared` after validating the projection.
             pub fn fold_into<C>(
                 &self,
                 plan: &[pco_pack::ResolvedFilter],
@@ -261,54 +277,80 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
                 C: pco_pack::Consumer<#name>,
             {
                 Self::validate_projection(fields)?;
-                let mut order = Vec::new();
-                let mut matches = pco_pack::FilterMask::ones(0);
-                self.fold_chunk(plan, fields, &mut order, &mut matches, consumer)
+                let mut prepared = Self::prepare(self, plan, fields)?;
+                Self::fold_prepared(&mut prepared, consumer)
             }
 
-            /// Per-chunk streaming body. `order` and `matches` are stream-scope scratch
-            /// reused across chunks: the filter order depends on this chunk's column sizes,
-            /// so it is re-sorted here, but neither needs a fresh allocation.
-            pub fn fold_chunk<C>(
+            /// Decode and filter one chunk under a resolved plan and projection.
+            /// Every decode the fold below would perform on projected columns happens
+            /// here, so the fold thread is left with the row loop alone. Running this
+            /// for every chunk and `fold_prepared` in order reproduces `fold_chunk`'s
+            /// delivered rows exactly.
+            pub fn prepare(
                 &self,
                 plan: &[pco_pack::ResolvedFilter],
                 fields: &[&str],
-                order: &mut Vec<usize>,
-                matches: &mut pco_pack::FilterMask,
-                consumer: &mut C,
-            ) -> pco_pack::anyhow::Result<()>
-            where
-                C: pco_pack::Consumer<#name>,
-            {
+            ) -> pco_pack::anyhow::Result<Prepared> {
                 let mut reader = Reader {
                     #(#index_copies)*
                     #bounds_copies
                     #(#payload_wraps_combined)*
                 };
                 let row_count = Self::compute_row_count(&mut reader, fields)?;
-                // With nothing to filter, every row streams; skip the mask entirely.
-                if plan.is_empty() {
-                    let mut columns = Columns { reader: &mut reader };
-                    for row_index in 0..row_count {
-                        consumer.consume(&mut columns, row_index)?;
-                    }
-                    return Ok(());
-                }
-                matches.reset_ones(row_count);
+                let mut matches = pco_pack::FilterMask::ones(row_count);
                 // Run cheap filters (small columns, index fields) before expensive ones.
-                order.clear();
-                order.extend(0..plan.len());
+                let mut order: Vec<usize> = (0..plan.len()).collect();
                 let sizes = [#(#size_keys),*];
                 order.sort_by_key(|&i| sizes[plan[i].path[0]]);
                 for &i in order.iter() {
-                    <#name as pco_pack::PcoFilter>::filter_step(&mut reader, &plan[i].path, &plan[i].filter, matches)?;
-                    // Early exit: previous filters invalidated the entire chunk.
+                    <#name as pco_pack::PcoFilter>::filter_step(&mut reader, &plan[i].path, &plan[i].filter, &mut matches)?;
+                    // Early exit: filters invalidated the entire chunk. Folding delivers
+                    // nothing, so skip the warm and decode no more than the filter
+                    // steps already forced.
                     if !matches.any_set_in_range(0..row_count) {
-                        return Ok(());
+                        return Ok(Prepared { reader, matches, row_count });
                     }
                 }
-                let mut columns = Columns { reader: &mut reader };
-                matches.for_each_set_row(row_count, |row| consumer.consume(&mut columns, row))
+                // A matching chunk's fold pops every projected column, so decode them
+                // up front rather than lazily mid-walk. An empty plan leaves an
+                // all-ones mask covering the same row loop `fold_chunk` ran directly.
+                if !matches.any_set_in_range(0..row_count) {
+                    return Ok(Prepared { reader, matches, row_count });
+                }
+                #(#warm_stmts)*
+                Ok(Prepared { reader, matches, row_count })
+            }
+
+            /// Fold a prepared chunk through `consumer`. Errors and delivered-row
+            /// semantics match `fold_into` exactly.
+            pub fn fold_prepared<C>(
+                prepared: &mut Prepared,
+                consumer: &mut C,
+            ) -> pco_pack::anyhow::Result<()>
+            where
+                C: pco_pack::Consumer<#name>,
+            {
+                let mut columns = Columns { reader: &mut prepared.reader };
+                prepared.matches.for_each_set_row(prepared.row_count, |row| consumer.consume(&mut columns, row))
+            }
+
+            /// Per-chunk streaming body, kept for compatibility: the composition of
+            /// `prepare` and `fold_prepared`. `order` and `matches` were stream-scope
+            /// scratch when streams reused buffers across chunks; `Prepared` owns its
+            /// own mask now, so both are ignored.
+            pub fn fold_chunk<C>(
+                &self,
+                plan: &[pco_pack::ResolvedFilter],
+                fields: &[&str],
+                _order: &mut Vec<usize>,
+                _matches: &mut pco_pack::FilterMask,
+                consumer: &mut C,
+            ) -> pco_pack::anyhow::Result<()>
+            where
+                C: pco_pack::Consumer<#name>,
+            {
+                let mut prepared = Self::prepare(self, plan, fields)?;
+                Self::fold_prepared(&mut prepared, consumer)
             }
         }
     }

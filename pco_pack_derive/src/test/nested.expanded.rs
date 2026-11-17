@@ -44,6 +44,16 @@ const _: () = {
             self.reader.inner.pop_inner(row)
         }
     }
+    /// One chunk decoded and filtered ahead of the fold, produced by
+    /// [`Chunk::prepare`] and consumed by [`Chunk::fold_prepared`]. The reader holds
+    /// every projected column decompressed and the mask holds the surviving rows, so
+    /// folding is the row loop alone. `Send` falls out structurally: the readers hold
+    /// owned compressed bytes and decoded columns.
+    pub struct Prepared {
+        reader: Reader,
+        matches: pco_pack::FilterMask,
+        row_count: usize,
+    }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
     #[serde(crate = "pco_pack::serde", deny_unknown_fields)]
@@ -439,12 +449,28 @@ const _: () = {
             let fields = <Outer as pco_pack::PcoPack>::resolve_fields(query, &base)?;
             let plan = <Outer as pco_pack::PcoFilter>::resolve_query(query)?;
             Self::Chunk::validate_projection(&fields)?;
-            let mut order: Vec<usize> = Vec::new();
-            let mut matches = pco_pack::FilterMask::ones(0);
             for c in chunks {
-                c.fold_chunk(&plan, &fields, &mut order, &mut matches, consumer)?;
+                let mut prepared = Self::Chunk::prepare(c, &plan, &fields)?;
+                Self::Chunk::fold_prepared(&mut prepared, consumer)?;
             }
             Ok(())
+        }
+        type Prepared = Prepared;
+        fn prepare(
+            chunk: &Self::Chunk,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+        ) -> pco_pack::anyhow::Result<Self::Prepared> {
+            Chunk::prepare(chunk, plan, fields)
+        }
+        fn fold_prepared<C>(
+            prepared: &mut Self::Prepared,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Self>,
+        {
+            Chunk::fold_prepared(prepared, consumer)
         }
         fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
             let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
@@ -748,9 +774,8 @@ const _: () = {
         /// Streams this chunk's matching rows into a consumer, mirroring `filter`
         /// but never materializing a row vector or a full row struct. `plan` and
         /// `fields` are the outputs of `PcoFilter::resolve_query` and
-        /// `PcoPack::resolve_fields`; direct callers use this one-shot path, while
-        /// `for_each` resolves once per stream and reuses scratch buffers via
-        /// `fold_chunk`.
+        /// `PcoPack::resolve_fields`; one-shot path over a single chunk, composing
+        /// `prepare` and `fold_prepared` after validating the projection.
         pub fn fold_into<C>(
             &self,
             plan: &[pco_pack::ResolvedFilter],
@@ -761,24 +786,19 @@ const _: () = {
             C: pco_pack::Consumer<Outer>,
         {
             Self::validate_projection(fields)?;
-            let mut order = Vec::new();
-            let mut matches = pco_pack::FilterMask::ones(0);
-            self.fold_chunk(plan, fields, &mut order, &mut matches, consumer)
+            let mut prepared = Self::prepare(self, plan, fields)?;
+            Self::fold_prepared(&mut prepared, consumer)
         }
-        /// Per-chunk streaming body. `order` and `matches` are stream-scope scratch
-        /// reused across chunks: the filter order depends on this chunk's column sizes,
-        /// so it is re-sorted here, but neither needs a fresh allocation.
-        pub fn fold_chunk<C>(
+        /// Decode and filter one chunk under a resolved plan and projection.
+        /// Every decode the fold below would perform on projected columns happens
+        /// here, so the fold thread is left with the row loop alone. Running this
+        /// for every chunk and `fold_prepared` in order reproduces `fold_chunk`'s
+        /// delivered rows exactly.
+        pub fn prepare(
             &self,
             plan: &[pco_pack::ResolvedFilter],
             fields: &[&str],
-            order: &mut Vec<usize>,
-            matches: &mut pco_pack::FilterMask,
-            consumer: &mut C,
-        ) -> pco_pack::anyhow::Result<()>
-        where
-            C: pco_pack::Consumer<Outer>,
-        {
+        ) -> pco_pack::anyhow::Result<Prepared> {
             let mut reader = Reader {
                 name: <pco_pack::LazyReader<
                     String,
@@ -804,16 +824,8 @@ const _: () = {
                 ),
             };
             let row_count = Self::compute_row_count(&mut reader, fields)?;
-            if plan.is_empty() {
-                let mut columns = Columns { reader: &mut reader };
-                for row_index in 0..row_count {
-                    consumer.consume(&mut columns, row_index)?;
-                }
-                return Ok(());
-            }
-            matches.reset_ones(row_count);
-            order.clear();
-            order.extend(0..plan.len());
+            let mut matches = pco_pack::FilterMask::ones(row_count);
+            let mut order: Vec<usize> = (0..plan.len()).collect();
             let sizes = [self.name.len(), self.inner.len()];
             order.sort_by_key(|&i| sizes[plan[i].path[0]]);
             for &i in order.iter() {
@@ -821,15 +833,71 @@ const _: () = {
                     &mut reader,
                     &plan[i].path,
                     &plan[i].filter,
-                    matches,
+                    &mut matches,
                 )?;
                 if !matches.any_set_in_range(0..row_count) {
-                    return Ok(());
+                    return Ok(Prepared {
+                        reader,
+                        matches,
+                        row_count,
+                    });
                 }
             }
-            let mut columns = Columns { reader: &mut reader };
-            matches
-                .for_each_set_row(row_count, |row| consumer.consume(&mut columns, row))
+            if !matches.any_set_in_range(0..row_count) {
+                return Ok(Prepared {
+                    reader,
+                    matches,
+                    row_count,
+                });
+            }
+            if fields.is_empty() || fields.contains(&"name") {
+                reader.name.reader_mut()?;
+            }
+            if fields.is_empty() || fields.contains(&"inner") {
+                reader.inner.reader_mut()?;
+            }
+            Ok(Prepared {
+                reader,
+                matches,
+                row_count,
+            })
+        }
+        /// Fold a prepared chunk through `consumer`. Errors and delivered-row
+        /// semantics match `fold_into` exactly.
+        pub fn fold_prepared<C>(
+            prepared: &mut Prepared,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Outer>,
+        {
+            let mut columns = Columns {
+                reader: &mut prepared.reader,
+            };
+            prepared
+                .matches
+                .for_each_set_row(
+                    prepared.row_count,
+                    |row| consumer.consume(&mut columns, row),
+                )
+        }
+        /// Per-chunk streaming body, kept for compatibility: the composition of
+        /// `prepare` and `fold_prepared`. `order` and `matches` were stream-scope
+        /// scratch when streams reused buffers across chunks; `Prepared` owns its
+        /// own mask now, so both are ignored.
+        pub fn fold_chunk<C>(
+            &self,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+            _order: &mut Vec<usize>,
+            _matches: &mut pco_pack::FilterMask,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Outer>,
+        {
+            let mut prepared = Self::prepare(self, plan, fields)?;
+            Self::fold_prepared(&mut prepared, consumer)
         }
     }
 };
@@ -878,6 +946,16 @@ const _: () = {
         pub fn label(&mut self, row: usize) -> pco_pack::anyhow::Result<String> {
             self.reader.label.pop_inner(row)
         }
+    }
+    /// One chunk decoded and filtered ahead of the fold, produced by
+    /// [`Chunk::prepare`] and consumed by [`Chunk::fold_prepared`]. The reader holds
+    /// every projected column decompressed and the mask holds the surviving rows, so
+    /// folding is the row loop alone. `Send` falls out structurally: the readers hold
+    /// owned compressed bytes and decoded columns.
+    pub struct Prepared {
+        reader: Reader,
+        matches: pco_pack::FilterMask,
+        row_count: usize,
     }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
@@ -1266,12 +1344,28 @@ const _: () = {
             let fields = <Inner as pco_pack::PcoPack>::resolve_fields(query, &base)?;
             let plan = <Inner as pco_pack::PcoFilter>::resolve_query(query)?;
             Self::Chunk::validate_projection(&fields)?;
-            let mut order: Vec<usize> = Vec::new();
-            let mut matches = pco_pack::FilterMask::ones(0);
             for c in chunks {
-                c.fold_chunk(&plan, &fields, &mut order, &mut matches, consumer)?;
+                let mut prepared = Self::Chunk::prepare(c, &plan, &fields)?;
+                Self::Chunk::fold_prepared(&mut prepared, consumer)?;
             }
             Ok(())
+        }
+        type Prepared = Prepared;
+        fn prepare(
+            chunk: &Self::Chunk,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+        ) -> pco_pack::anyhow::Result<Self::Prepared> {
+            Chunk::prepare(chunk, plan, fields)
+        }
+        fn fold_prepared<C>(
+            prepared: &mut Self::Prepared,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Self>,
+        {
+            Chunk::fold_prepared(prepared, consumer)
         }
         fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
             let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
@@ -1575,9 +1669,8 @@ const _: () = {
         /// Streams this chunk's matching rows into a consumer, mirroring `filter`
         /// but never materializing a row vector or a full row struct. `plan` and
         /// `fields` are the outputs of `PcoFilter::resolve_query` and
-        /// `PcoPack::resolve_fields`; direct callers use this one-shot path, while
-        /// `for_each` resolves once per stream and reuses scratch buffers via
-        /// `fold_chunk`.
+        /// `PcoPack::resolve_fields`; one-shot path over a single chunk, composing
+        /// `prepare` and `fold_prepared` after validating the projection.
         pub fn fold_into<C>(
             &self,
             plan: &[pco_pack::ResolvedFilter],
@@ -1588,24 +1681,19 @@ const _: () = {
             C: pco_pack::Consumer<Inner>,
         {
             Self::validate_projection(fields)?;
-            let mut order = Vec::new();
-            let mut matches = pco_pack::FilterMask::ones(0);
-            self.fold_chunk(plan, fields, &mut order, &mut matches, consumer)
+            let mut prepared = Self::prepare(self, plan, fields)?;
+            Self::fold_prepared(&mut prepared, consumer)
         }
-        /// Per-chunk streaming body. `order` and `matches` are stream-scope scratch
-        /// reused across chunks: the filter order depends on this chunk's column sizes,
-        /// so it is re-sorted here, but neither needs a fresh allocation.
-        pub fn fold_chunk<C>(
+        /// Decode and filter one chunk under a resolved plan and projection.
+        /// Every decode the fold below would perform on projected columns happens
+        /// here, so the fold thread is left with the row loop alone. Running this
+        /// for every chunk and `fold_prepared` in order reproduces `fold_chunk`'s
+        /// delivered rows exactly.
+        pub fn prepare(
             &self,
             plan: &[pco_pack::ResolvedFilter],
             fields: &[&str],
-            order: &mut Vec<usize>,
-            matches: &mut pco_pack::FilterMask,
-            consumer: &mut C,
-        ) -> pco_pack::anyhow::Result<()>
-        where
-            C: pco_pack::Consumer<Inner>,
-        {
+        ) -> pco_pack::anyhow::Result<Prepared> {
             let mut reader = Reader {
                 x: <pco_pack::LazyReader<
                     i32,
@@ -1631,16 +1719,8 @@ const _: () = {
                 ),
             };
             let row_count = Self::compute_row_count(&mut reader, fields)?;
-            if plan.is_empty() {
-                let mut columns = Columns { reader: &mut reader };
-                for row_index in 0..row_count {
-                    consumer.consume(&mut columns, row_index)?;
-                }
-                return Ok(());
-            }
-            matches.reset_ones(row_count);
-            order.clear();
-            order.extend(0..plan.len());
+            let mut matches = pco_pack::FilterMask::ones(row_count);
+            let mut order: Vec<usize> = (0..plan.len()).collect();
             let sizes = [self.x.len(), self.label.len()];
             order.sort_by_key(|&i| sizes[plan[i].path[0]]);
             for &i in order.iter() {
@@ -1648,15 +1728,71 @@ const _: () = {
                     &mut reader,
                     &plan[i].path,
                     &plan[i].filter,
-                    matches,
+                    &mut matches,
                 )?;
                 if !matches.any_set_in_range(0..row_count) {
-                    return Ok(());
+                    return Ok(Prepared {
+                        reader,
+                        matches,
+                        row_count,
+                    });
                 }
             }
-            let mut columns = Columns { reader: &mut reader };
-            matches
-                .for_each_set_row(row_count, |row| consumer.consume(&mut columns, row))
+            if !matches.any_set_in_range(0..row_count) {
+                return Ok(Prepared {
+                    reader,
+                    matches,
+                    row_count,
+                });
+            }
+            if fields.is_empty() || fields.contains(&"x") {
+                reader.x.reader_mut()?;
+            }
+            if fields.is_empty() || fields.contains(&"label") {
+                reader.label.reader_mut()?;
+            }
+            Ok(Prepared {
+                reader,
+                matches,
+                row_count,
+            })
+        }
+        /// Fold a prepared chunk through `consumer`. Errors and delivered-row
+        /// semantics match `fold_into` exactly.
+        pub fn fold_prepared<C>(
+            prepared: &mut Prepared,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Inner>,
+        {
+            let mut columns = Columns {
+                reader: &mut prepared.reader,
+            };
+            prepared
+                .matches
+                .for_each_set_row(
+                    prepared.row_count,
+                    |row| consumer.consume(&mut columns, row),
+                )
+        }
+        /// Per-chunk streaming body, kept for compatibility: the composition of
+        /// `prepare` and `fold_prepared`. `order` and `matches` were stream-scope
+        /// scratch when streams reused buffers across chunks; `Prepared` owns its
+        /// own mask now, so both are ignored.
+        pub fn fold_chunk<C>(
+            &self,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+            _order: &mut Vec<usize>,
+            _matches: &mut pco_pack::FilterMask,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Inner>,
+        {
+            let mut prepared = Self::prepare(self, plan, fields)?;
+            Self::fold_prepared(&mut prepared, consumer)
         }
     }
 };

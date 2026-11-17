@@ -60,6 +60,16 @@ const _: () = {
             self.reader.state.pop_inner(row)
         }
     }
+    /// One chunk decoded and filtered ahead of the fold, produced by
+    /// [`Chunk::prepare`] and consumed by [`Chunk::fold_prepared`]. The reader holds
+    /// every projected column decompressed and the mask holds the surviving rows, so
+    /// folding is the row loop alone. `Send` falls out structurally: the readers hold
+    /// owned compressed bytes and decoded columns.
+    pub struct Prepared {
+        reader: Reader,
+        matches: pco_pack::FilterMask,
+        row_count: usize,
+    }
     /// Typed filter struct for [`#name`].
     #[derive(Clone, Default, Debug, pco_pack::serde::Deserialize)]
     #[serde(crate = "pco_pack::serde", deny_unknown_fields)]
@@ -585,12 +595,28 @@ const _: () = {
             let fields = <Task as pco_pack::PcoPack>::resolve_fields(query, &base)?;
             let plan = <Task as pco_pack::PcoFilter>::resolve_query(query)?;
             Self::Chunk::validate_projection(&fields)?;
-            let mut order: Vec<usize> = Vec::new();
-            let mut matches = pco_pack::FilterMask::ones(0);
             for c in chunks {
-                c.fold_chunk(&plan, &fields, &mut order, &mut matches, consumer)?;
+                let mut prepared = Self::Chunk::prepare(c, &plan, &fields)?;
+                Self::Chunk::fold_prepared(&mut prepared, consumer)?;
             }
             Ok(())
+        }
+        type Prepared = Prepared;
+        fn prepare(
+            chunk: &Self::Chunk,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+        ) -> pco_pack::anyhow::Result<Self::Prepared> {
+            Chunk::prepare(chunk, plan, fields)
+        }
+        fn fold_prepared<C>(
+            prepared: &mut Self::Prepared,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Self>,
+        {
+            Chunk::fold_prepared(prepared, consumer)
         }
         fn write(data: Vec<Self>) -> pco_pack::anyhow::Result<Vec<Self::Chunk>> {
             let mut groups: pco_pack::ahash::HashMap<(), Vec<usize>> = Default::default();
@@ -1001,9 +1027,8 @@ const _: () = {
         /// Streams this chunk's matching rows into a consumer, mirroring `filter`
         /// but never materializing a row vector or a full row struct. `plan` and
         /// `fields` are the outputs of `PcoFilter::resolve_query` and
-        /// `PcoPack::resolve_fields`; direct callers use this one-shot path, while
-        /// `for_each` resolves once per stream and reuses scratch buffers via
-        /// `fold_chunk`.
+        /// `PcoPack::resolve_fields`; one-shot path over a single chunk, composing
+        /// `prepare` and `fold_prepared` after validating the projection.
         pub fn fold_into<C>(
             &self,
             plan: &[pco_pack::ResolvedFilter],
@@ -1014,24 +1039,19 @@ const _: () = {
             C: pco_pack::Consumer<Task>,
         {
             Self::validate_projection(fields)?;
-            let mut order = Vec::new();
-            let mut matches = pco_pack::FilterMask::ones(0);
-            self.fold_chunk(plan, fields, &mut order, &mut matches, consumer)
+            let mut prepared = Self::prepare(self, plan, fields)?;
+            Self::fold_prepared(&mut prepared, consumer)
         }
-        /// Per-chunk streaming body. `order` and `matches` are stream-scope scratch
-        /// reused across chunks: the filter order depends on this chunk's column sizes,
-        /// so it is re-sorted here, but neither needs a fresh allocation.
-        pub fn fold_chunk<C>(
+        /// Decode and filter one chunk under a resolved plan and projection.
+        /// Every decode the fold below would perform on projected columns happens
+        /// here, so the fold thread is left with the row loop alone. Running this
+        /// for every chunk and `fold_prepared` in order reproduces `fold_chunk`'s
+        /// delivered rows exactly.
+        pub fn prepare(
             &self,
             plan: &[pco_pack::ResolvedFilter],
             fields: &[&str],
-            order: &mut Vec<usize>,
-            matches: &mut pco_pack::FilterMask,
-            consumer: &mut C,
-        ) -> pco_pack::anyhow::Result<()>
-        where
-            C: pco_pack::Consumer<Task>,
-        {
+        ) -> pco_pack::anyhow::Result<Prepared> {
             let mut reader = Reader {
                 id: <pco_pack::LazyReader<
                     i64,
@@ -1079,16 +1099,8 @@ const _: () = {
                 ),
             };
             let row_count = Self::compute_row_count(&mut reader, fields)?;
-            if plan.is_empty() {
-                let mut columns = Columns { reader: &mut reader };
-                for row_index in 0..row_count {
-                    consumer.consume(&mut columns, row_index)?;
-                }
-                return Ok(());
-            }
-            matches.reset_ones(row_count);
-            order.clear();
-            order.extend(0..plan.len());
+            let mut matches = pco_pack::FilterMask::ones(row_count);
+            let mut order: Vec<usize> = (0..plan.len()).collect();
             let sizes = [
                 self.id.len(),
                 self.value.len(),
@@ -1101,15 +1113,77 @@ const _: () = {
                     &mut reader,
                     &plan[i].path,
                     &plan[i].filter,
-                    matches,
+                    &mut matches,
                 )?;
                 if !matches.any_set_in_range(0..row_count) {
-                    return Ok(());
+                    return Ok(Prepared {
+                        reader,
+                        matches,
+                        row_count,
+                    });
                 }
             }
-            let mut columns = Columns { reader: &mut reader };
-            matches
-                .for_each_set_row(row_count, |row| consumer.consume(&mut columns, row))
+            if !matches.any_set_in_range(0..row_count) {
+                return Ok(Prepared {
+                    reader,
+                    matches,
+                    row_count,
+                });
+            }
+            if fields.is_empty() || fields.contains(&"id") {
+                reader.id.reader_mut()?;
+            }
+            if fields.is_empty() || fields.contains(&"value") {
+                reader.value.reader_mut()?;
+            }
+            if fields.is_empty() || fields.contains(&"label") {
+                reader.label.reader_mut()?;
+            }
+            if fields.is_empty() || fields.contains(&"state") {
+                reader.state.reader_mut()?;
+            }
+            Ok(Prepared {
+                reader,
+                matches,
+                row_count,
+            })
+        }
+        /// Fold a prepared chunk through `consumer`. Errors and delivered-row
+        /// semantics match `fold_into` exactly.
+        pub fn fold_prepared<C>(
+            prepared: &mut Prepared,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Task>,
+        {
+            let mut columns = Columns {
+                reader: &mut prepared.reader,
+            };
+            prepared
+                .matches
+                .for_each_set_row(
+                    prepared.row_count,
+                    |row| consumer.consume(&mut columns, row),
+                )
+        }
+        /// Per-chunk streaming body, kept for compatibility: the composition of
+        /// `prepare` and `fold_prepared`. `order` and `matches` were stream-scope
+        /// scratch when streams reused buffers across chunks; `Prepared` owns its
+        /// own mask now, so both are ignored.
+        pub fn fold_chunk<C>(
+            &self,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+            _order: &mut Vec<usize>,
+            _matches: &mut pco_pack::FilterMask,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Task>,
+        {
+            let mut prepared = Self::prepare(self, plan, fields)?;
+            Self::fold_prepared(&mut prepared, consumer)
         }
     }
 };
@@ -1170,6 +1244,24 @@ const _: () = {
             }
             Ok((&mut self.reader.variant_1, slot))
         }
+    }
+    /// Chunk framed, row-count validated, and query-filtered ahead of the
+    /// fold, produced by `PcoPack::prepare` and consumed by
+    /// `PcoPack::fold_prepared`. Struct models additionally warm every
+    /// projected column here; enum models keep the discriminant guarantee and
+    /// leave variant payload blocks lazy, because the folded consumer (invisible
+    /// to `prepare`) decides which blocks are touched.
+    pub struct Prepared {
+        reader: Reader,
+        matches: pco_pack::FilterMask,
+        row_count: usize,
+        /// Variants the plan pins the discriminant to; `None` when the plan is
+        /// empty or a range step bounds without enumerating.
+        pinned: Option<Vec<i64>>,
+        bounded: bool,
+        /// `false` when an empty plan left row-count validation to the fold: a
+        /// slot-streaming fold never needs the discriminant at all.
+        planned: bool,
     }
     impl pco_pack::PcoSerde for State {
         type Writer = Writer;
@@ -1482,28 +1574,44 @@ const _: () = {
                     ),
                 );
             }
-            let mut declared: Vec<i64> = Vec::new();
-            for &name in <C as pco_pack::Consumer<Self>>::FIELDS {
-                let disc: Option<i64> = match name {
+            for &decl_name in <C as pco_pack::Consumer<Self>>::FIELDS {
+                let disc: Option<i64> = match decl_name {
                     "Idle" => Some(0i64),
                     "Running" => Some(1i64),
                     "Paused" => Some(2i64),
                     _ => None,
                 };
-                let Some(disc) = disc else {
+                let Some(_disc) = disc else {
                     return Err(
                         pco_pack::anyhow::anyhow!(
-                            "Enum '{}' has no variant '{}'", stringify!(State), name
+                            "Enum '{}' has no variant '{}'", stringify!(State), decl_name
                         ),
                     );
                 };
-                declared.push(disc);
             }
             let execution_plan = <Self as pco_pack::PcoFilter>::resolve_query(query)?;
-            let stream_all = execution_plan.is_empty() && declared.is_empty();
+            for chunk in chunks {
+                let mut prepared = Self::prepare(chunk, &execution_plan, fields)?;
+                Self::fold_prepared(&mut prepared, consumer)?;
+            }
+            Ok(())
+        }
+        type Prepared = Prepared;
+        fn prepare(
+            chunk: &Self::Chunk,
+            plan: &[pco_pack::ResolvedFilter],
+            fields: &[&str],
+        ) -> pco_pack::anyhow::Result<Self::Prepared> {
+            if !fields.is_empty() {
+                return Err(
+                    pco_pack::anyhow::anyhow!(
+                        "Enum '{}' does not support field matches", stringify!(State)
+                    ),
+                );
+            }
             let mut pinned: Option<Vec<i64>> = None;
             let mut bounded = true;
-            for step in &execution_plan {
+            for step in plan {
                 if !bounded {
                     break;
                 }
@@ -1533,161 +1641,236 @@ const _: () = {
                     _ => bounded = false,
                 }
             }
-            let pops = <C as pco_pack::Consumer<Self>>::POPS_PAYLOAD;
-            let slot_stream = bounded && declared.len() == 1 && pops.len() == 1
-                && pops[0]
-                && match &pinned {
-                    Some(pins) => pins.as_slice() == declared.as_slice(),
-                    None => execution_plan.is_empty(),
-                };
-            let mut matches = pco_pack::FilterMask::ones(0);
-            'chunks: for chunk in chunks {
-                if chunk.is_empty() {
-                    continue 'chunks;
-                }
-                let mut cursor = std::io::Cursor::new(chunk.as_slice());
-                let mut reader = <Self as pco_pack::PcoSerde>::read(
-                    &mut cursor,
-                    0u32,
-                    Default::default(),
+            if chunk.is_empty() {
+                return Ok(Prepared {
+                    reader: Reader::default(),
+                    matches: pco_pack::FilterMask::ones(0),
+                    row_count: 0,
+                    pinned,
+                    bounded,
+                    planned: true,
+                });
+            }
+            let mut cursor = std::io::Cursor::new(chunk.as_slice());
+            let mut reader = <Self as pco_pack::PcoSerde>::read(
+                &mut cursor,
+                0u32,
+                Default::default(),
+            )?;
+            if plan.is_empty() {
+                return Ok(Prepared {
+                    reader,
+                    matches: pco_pack::FilterMask::ones(0),
+                    row_count: 0,
+                    pinned,
+                    bounded,
+                    planned: false,
+                });
+            }
+            let row_count: usize = <Self as pco_pack::PcoSerde>::validate_bounds(
+                    &mut reader,
+                )
+                .context("Invalid enum payload")?
+                .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
+            let mut matches = pco_pack::FilterMask::ones(row_count);
+            for step in plan {
+                <Self as pco_pack::PcoFilter>::filter_step(
+                    &mut reader,
+                    &step.path,
+                    &step.filter,
+                    &mut matches,
                 )?;
-                if slot_stream {
-                    let slot_count: Option<usize> = match Some(declared[0]) {
+                if !matches.any_set_in_range(0..row_count) {
+                    return Ok(Prepared {
+                        reader,
+                        matches,
+                        row_count,
+                        pinned,
+                        bounded,
+                        planned: true,
+                    });
+                }
+            }
+            Ok(Prepared {
+                reader,
+                matches,
+                row_count,
+                pinned,
+                bounded,
+                planned: true,
+            })
+        }
+        fn fold_prepared<C>(
+            prepared: &mut Self::Prepared,
+            consumer: &mut C,
+        ) -> pco_pack::anyhow::Result<()>
+        where
+            C: pco_pack::Consumer<Self>,
+        {
+            let mut declared: Vec<i64> = Vec::new();
+            for &decl_name in <C as pco_pack::Consumer<Self>>::FIELDS {
+                let disc: Option<i64> = match decl_name {
+                    "Idle" => Some(0i64),
+                    "Running" => Some(1i64),
+                    "Paused" => Some(2i64),
+                    _ => None,
+                };
+                let Some(disc) = disc else {
+                    return Err(
+                        pco_pack::anyhow::anyhow!(
+                            "Enum '{}' has no variant '{}'", stringify!(State), decl_name
+                        ),
+                    );
+                };
+                declared.push(disc);
+            }
+            let pops = <C as pco_pack::Consumer<Self>>::POPS_PAYLOAD;
+            let slot_stream = prepared.bounded && declared.len() == 1 && pops.len() == 1
+                && pops[0]
+                && match &prepared.pinned {
+                    Some(pins) => pins.as_slice() == declared.as_slice(),
+                    None => !prepared.planned,
+                };
+            if slot_stream {
+                let slot_count: Option<usize> = {
+                    let reader = &mut prepared.reader;
+                    match Some(declared[0]) {
                         Some(1i64) => Some(reader.variant_1.row_count()?),
                         _ => None,
-                    };
-                    if let Some(slot_count) = slot_count {
-                        let mut columns = Columns { reader: &mut reader };
-                        for slot in 0..slot_count {
-                            consumer.consume(&mut columns, slot)?;
-                        }
-                        #[cfg(debug_assertions)]
-                        {
-                            if declared[0] == 1i64 {
-                                debug_assert_eq!(
-                                    reader.variant_1_index, slot_count,
-                                    "fold arm for variant {} advanced its payload slot cursor {} times for {} streamed slots",
-                                    "Running", reader.variant_1_index, slot_count,
-                                );
-                            }
-                        }
-                        continue 'chunks;
                     }
+                };
+                if let Some(slot_count) = slot_count {
+                    let mut columns = Columns {
+                        reader: &mut prepared.reader,
+                    };
+                    for slot in 0..slot_count {
+                        consumer.consume(&mut columns, slot)?;
+                    }
+                    #[cfg(debug_assertions)]
+                    {
+                        let reader = &prepared.reader;
+                        if declared[0] == 1i64 {
+                            debug_assert_eq!(
+                                reader.variant_1_index, slot_count,
+                                "fold arm for variant {} advanced its payload slot cursor {} times for {} streamed slots",
+                                "Running", reader.variant_1_index, slot_count,
+                            );
+                        }
+                    }
+                    return Ok(());
                 }
-                #[cfg(debug_assertions)]
-                let mut __pco_delivered = vec![0usize; declared.len()];
-                let row_count: usize = <Self as pco_pack::PcoSerde>::validate_bounds(
-                        &mut reader,
+            }
+            #[cfg(debug_assertions)]
+            let mut __pco_delivered = vec![0usize; declared.len()];
+            let row_count: usize = if prepared.planned {
+                prepared.row_count
+            } else {
+                let row_count = <Self as pco_pack::PcoSerde>::validate_bounds(
+                        &mut prepared.reader,
                     )
                     .context("Invalid enum payload")?
                     .ok_or_else(|| pco_pack::anyhow::anyhow!("No rows in enum data"))?;
-                if stream_all {
-                    let mut columns = Columns { reader: &mut reader };
-                    for row_index in 0..row_count {
-                        consumer.consume(&mut columns, row_index)?;
-                    }
-                    continue 'chunks;
-                }
-                matches.reset_ones(row_count);
-                for step in &execution_plan {
-                    <Self as pco_pack::PcoFilter>::filter_step(
-                        &mut reader,
-                        &step.path,
-                        &step.filter,
-                        &mut matches,
+                prepared.matches.reset_ones(row_count);
+                row_count
+            };
+            if !prepared.matches.any_set_in_range(0..row_count) {
+                return Ok(());
+            }
+            if !declared.is_empty() {
+                let redundant = prepared
+                    .pinned
+                    .as_ref()
+                    .is_some_and(|pins| {
+                        prepared.bounded && pins.iter().all(|d| declared.contains(d))
+                    });
+                if !redundant {
+                    let disc_filter = if declared.len() == 1 {
+                        pco_pack::Filter::I64(declared[0])
+                    } else {
+                        pco_pack::Filter::InclusionI64(
+                            declared.iter().copied().collect(),
+                        )
+                    };
+                    <Self as pco_pack::PcoFilter>::filter_bulk(
+                        &mut prepared.reader,
+                        0,
+                        &disc_filter,
+                        &mut prepared.matches,
                     )?;
-                    if !matches.any_set_in_range(0..row_count) {
-                        continue 'chunks;
+                }
+                if !prepared.matches.any_set_in_range(0..row_count) {
+                    return Ok(());
+                }
+            }
+            if declared.len() > 1 {
+                prepared
+                    .matches
+                    .for_each_set_row(
+                        row_count,
+                        |row_index| {
+                            let disc = <i64 as pco_pack::PcoSerde>::get(
+                                    prepared.reader.row_variant.reader_mut()?,
+                                    row_index,
+                                )?
+                                .ok_or_else(|| {
+                                    pco_pack::anyhow::anyhow!(
+                                        "Missing discriminant at row {}", row_index
+                                    )
+                                })?;
+                            let Some(variant) = declared.iter().position(|&d| d == disc)
+                            else {
+                                return Err(
+                                    pco_pack::anyhow::anyhow!(
+                                        "Row {} carries discriminant {} outside the declared variants",
+                                        row_index, disc
+                                    ),
+                                );
+                            };
+                            #[cfg(debug_assertions)]
+                            {
+                                __pco_delivered[variant] += 1;
+                            }
+                            let mut columns = Columns {
+                                reader: &mut prepared.reader,
+                            };
+                            consumer.consume_variant(&mut columns, row_index, variant)
+                        },
+                    )?;
+            } else {
+                let mut columns = Columns {
+                    reader: &mut prepared.reader,
+                };
+                prepared
+                    .matches
+                    .for_each_set_row(
+                        row_count,
+                        |row_index| {
+                            #[cfg(debug_assertions)]
+                            if let Some(n) = __pco_delivered.first_mut() {
+                                *n += 1;
+                            }
+                            consumer.consume(&mut columns, row_index)
+                        },
+                    )?;
+            }
+            #[cfg(debug_assertions)]
+            if !pops.is_empty() {
+                debug_assert!(
+                    pops.len() == declared.len(),
+                    "Consumer::POPS_PAYLOAD must align with FIELDS"
+                );
+                let reader = &prepared.reader;
+                for __pco_arm in 0..pops.len().min(declared.len()) {
+                    if !pops[__pco_arm] {
+                        continue;
                     }
-                }
-                if !declared.is_empty() {
-                    let redundant = pinned
-                        .as_ref()
-                        .is_some_and(|pins| {
-                            bounded && pins.iter().all(|d| declared.contains(d))
-                        });
-                    if !redundant {
-                        let disc_filter = if declared.len() == 1 {
-                            pco_pack::Filter::I64(declared[0])
-                        } else {
-                            pco_pack::Filter::InclusionI64(
-                                declared.iter().copied().collect(),
-                            )
-                        };
-                        <Self as pco_pack::PcoFilter>::filter_bulk(
-                            &mut reader,
-                            0,
-                            &disc_filter,
-                            &mut matches,
-                        )?;
-                        if !matches.any_set_in_range(0..row_count) {
-                            continue 'chunks;
-                        }
-                    }
-                }
-                if declared.len() > 1 {
-                    matches
-                        .for_each_set_row(
-                            row_count,
-                            |row_index| {
-                                let disc = <i64 as pco_pack::PcoSerde>::get(
-                                        reader.row_variant.reader_mut()?,
-                                        row_index,
-                                    )?
-                                    .ok_or_else(|| {
-                                        pco_pack::anyhow::anyhow!(
-                                            "Missing discriminant at row {}", row_index
-                                        )
-                                    })?;
-                                let Some(variant) = declared.iter().position(|&d| d == disc)
-                                else {
-                                    return Err(
-                                        pco_pack::anyhow::anyhow!(
-                                            "Row {} carries discriminant {} outside the declared variants",
-                                            row_index, disc
-                                        ),
-                                    );
-                                };
-                                #[cfg(debug_assertions)]
-                                {
-                                    __pco_delivered[variant] += 1;
-                                }
-                                let mut columns = Columns { reader: &mut reader };
-                                consumer.consume_variant(&mut columns, row_index, variant)
-                            },
-                        )?;
-                } else {
-                    let mut columns = Columns { reader: &mut reader };
-                    matches
-                        .for_each_set_row(
-                            row_count,
-                            |row_index| {
-                                #[cfg(debug_assertions)]
-                                if let Some(n) = __pco_delivered.first_mut() {
-                                    *n += 1;
-                                }
-                                consumer.consume(&mut columns, row_index)
-                            },
-                        )?;
-                }
-                #[cfg(debug_assertions)]
-                if !pops.is_empty() {
-                    debug_assert!(
-                        pops.len() == declared.len(),
-                        "Consumer::POPS_PAYLOAD must align with FIELDS"
-                    );
-                    for __pco_arm in 0..pops.len().min(declared.len()) {
-                        if !pops[__pco_arm] {
-                            continue;
-                        }
-                        if declared[__pco_arm] == 1i64 {
-                            debug_assert_eq!(
-                                reader.variant_1_index, __pco_delivered[__pco_arm],
-                                "fold arm {} for variant {} advanced its payload slot cursor {} times for {} delivered rows",
-                                __pco_arm, "Running", reader.variant_1_index,
-                                __pco_delivered[__pco_arm],
-                            );
-                        }
+                    if declared[__pco_arm] == 1i64 {
+                        debug_assert_eq!(
+                            reader.variant_1_index, __pco_delivered[__pco_arm],
+                            "fold arm {} for variant {} advanced its payload slot cursor {} times for {} delivered rows",
+                            __pco_arm, "Running", reader.variant_1_index,
+                            __pco_delivered[__pco_arm],
+                        );
                     }
                 }
             }
