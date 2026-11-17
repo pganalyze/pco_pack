@@ -15,6 +15,7 @@ Real Postgres monitoring datasets sourced from pganalyze.
 | Filter 0.49%  | 60.1 ms  | 61.0 ms    | 147.4 ms | 81.4 ms      |
 | Filter 29.25% | 693.6 ms | 694.7 ms   | 405.4 ms | 352.9 ms     |
 | Filter 77.25% | 994.8 ms | 1.0 s      | 332.2 ms | 272.2 ms     |
+| Filter <0.01% | 10.5 ms  | 9.9 ms     | 10.1 ms  | 9.7 ms       |
 | Reduce 0.49%  | 11.4 ms  | 11.3 ms    | 83.5 ms  | 24.1 ms      |
 | Reduce 29.25% | 115.2 ms | 115.0 ms   | 56.4 ms  | 57.5 ms      |
 
@@ -32,6 +33,7 @@ Real Postgres monitoring datasets sourced from pganalyze.
 | Filter 0.49%  | 10.4 ms  | 473.6 ms | 1.6 s          | 4.4 s   |
 | Filter 29.25% | 591.3 ms | 474.0 ms | 1.6 s          | 4.5 s   |
 | Filter 77.25% | 1.2 s    | 475.3 ms | 1.6 s          | 4.5 s   |
+| Filter <0.01% | 1.4 ms   | 479.0 ms | 1.5 s          | 4.3 s   |
 | Reduce 0.49%  | 1.7 ms   | 487.3 ms | 1.6 s          | 4.5 s   |
 | Reduce 29.25% | 79.2 ms  | 524.3 ms | 1.6 s          | 4.8 s   |
 

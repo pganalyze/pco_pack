@@ -25,7 +25,8 @@ macro_rules! impl_pco_number {
 
             fn write(data: Vec<$t>, _float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
                 let config = pco_util::config();
-                let mut out = Vec::new();
+                let body = pco::standalone::simple_compress(&data, &config)?;
+                let mut out = Vec::with_capacity(bounds::BOUNDS_PREFIX_LEN + body.len());
                 // Exact bounds prefix. `exact` drops to 0 only when a u64 column
                 // crosses i64::MAX, where the i64 projection filters use stops
                 // being contiguous; narrower types always fit.
@@ -38,9 +39,10 @@ macro_rules! impl_pco_number {
                         max as i64,
                         0,
                     ),
+                    // Inverted empty-column sentinel; the bounds checks never skip on it.
                     None => bounds::push_bounds(&mut out, bounds::BoundsKind::$bounds_kind, true, 1, 0, 0),
                 }
-                out.extend_from_slice(&pco::standalone::simple_compress(&data, &config)?);
+                out.extend_from_slice(&body);
                 Ok(out)
             }
 

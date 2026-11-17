@@ -6,7 +6,7 @@ use bitvec::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::marker::PhantomData;
 use std::ops::RangeInclusive;
 use std::sync::Arc;
@@ -279,9 +279,10 @@ pub trait PcoSerde: Sized + Clone {
 
     /// True when a compressed column blob's write-time bounds prefix proves no
     /// row in the blob can match `filter`, letting callers skip decompression
-    /// entirely. Only numeric columns override this; the default never skips,
-    /// which is correct for containers because their blobs start with framing
-    /// bytes where the bounds magic could legitimately appear.
+    /// entirely. Numeric columns implement this against their prefix;
+    /// Option/Vec delegate to the inner column's hoisted header. The default
+    /// never skips, which is correct for containers whose inner domain has no
+    /// bounds (strings, msgpack blobs, maps).
     fn metadata_excludes(_compressed: &[u8], _filter: &Filter) -> bool {
         false
     }

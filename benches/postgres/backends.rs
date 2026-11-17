@@ -234,14 +234,16 @@ impl From<(&BackendSnapshotKey, &Timeline)> for BackendSnapshotTimeline10s {
 }
 
 /// Filter keys: last-1h window on collected_at; active states (1 = active,
-/// 2 = idle in transaction); any backend with a wait event. Text eq is N/A
-/// here: `application_name` and `client_addr` ride empty in this capture,
-/// so the text scenarios live in `openalex`/`taxi`/`query_explains`.
+/// 2 = idle in transaction); any backend with a wait event; eq on
+/// `database_id`. Text eq is N/A here: `application_name` and `client_addr`
+/// ride empty in this capture, so the text scenarios live in
+/// `openalex`/`taxi`/`query_explains`.
 #[derive(Clone, Copy)]
 enum Bk {
     Time(i64, i64),
     Active,
     Waits,
+    Db(i64),
 }
 
 impl Bk {
@@ -251,6 +253,7 @@ impl Bk {
             Bk::Time(a, b) => *a <= us && us <= *b,
             Bk::Active => matches!(r.backend_state, 1 | 2),
             Bk::Waits => r.wait_event >= 1,
+            Bk::Db(id) => r.database_id == Some(*id),
         }
     }
 
@@ -278,6 +281,7 @@ impl Bk {
             }
             Bk::Active => matches!(r.backend_state, 1 | 2),
             Bk::Waits => r.wait_event >= 1,
+            Bk::Db(id) => r.database_id == Some(*id),
         }
     }
 
@@ -294,6 +298,7 @@ impl Bk {
             }
             Bk::Active => matches!(r.backend_state, 1 | 2),
             Bk::Waits => r.wait_event >= 1,
+            Bk::Db(id) => r.database_id == Some(*id),
         }
     }
 }
@@ -306,7 +311,45 @@ fn vortex_filter(k: &Bk) -> vortex::array::expr::Expression {
         Bk::Time(a, b) => and(gt_eq(col("collected_at"), lit(*a)), lt_eq(col("collected_at"), lit(*b))),
         Bk::Active => or(eq(col("backend_state"), lit(1i8)), eq(col("backend_state"), lit(2i8))),
         Bk::Waits => gt_eq(col("wait_event"), lit(1i16)),
+        // SQL eq semantics on the nullable column: null never equals the
+        // target, matching `Option::Some(id)` equality everywhere else.
+        Bk::Db(id) => eq(col("database_id"), lit(*id)),
     }
+}
+
+/// The `Db` equality target: the database_id whose per-chunk Some-value
+/// bounds leave it outside the most chunks, the shape of a database that
+/// started reporting late in the capture. Choosing it against the real
+/// chunk layout (file order, the trait's default `CHUNK_SIZE`) makes the
+/// write-time bounds skip fire on actual data instead of a synthetic guess.
+/// Ties break toward the more common id; a capture with no database_id
+/// falls back to a sentinel miss that charges pure guard cost.
+fn pick_db_target(rows: &[BackendSnapshot]) -> i64 {
+    // Must mirror the PcoPack trait default; skips are decided per chunk.
+    const CHUNK: usize = 262_144;
+    let n_chunks = rows.len().div_ceil(CHUNK).max(1);
+    let mut bounds: Vec<(i64, i64, bool)> = vec![(0, 0, false); n_chunks];
+    let mut rows_per_id: HashMap<i64, usize> = HashMap::new();
+    for (i, r) in rows.iter().enumerate() {
+        if let Some(db) = r.database_id {
+            *rows_per_id.entry(db).or_default() += 1;
+            let b = &mut bounds[i / CHUNK];
+            if b.2 {
+                b.0 = b.0.min(db);
+                b.1 = b.1.max(db);
+            } else {
+                *b = (db, db, true);
+            }
+        }
+    }
+    rows_per_id
+        .into_iter()
+        .max_by_key(|(id, count)| {
+            let excludes = bounds.iter().filter(|b| b.2 && (*id < b.0 || *id > b.1)).count();
+            (excludes, *count)
+        })
+        .map(|(id, _)| id)
+        .unwrap_or(i64::MIN)
 }
 
 pub fn bench() -> anyhow::Result<()> {
@@ -322,7 +365,8 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
     let n = rows.len();
     let last_us = rows.iter().map(|r| r.collected_at.timestamp_micros()).max().unwrap();
 
-    let keys = [Bk::Time(last_us - 3_600_000_000, last_us), Bk::Active, Bk::Waits];
+    let db_target = pick_db_target(&rows);
+    let keys = [Bk::Time(last_us - 3_600_000_000, last_us), Bk::Active, Bk::Waits, Bk::Db(db_target)];
     let kf: Vec<(Bk, usize)> = keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches(r)).count())).collect();
     let labels: Vec<String> = kf.iter().map(|(_, e)| common::filter_label(*e, n)).collect();
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -333,6 +377,7 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
         serde_json::json!({"collected_at": {"start": last_us - 3_600_000_000, "end": last_us}}),
         serde_json::json!({"backend_state": [1, 2]}),
         serde_json::json!({"wait_event": {"start": 1, "end": i64::from(i16::MAX)}}),
+        serde_json::json!({"database_id": db_target}),
     ];
     let pco_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf.iter()).map(|(q, (_, e))| (q, *e)).collect();
@@ -402,6 +447,7 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
                         }
                         Bk::Active => matches!(*r.backend_state, 1 | 2),
                         Bk::Waits => *r.wait_event >= 1,
+                        Bk::Db(id) => matches!(r.database_id, Some(v) if *v == *id),
                     }
                 })
                 .count()
@@ -423,6 +469,7 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
                                 }
                                 Bk::Active => matches!(*r.backend_state, 1 | 2),
                                 Bk::Waits => *r.wait_event >= 1,
+                                Bk::Db(id) => matches!(r.database_id, Some(v) if *v == *id),
                             };
                             if hit { r.query_fingerprint.copied() } else { None }
                         })
@@ -464,6 +511,7 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
                     Bk::Time(a, b) => *a <= r.collected_at && r.collected_at <= *b,
                     Bk::Active => matches!(r.backend_state, 1 | 2),
                     Bk::Waits => r.wait_event >= 1,
+                    Bk::Db(id) => r.database_id == Some(*id),
                 })
                 .count()
         },
@@ -480,6 +528,7 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
                             Bk::Time(a, b) => *a <= r.collected_at && r.collected_at <= *b,
                             Bk::Active => matches!(r.backend_state, 1 | 2),
                             Bk::Waits => r.wait_event >= 1,
+                            Bk::Db(id) => r.database_id == Some(*id),
                         })
                         .filter_map(|r| r.query_fingerprint)
                         .collect()

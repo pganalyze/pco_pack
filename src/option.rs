@@ -66,12 +66,16 @@ where
             }
         }
         let config = pco_util::config();
+        // total_rows rides at the end of the presence stream: indices ascend
+        // and stay below total_rows, so the trailing element is unambiguous
+        // and the inner body stays the blob's last region.
+        presence_indices.push(total_rows as u32);
         let presence_bytes = pco::standalone::simple_compress::<u32>(&presence_indices, &config)?;
-        let mut out = Vec::new();
-        out.extend_from_slice(&(total_rows as u64).to_le_bytes());
+        let (header, body) = bounds::split_header(T::write(inner_values, float_round, time_round)?);
+        let mut out = Vec::with_capacity(bounds::BOUNDS_PREFIX_LEN + presence_bytes.len() + body.len());
+        out.extend_from_slice(&header);
         out.extend_from_slice(&presence_bytes);
-        let inner_bytes = T::write(inner_values, float_round, time_round)?;
-        out.extend_from_slice(&inner_bytes);
+        out.extend_from_slice(&body);
         Ok(out)
     }
 
@@ -86,29 +90,38 @@ where
             }
         }
         let config = pco_util::config();
+        presence_indices.push(total_rows as u32);
         let presence_bytes = pco::standalone::simple_compress::<u32>(&presence_indices, &config)?;
-        let mut out = Vec::new();
-        out.extend_from_slice(&(total_rows as u64).to_le_bytes());
+        let (header, body) = bounds::split_header(T::write_borrowed(&inner_values, float_round, time_round)?);
+        let mut out = Vec::with_capacity(bounds::BOUNDS_PREFIX_LEN + presence_bytes.len() + body.len());
+        out.extend_from_slice(&header);
         out.extend_from_slice(&presence_bytes);
-        let inner_bytes = T::write_borrowed(&inner_values, float_round, time_round)?;
-        out.extend_from_slice(&inner_bytes);
+        out.extend_from_slice(&body);
         Ok(out)
     }
 
     fn read(src: &mut Cursor<&[u8]>, float_round: u32, time_round: chrono::Duration) -> Result<Self::Reader> {
-        let mut buf = [0u8; 8];
-        src.read_exact(&mut buf)?;
-        let total_rows = u64::from_le_bytes(buf) as usize;
-        let presence_indices: Vec<u32> = pco_util::decompress(src)?;
+        let buf = *src.get_ref();
+        src.set_position(bounds::strip_prefix(buf, src.position() as usize) as u64);
+        let mut presence_indices: Vec<u32> = pco_util::decompress(src)?;
+        let Some(total_rows) = presence_indices.pop() else {
+            anyhow::bail!("option column missing total_rows trailer");
+        };
         let inner_reader =
             if presence_indices.is_empty() { T::Reader::default() } else { T::read(src, float_round, time_round)? };
         Ok(OptionReader {
             presence_indices: presence_indices.into(),
-            total_rows,
+            total_rows: total_rows as usize,
             inner_reader,
             current_idx: 0,
             presence_idx: 0,
         })
+    }
+
+    /// The hoisted inner header answers for the whole column: `None` rows
+    /// never match, so an excluded inner domain rules out every row.
+    fn metadata_excludes(compressed: &[u8], filter: &Filter) -> bool {
+        T::metadata_excludes(compressed, filter)
     }
 
     fn reader_len(reader: &mut Self::Reader) -> Result<usize> {

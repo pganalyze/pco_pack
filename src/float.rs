@@ -27,7 +27,6 @@ impl PcoSerde for half::f16 {
 
     fn write(data: Vec<half::f16>, float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let config = pco_util::config();
-        let mut out = Vec::new();
         if float_round > 0 {
             // Bounds fold the f64 values the blob will decode to, so filters
             // consult them in the same domain filter_bulk compares against.
@@ -37,17 +36,21 @@ impl PcoSerde for half::f16 {
                     (float_round::unround_float(min, float_round), float_round::unround_float(max, float_round))
                 })
                 .unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            let body = pco::standalone::simple_compress(&rounded, &config)?;
+            let mut out = Vec::with_capacity(bounds::BOUNDS_PREFIX_LEN + 2 + body.len());
             bounds::push_float_bounds(&mut out, bounds::BoundsKind::F16, min, max, float_round as u8);
             out.push(float_round::FLOAT_ROUND_MAGIC);
             out.push(float_round as u8);
-            out.extend_from_slice(&pco::standalone::simple_compress(&rounded, &config)?);
+            out.extend_from_slice(&body);
             Ok(out)
         } else {
             // Store as native f16 via f64 compression
             let (min, max) = bounds::fold_float_bounds(data.iter().map(|v| v.to_f64()))
                 .unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            let body = pco::standalone::simple_compress(&data, &config)?;
+            let mut out = Vec::with_capacity(bounds::BOUNDS_PREFIX_LEN + body.len());
             bounds::push_float_bounds(&mut out, bounds::BoundsKind::F16, min, max, 0);
-            out.extend_from_slice(&pco::standalone::simple_compress(&data, &config)?);
+            out.extend_from_slice(&body);
             Ok(out)
         }
     }
@@ -227,7 +230,6 @@ impl PcoSerde for f32 {
 
     fn write(data: Vec<f32>, float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let config = pco_util::config();
-        let mut out = Vec::new();
         if float_round > 0 {
             // Bounds fold the f64 values the blob will decode to, so filters
             // consult them in the same domain filter_bulk compares against.
@@ -237,16 +239,20 @@ impl PcoSerde for f32 {
                     (float_round::unround_float(min, float_round), float_round::unround_float(max, float_round))
                 })
                 .unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            let body = pco::standalone::simple_compress(&rounded, &config)?;
+            let mut out = Vec::with_capacity(bounds::BOUNDS_PREFIX_LEN + 2 + body.len());
             bounds::push_float_bounds(&mut out, bounds::BoundsKind::F32, min, max, float_round as u8);
             out.push(float_round::FLOAT_ROUND_MAGIC);
             out.push(float_round as u8);
-            out.extend_from_slice(&pco::standalone::simple_compress(&rounded, &config)?);
+            out.extend_from_slice(&body);
             Ok(out)
         } else {
             let (min, max) =
                 bounds::fold_float_bounds(data.iter().map(|v| *v as f64)).unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            let body = pco::standalone::simple_compress(&data, &config)?;
+            let mut out = Vec::with_capacity(bounds::BOUNDS_PREFIX_LEN + body.len());
             bounds::push_float_bounds(&mut out, bounds::BoundsKind::F32, min, max, 0);
-            out.extend_from_slice(&pco::standalone::simple_compress(&data, &config)?);
+            out.extend_from_slice(&body);
             Ok(out)
         }
     }
@@ -418,7 +424,6 @@ impl PcoSerde for f64 {
 
     fn write(data: Vec<f64>, float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let config = pco_util::config();
-        let mut out = Vec::new();
         if float_round > 0 {
             // Bounds fold the f64 values the blob will decode to, so filters
             // consult them in the same domain filter_bulk compares against.
@@ -428,17 +433,21 @@ impl PcoSerde for f64 {
                     (float_round::unround_float(min, float_round), float_round::unround_float(max, float_round))
                 })
                 .unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            let body = pco::standalone::simple_compress(&rounded, &config)?;
+            let mut out = Vec::with_capacity(bounds::BOUNDS_PREFIX_LEN + 2 + body.len());
             bounds::push_float_bounds(&mut out, bounds::BoundsKind::F64, min, max, float_round as u8);
             out.push(float_round::FLOAT_ROUND_MAGIC);
             out.push(float_round as u8);
-            out.extend_from_slice(&pco::standalone::simple_compress(&rounded, &config)?);
+            out.extend_from_slice(&body);
             Ok(out)
         } else {
             // Store as native f64
             let (min, max) =
                 bounds::fold_float_bounds(data.iter().copied()).unwrap_or((f64::INFINITY, f64::NEG_INFINITY));
+            let body = pco::standalone::simple_compress(&data, &config)?;
+            let mut out = Vec::with_capacity(bounds::BOUNDS_PREFIX_LEN + body.len());
             bounds::push_float_bounds(&mut out, bounds::BoundsKind::F64, min, max, 0);
-            out.extend_from_slice(&pco::standalone::simple_compress(&data, &config)?);
+            out.extend_from_slice(&body);
             Ok(out)
         }
     }

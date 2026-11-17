@@ -33,6 +33,13 @@ where
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>> {
         T::get_vec(reader, index)
     }
+
+    /// The hoisted inner header answers for the whole column: rows match
+    /// only through their elements, so an excluded element domain rules out
+    /// every row (empty lists never match either).
+    fn metadata_excludes(compressed: &[u8], filter: &Filter) -> bool {
+        T::metadata_excludes(compressed, filter)
+    }
 }
 
 impl<T: VecPackable + PcoFilter> PcoFilter for Vec<T>

@@ -240,12 +240,27 @@ fn corrupt_float_round_body_is_rejected_on_read() {
 }
 
 #[test]
-fn all_nan_column_excludes_points() {
-    // NaN never matches any predicate, so the fold skips every value and the
-    // empty bounds exclude every point predicate outright.
+fn metadata_empty_column_never_skips() {
+    let blob = write_col(Vec::<i64>::new());
+    // The inverted sentinel must not preempt the read path's empty-column
+    // rule, which decides row survival against T::default().
+    assert!(!i64::metadata_excludes(&blob, &Filter::I64(999)));
+    assert!(!i64::metadata_excludes(&blob, &Filter::Range(5..=9)));
+    assert!(!i64::metadata_excludes(&blob, &Filter::InclusionI64([7, 8].into_iter().collect())));
+    // Rows survive exactly when the default matches, as before bounds existed.
+    assert_eq!(filter_ones::<i64>(blob.clone(), &Filter::I64(0)), 16);
+    assert_eq!(filter_ones::<i64>(blob.clone(), &Filter::Range(0..=1)), 16);
+    assert_eq!(filter_ones::<i64>(blob, &Filter::I64(5)), 0);
+}
+
+#[test]
+fn all_nan_column_defers_to_read_path() {
+    // NaN never matches any predicate, so the fold leaves empty bounds. The
+    // skip answers false there (empty bounds cannot distinguish an all-NaN
+    // column from an empty one), and the read path clears the rows itself.
     let blob = write_col(vec![f64::NAN; 16]);
-    assert!(f64::metadata_excludes(&blob, &Filter::F64(1.0)));
-    assert!(f64::metadata_excludes(&blob, &Filter::InclusionF64(vec![1.0, 2.0])));
+    assert!(!f64::metadata_excludes(&blob, &Filter::F64(1.0)));
+    assert!(!f64::metadata_excludes(&blob, &Filter::InclusionF64(vec![1.0, 2.0])));
     assert_eq!(filter_ones::<f64>(blob, &Filter::F64(1.0)), 0);
 }
 
@@ -314,4 +329,105 @@ fn e2e_filter_matches_predicate_across_chunks() {
     let got = Rec::filter_bytes(&bytes, serde_json::json!({"calls": [0, 550]}), &[]).unwrap();
     let truth: Vec<&Rec> = rows.iter().filter(|r| r.calls == 0 || r.calls == 550).collect();
     assert_eq!(got.len(), truth.len());
+}
+
+#[test]
+fn empty_inclusion_still_skips() {
+    // Resolution builds an empty inclusion to mean "matches nothing" (an
+    // unparseable datetime array, for example), and the bounds answer must
+    // agree: no stored value can be in the empty set.
+    let blob = write_col(vec![7i64; 32]);
+    assert!(i64::metadata_excludes(&blob, &Filter::InclusionI64(Default::default())));
+    assert!(i64::metadata_excludes(&blob, &Filter::InclusionF64(vec![])));
+    assert_eq!(filter_ones::<i64>(blob, &Filter::InclusionI64(Default::default())), 0);
+}
+
+#[test]
+fn negative_float_range_on_unsigned_column() {
+    // filter_bulk truncates -2.5..=-0.5 to -2..=0, which matches a zero row;
+    // the bounds mirror the truncation and must not skip.
+    let blob = write_col(vec![0u8; 16]);
+    assert!(!u8::metadata_excludes(&blob, &Filter::FloatRange(-2.5..=-0.5)));
+    assert_eq!(filter_ones::<u8>(blob, &Filter::FloatRange(-2.5..=-0.5)), 16);
+    let blob = write_col(vec![3u8; 16]);
+    assert!(u8::metadata_excludes(&blob, &Filter::FloatRange(-2.5..=-0.5)));
+}
+
+#[test]
+fn option_column_skips_and_hits() {
+    // Even rows hold Some(10..=17), odd rows hold None.
+    let vals: Vec<Option<i64>> = (0..16).map(|i| if i % 2 == 0 { Some(10 + (i / 2) as i64) } else { None }).collect();
+    let blob = write_col(vals);
+    assert!(Option::<i64>::metadata_excludes(&blob, &Filter::I64(999)));
+    assert!(!Option::<i64>::metadata_excludes(&blob, &Filter::I64(10)));
+    assert_eq!(filter_ones::<Option<i64>>(blob.clone(), &Filter::Range(20..=30)), 0);
+    // The same filter through the read path keeps exactly the matching Some
+    // rows; None rows never match.
+    assert_eq!(filter_ones::<Option<i64>>(blob, &Filter::Range(10..=12)), 3);
+}
+
+#[test]
+fn all_none_option_column_defers() {
+    // The hoisted header carries the empty-fold sentinel, so nothing may
+    // skip; the read path clears every row itself (None never matches).
+    let blob = write_col(vec![None::<i64>; 16]);
+    assert!(!Option::<i64>::metadata_excludes(&blob, &Filter::I64(999)));
+    assert_eq!(filter_ones::<Option<i64>>(blob, &Filter::I64(0)), 0);
+}
+
+#[test]
+fn vec_column_skips_and_hits() {
+    let vals: Vec<Vec<i64>> = (0..16).map(|i| vec![i as i64, i as i64 + 100]).collect();
+    let blob = write_col(vals);
+    assert!(Vec::<i64>::metadata_excludes(&blob, &Filter::Range(200..=300)));
+    assert!(!Vec::<i64>::metadata_excludes(&blob, &Filter::Range(50..=60)));
+    assert_eq!(filter_ones::<Vec<i64>>(blob.clone(), &Filter::Range(200..=300)), 0);
+    assert_eq!(filter_ones::<Vec<i64>>(blob, &Filter::Range(100..=102)), 3);
+}
+
+#[test]
+fn all_empty_vec_column_defers() {
+    let blob = write_col(vec![Vec::<i64>::new(); 16]);
+    assert!(!Vec::<i64>::metadata_excludes(&blob, &Filter::I64(999)));
+    assert_eq!(filter_ones::<Vec<i64>>(blob, &Filter::I64(1)), 0);
+}
+
+#[test]
+fn nested_option_vec_skips() {
+    let vals: Vec<Option<Vec<i64>>> = (0..16).map(|i| if i % 4 == 0 { None } else { Some(vec![i as i64]) }).collect();
+    let blob = write_col(vals);
+    assert!(Option::<Vec<i64>>::metadata_excludes(&blob, &Filter::Range(100..=200)));
+    assert!(!Option::<Vec<i64>>::metadata_excludes(&blob, &Filter::Range(2..=3)));
+    assert_eq!(filter_ones::<Option<Vec<i64>>>(blob, &Filter::Range(2..=3)), 2);
+}
+
+#[test]
+fn option_wrappers_never_skip_without_inner_bounds() {
+    // A text inner gets the synthetic header (unknown kind, inexact): the
+    // delegation cannot answer, but the read path must still work.
+    let vals: Vec<Option<String>> = (0..16).map(|i| if i % 3 == 0 { None } else { Some(format!("v{i}")) }).collect();
+    let blob = write_col(vals);
+    assert!(!Option::<String>::metadata_excludes(&blob, &Filter::String("zzz".into())));
+    assert_eq!(filter_ones::<Option<String>>(blob, &Filter::String("v1".into())), 1);
+}
+
+#[test]
+fn rounded_float_option_never_skips() {
+    // Body framing (float_round magic) is displaced by the presence stream,
+    // so rounded wrappers stay on the read path.
+    let vals: Vec<Option<f32>> = (0..16).map(|i| Some(i as f32)).collect();
+    let blob = Option::<f32>::write(vals, 2, chrono::Duration::zero()).unwrap();
+    assert!(!Option::<f32>::metadata_excludes(&blob, &Filter::F64(500.0)));
+    assert_eq!(filter_ones::<Option<f32>>(blob, &Filter::F64(500.0)), 0);
+}
+
+#[test]
+fn option_datetime_skips_via_i64_domain() {
+    let base = 1_700_000_000_000_000i64;
+    let vals: Vec<Option<chrono::DateTime<chrono::Utc>>> =
+        (0..16).map(|i| chrono::DateTime::from_timestamp_micros(base + i * 1_000_000)).collect();
+    let blob = write_col(vals);
+    assert!(Option::<chrono::DateTime<chrono::Utc>>::metadata_excludes(&blob, &Filter::I64(0)));
+    assert!(!Option::<chrono::DateTime<chrono::Utc>>::metadata_excludes(&blob, &Filter::I64(base)));
+    assert_eq!(filter_ones::<Option<chrono::DateTime<chrono::Utc>>>(blob, &Filter::I64(base)), 1);
 }
