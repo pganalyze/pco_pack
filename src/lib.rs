@@ -6,12 +6,13 @@ use bitvec::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::marker::PhantomData;
 use std::ops::RangeInclusive;
 use std::sync::Arc;
 
 mod bool;
+mod bounds;
 mod bytes;
 mod datetime;
 mod filter_mask;
@@ -275,6 +276,16 @@ pub trait PcoSerde: Sized + Clone {
     /// Get the element at `index`. Iteration always moves forward (never backward),
     /// so lazy decompressors may advance their internal cursor without resetting.
     fn get(reader: &mut Self::Reader, index: usize) -> Result<Option<Self>>;
+
+    /// True when a compressed column blob's write-time bounds prefix proves no
+    /// row in the blob can match `filter`, letting callers skip decompression
+    /// entirely. Numeric columns implement this against their prefix;
+    /// Option/Vec delegate to the inner column's hoisted header. The default
+    /// never skips, which is correct for containers whose inner domain has no
+    /// bounds (strings, msgpack blobs, maps).
+    fn metadata_excludes(_compressed: &[u8], _filter: &Filter) -> bool {
+        false
+    }
 }
 
 /// Fallback deserialization for types that need to read raw msgpack bytes directly.

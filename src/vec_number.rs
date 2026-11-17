@@ -50,16 +50,20 @@ where
     ) -> anyhow::Result<()> {
         let config = pco_util::config();
         let cl = pco::standalone::simple_compress::<u32>(&writer.lengths, &config)?;
-        out.extend_from_slice(&cl);
         let all_data: Vec<T> = writer.raw_data.into_iter().flatten().collect();
-        let inner_data = T::write(all_data, float_round, time_round)?;
-        out.extend_from_slice(&inner_data);
+        let (header, body) = bounds::split_header(T::write(all_data, float_round, time_round)?);
+        out.reserve(bounds::BOUNDS_PREFIX_LEN + cl.len() + body.len());
+        out.extend_from_slice(&header);
+        out.extend_from_slice(&cl);
+        out.extend_from_slice(&body);
         Ok(())
     }
 
     fn read_vec(
         src: &mut Cursor<&[u8]>, float_round: u32, time_round: chrono::Duration,
     ) -> anyhow::Result<Self::VecReader> {
+        let buf = *src.get_ref();
+        src.set_position(bounds::strip_prefix(buf, src.position() as usize) as u64);
         let lengths: Vec<u32> = pco_util::decompress(src)?;
         let inner_reader = if (src.position() as usize) < src.get_ref().len() {
             T::read(src, float_round, time_round)?

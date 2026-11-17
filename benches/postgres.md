@@ -9,14 +9,15 @@ Real Postgres monitoring datasets sourced from pganalyze.
 
 | Metric        | full     | time_round | Timeline | Timeline 10s |
 |---------------|----------|------------|----------|--------------|
-| Size          | 46.8 MB  | 39.1 MB    | 18.0 MB  | 17.6 MB      |
-| Serialize     | 2.9 s    | 3.0 s      | 1.4 s    | 1.1 s        |
-| Deserialize   | 1.2 s    | 1.2 s      | 462.9 ms | 401.1 ms     |
-| Filter 0.49%  | 63.4 ms  | 63.4 ms    | 152.9 ms | 85.4 ms      |
-| Filter 29.25% | 731.1 ms | 745.1 ms   | 430.7 ms | 367.4 ms     |
-| Filter 77.25% | 1.1 s    | 1.1 s      | 352.7 ms | 288.5 ms     |
-| Reduce 0.49%  | 11.9 ms  | 12.2 ms    | 88.1 ms  | 26.2 ms      |
-| Reduce 29.25% | 117.5 ms | 116.9 ms   | 57.8 ms  | 61.7 ms      |
+| Size          | 46.8 MB  | 39.1 MB    | 18.1 MB  | 17.6 MB      |
+| Serialize     | 2.7 s    | 2.8 s      | 1.3 s    | 1.1 s        |
+| Deserialize   | 1.1 s    | 1.2 s      | 436.6 ms | 374.1 ms     |
+| Filter 0.49%  | 60.1 ms  | 61.0 ms    | 147.4 ms | 81.4 ms      |
+| Filter 29.25% | 693.6 ms | 694.7 ms   | 405.4 ms | 352.9 ms     |
+| Filter 77.25% | 994.8 ms | 1.0 s      | 332.2 ms | 272.2 ms     |
+| Filter <0.01% | 10.5 ms  | 9.9 ms     | 10.1 ms  | 9.7 ms       |
+| Reduce 0.49%  | 11.4 ms  | 11.3 ms    | 83.5 ms  | 24.1 ms      |
+| Reduce 29.25% | 115.2 ms | 115.0 ms   | 56.4 ms  | 57.5 ms      |
 
 - `time_round = 1s` drops the tick jitter and cuts ~17% off full fidelity
 - `Timeline` cuts row count by ~71%, serialized size ~62%, and serialize time ~50%
@@ -32,6 +33,7 @@ Real Postgres monitoring datasets sourced from pganalyze.
 | Filter 0.49%  | 10.4 ms  | 473.6 ms | 1.6 s          | 4.4 s   |
 | Filter 29.25% | 591.3 ms | 474.0 ms | 1.6 s          | 4.5 s   |
 | Filter 77.25% | 1.2 s    | 475.3 ms | 1.6 s          | 4.5 s   |
+| Filter <0.01% | 1.4 ms   | 479.0 ms | 1.5 s          | 4.3 s   |
 | Reduce 0.49%  | 1.7 ms   | 487.3 ms | 1.6 s          | 4.5 s   |
 | Reduce 29.25% | 79.2 ms  | 524.3 ms | 1.6 s          | 4.8 s   |
 
@@ -47,15 +49,15 @@ This data model is dominated by large Postgres EXPLAIN plans represented as JSON
 
 | Metric        | text     | JSON     | JSON lossy | arena    | arena lossy |
 |---------------|----------|----------|------------|----------|-------------|
-| Size          | 91.7 MB  | 82.0 MB  | 76.0 MB    | 57.7 MB  | 55.4 MB     |
-| Serialize     | 1.3 s    | 3.1 s    | 3.1 s      | 3.9 s    | 3.9 s       |
-| Deserialize   | 712.0 ms | 8.0 s    | 7.9 s      | 1.9 s    | 2.0 s       |
-| Filter 0.55%  | 536.7 ms | 1.7 s    | 1.6 s      | 520.2 ms | 510.0 ms    |
-| Filter 12.48% | 547.3 ms | 4.6 s    | 4.6 s      | 775.6 ms | 769.0 ms    |
-| Filter 12.97% | 20.8 ms  | 176.1 ms | 179.9 ms   | 45.7 ms  | 44.7 ms     |
-| Text miss     | 5.7 ms   | 5.1 ms   | 4.9 ms     | 4.1 ms   | 4.0 ms      |
-| Reduce 0.55%  | 2.7 ms   | 2.7 ms   | 2.8 ms     | 2.3 ms   | 2.4 ms      |
-| Reduce 12.48% | 2.6 ms   | 2.4 ms   | 2.4 ms     | 2.1 ms   | 1.9 ms      |
+| Size          | 91.7 MB  | 82.0 MB  | 76.0 MB    | 57.7 MB  | 55.5 MB     |
+| Serialize     | 1.2 s    | 3.0 s    | 3.0 s      | 3.8 s    | 3.7 s       |
+| Deserialize   | 683.5 ms | 7.6 s    | 7.5 s      | 1.8 s    | 1.8 s       |
+| Filter 0.55%  | 515.6 ms | 1.6 s    | 1.6 s      | 502.1 ms | 487.8 ms    |
+| Filter 12.48% | 527.8 ms | 4.4 s    | 4.4 s      | 735.0 ms | 724.4 ms    |
+| Filter 12.97% | 20.2 ms  | 172.0 ms | 171.1 ms   | 42.1 ms  | 42.0 ms     |
+| Text miss     | 5.4 ms   | 5.0 ms   | 4.7 ms     | 4.0 ms   | 4.0 ms      |
+| Reduce 0.55%  | 2.7 ms   | 2.5 ms   | 2.5 ms     | 2.2 ms   | 2.3 ms      |
+| Reduce 12.48% | 2.4 ms   | 2.4 ms   | 2.1 ms     | 2.0 ms   | 1.8 ms      |
 
 - PcoPack outperforms competitors even when storing the JSON as text. When storing JSON, PcoPack reduces compressed size but much more time is spent serializing.
 - JSON lossy uses `float_round = 2, time_round = 1s` to cut ~7%
@@ -83,26 +85,26 @@ This data model is dominated by large Postgres EXPLAIN plans represented as JSON
 | Metric        | PcoPack  | PcoPack time_round | Vortex   | columnar | serde_columnar | msgpack  |
 |---------------|----------|--------------------|----------|----------|----------------|----------|
 | Size          | 117.1 MB | 117.2 MB           | 129.8 MB | 191.7 MB | 179.4 MB       | 236.2 MB |
-| Serialize     | 4.3 s    | 4.3 s              | 6.0 s    | 4.6 s    | 2.9 s          | 5.2 s    |
-| Deserialize   | 1.5 s    | 1.6 s              | 2.1 s    | 1.4 s    | 2.4 s          | 4.4 s    |
-| Filter 0.31%  | 127.1 ms | 121.9 ms           | 35.6 ms  | 1.4 s    | 2.4 s          | 4.5 s    |
-| Filter 18.19% | 744.9 ms | 741.3 ms           | 770.5 ms | 1.4 s    | 2.4 s          | 4.5 s    |
-| Filter 0.05%  | 8.3 ms   | 8.3 ms             | 7.4 ms   | 1.4 s    | 2.4 s          | 4.5 s    |
-| Reduce 0.31%  | 36.7 ms  | 35.3 ms            | 9.2 ms   | 1.4 s    | 2.4 s          | 4.5 s    |
-| Reduce 18.19% | 235.1 ms | 232.6 ms           | 203.5 ms | 1.5 s    | 2.4 s          | 4.7 s    |
+| Serialize     | 4.2 s    | 4.1 s              | 6.0 s    | 4.6 s    | 2.9 s          | 5.2 s    |
+| Deserialize   | 1.7 s    | 1.5 s              | 2.1 s    | 1.4 s    | 2.4 s          | 4.4 s    |
+| Filter 0.31%  | 118.7 ms | 116.5 ms           | 35.6 ms  | 1.4 s    | 2.4 s          | 4.5 s    |
+| Filter 18.19% | 718.2 ms | 712.3 ms           | 770.5 ms | 1.4 s    | 2.4 s          | 4.5 s    |
+| Filter 0.05%  | 8.0 ms   | 7.9 ms             | 7.4 ms   | 1.4 s    | 2.4 s          | 4.5 s    |
+| Reduce 0.31%  | 33.2 ms  | 33.1 ms            | 9.2 ms   | 1.4 s    | 2.4 s          | 4.5 s    |
+| Reduce 18.19% | 220.6 ms | 221.9 ms           | 203.5 ms | 1.5 s    | 2.4 s          | 4.7 s    |
 
 ### query_stats_1hour (1041799 rows)
 
 | Metric        | PcoPack  | PcoPack time_round | Vortex   | columnar | serde_columnar | msgpack  |
 |---------------|----------|--------------------|----------|----------|----------------|----------|
 | Size          | 5.9 MB   | 5.9 MB             | 7.1 MB   | 10.0 MB  | 9.1 MB         | 11.6 MB  |
-| Serialize     | 166.3 ms | 166.2 ms           | 251.3 ms | 152.9 ms | 117.3 ms       | 201.3 ms |
-| Deserialize   | 62.4 ms  | 62.2 ms            | 76.0 ms  | 51.1 ms  | 90.0 ms        | 165.2 ms |
-| Filter 0.63%  | 25.2 ms  | 24.3 ms            | 1.6 ms   | 50.6 ms  | 89.5 ms        | 166.3 ms |
-| Filter 58.45% | 48.2 ms  | 47.1 ms            | 56.4 ms  | 50.2 ms  | 89.5 ms        | 166.5 ms |
+| Serialize     | 163.3 ms | 161.2 ms           | 251.3 ms | 152.9 ms | 117.3 ms       | 201.3 ms |
+| Deserialize   | 59.8 ms  | 59.4 ms            | 76.0 ms  | 51.1 ms  | 90.0 ms        | 165.2 ms |
+| Filter 0.63%  | 24.2 ms  | 23.6 ms            | 1.6 ms   | 50.6 ms  | 89.5 ms        | 166.3 ms |
+| Filter 58.45% | 45.9 ms  | 45.2 ms            | 56.4 ms  | 50.2 ms  | 89.5 ms        | 166.5 ms |
 | Filter 0.03%  | 0.4 ms   | 0.4 ms             | 4.9 ms   | 50.4 ms  | 89.0 ms        | 166.5 ms |
-| Reduce 0.63%  | 7.1 ms   | 7.0 ms             | 0.4 ms   | 51.6 ms  | 89.4 ms        | 165.5 ms |
-| Reduce 58.45% | 12.9 ms  | 13.3 ms            | 13.8 ms  | 59.2 ms  | 94.1 ms        | 168.0 ms |
+| Reduce 0.63%  | 6.9 ms   | 6.7 ms             | 0.4 ms   | 51.6 ms  | 89.4 ms        | 165.5 ms |
+| Reduce 58.45% | 12.4 ms  | 12.4 ms            | 13.8 ms  | 59.2 ms  | 94.1 ms        | 168.0 ms |
 
 - PcoPack is the smallest at both granularities
 - `time_round` is less effective because data is captured once a minute versus backend_snapshots which are captured once every 10 seconds

@@ -27,6 +27,12 @@ impl PcoSerde for chrono::DateTime<chrono::Utc> {
         let micros = i64::get(reader, index)?;
         Ok(micros.map(|m| Self::from_timestamp_micros(m).unwrap_or(Self::UNIX_EPOCH)))
     }
+
+    /// Timestamp columns store integer µs through `i64`, whose bounds prefix
+    /// bounds the same values `filter_bulk` compares against.
+    fn metadata_excludes(compressed: &[u8], filter: &Filter) -> bool {
+        bounds::int_bounds_excludes::<i64>(compressed, filter, bounds::BoundsKind::I64)
+    }
 }
 
 // Matches the behavior of chrono::DurationRound.
