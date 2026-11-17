@@ -127,18 +127,21 @@ where
         let mut it = inner.into_iter();
         let mut next = spans.into_iter();
         let mut pending = next.next();
-        for_each_set_bit(mask, |row| match pending {
-            Some((span_row, _, len)) if span_row == row => {
-                out.push(it.by_ref().take(len).collect());
-                pending = next.next();
+        for_each_set_bit(mask, |row| {
+            match pending {
+                Some((span_row, _, len)) if span_row == row => {
+                    out.push(it.by_ref().take(len).collect());
+                    pending = next.next();
+                }
+                Some(_) | None => {
+                    // Surviving rows before the forward cursor, and rows past
+                    // the lengths column, both read empty: leniency for
+                    // out-of-contract reads, not parity with `get_vec`.
+                    out.push(Vec::new());
+                }
             }
-            Some(_) | None => {
-                // Surviving rows before the forward cursor, and rows past
-                // the lengths column, both read empty: leniency for
-                // out-of-contract reads, not parity with `get_vec`.
-                out.push(Vec::new());
-            }
-        });
+            Ok(())
+        })?;
         Ok(())
     }
 

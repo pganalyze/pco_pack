@@ -937,10 +937,22 @@ const _: () = {
             let mut col_value: Vec<f64> = Vec::with_capacity(count);
             let mut col_label: Vec<String> = Vec::with_capacity(count);
             let mut col_state: Vec<State> = Vec::with_capacity(count);
-            reader.id.gather_into(&mask, &mut col_id)?;
-            reader.value.gather_into(&mask, &mut col_value)?;
-            reader.label.gather_into(&mask, &mut col_label)?;
-            reader.state.gather_into(&mask, &mut col_state)?;
+            reader
+                .id
+                .gather_into(&mask, &mut col_id)
+                .with_context(|| "reading field 'id'")?;
+            reader
+                .value
+                .gather_into(&mask, &mut col_value)
+                .with_context(|| "reading field 'value'")?;
+            reader
+                .label
+                .gather_into(&mask, &mut col_label)
+                .with_context(|| "reading field 'label'")?;
+            reader
+                .state
+                .gather_into(&mask, &mut col_state)
+                .with_context(|| "reading field 'state'")?;
             let mut iter_id = col_id.into_iter();
             let mut iter_value = col_value.into_iter();
             let mut iter_label = col_label.into_iter();
@@ -1041,10 +1053,22 @@ const _: () = {
             let mut col_value: Vec<f64> = Vec::with_capacity(count);
             let mut col_label: Vec<String> = Vec::with_capacity(count);
             let mut col_state: Vec<State> = Vec::with_capacity(count);
-            reader.id.gather_into(&matches, &mut col_id)?;
-            reader.value.gather_into(&matches, &mut col_value)?;
-            reader.label.gather_into(&matches, &mut col_label)?;
-            reader.state.gather_into(&matches, &mut col_state)?;
+            reader
+                .id
+                .gather_into(&matches, &mut col_id)
+                .with_context(|| "reading field 'id'")?;
+            reader
+                .value
+                .gather_into(&matches, &mut col_value)
+                .with_context(|| "reading field 'value'")?;
+            reader
+                .label
+                .gather_into(&matches, &mut col_label)
+                .with_context(|| "reading field 'label'")?;
+            reader
+                .state
+                .gather_into(&matches, &mut col_state)
+                .with_context(|| "reading field 'state'")?;
             let mut iter_id = col_id.into_iter();
             let mut iter_value = col_value.into_iter();
             let mut iter_label = col_label.into_iter();

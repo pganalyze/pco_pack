@@ -245,19 +245,40 @@ pub fn projection_fields<R: PcoPack, C: Consumer<R>>() -> &'static [&'static str
     C::FIELDS
 }
 
-/// Visit each set bit of `mask` by its absolute row index, in ascending order.
-/// The word span stops at the mask's length, so the indices never reach past
-/// the last valid row.
-pub(crate) fn for_each_set_bit(mask: &FilterMask, mut visit: impl FnMut(usize)) {
+/// Visit each set bit of `mask` by its absolute row index, in ascending order,
+/// stopping at the first `Err`. The word span stops at the mask's length, so
+/// the indices never reach past the last valid row.
+pub(crate) fn for_each_set_bit(mask: &FilterMask, mut visit: impl FnMut(usize) -> Result<()>) -> Result<()> {
     let mut base = 0usize;
     for &word in mask.gather_words().iter() {
         let mut word = word;
         while word != 0 {
-            visit(base + word.trailing_zeros() as usize);
+            visit(base + word.trailing_zeros() as usize)?;
             word &= word - 1;
         }
         base += 64;
     }
+    Ok(())
+}
+
+/// Row-at-a-time gather for readers without a typed-buffer override. A missing
+/// row (`get` answering `Ok(None)`) reads `Default`, matching `pop_inner` for
+/// schema-evolution-short columns, but a `get` error propagates so corrupt
+/// data fails loudly instead of zero-filling survivors.
+pub(crate) fn gather_via_get<T: PcoSerde + Default>(
+    reader: &mut T::Reader, mask: &FilterMask, out: &mut Vec<T>,
+) -> Result<()> {
+    for_each_set_bit(mask, |index| match T::get(reader, index) {
+        Ok(Some(v)) => {
+            out.push(v);
+            Ok(())
+        }
+        Ok(None) => {
+            out.push(T::default());
+            Ok(())
+        }
+        Err(e) => Err(e),
+    })
 }
 
 /// Set `len` bits starting at `start`, growing `mask` with zero words as
@@ -341,24 +362,20 @@ pub trait PcoSerde: Sized + Clone {
     /// Append every survivor to `out`, in ascending row order, reading `mask`
     /// through its tail-clean word span. Readers over fully decoded column
     /// buffers override this with one typed loop per column. Forward-cursor
-    /// containers override it by projecting the row-space mask onto their inner
-    /// row space and moving the inner column's owned values into each row; the
-    /// row-at-a-time fallback below remains for readers that cannot, and visits
-    /// indices in ascending order matching `pop_inner` semantics (missing or
-    /// failed reads push `Default`).
+    /// containers override it by projecting the row-space mask onto their
+    /// inner row space and moving the inner column's owned values into each
+    /// row; the row-at-a-time fallback below remains for readers that cannot,
+    /// and visits indices in ascending order matching `pop_inner` semantics
+    /// (missing rows push `Default`).
     ///
-    /// Gathers are lenient past a truncated inner stream: they push `Default`
-    /// where `get` would error. Malformed data is out of contract, so no reader
-    /// is required to surface those errors through this hook.
+    /// Missing rows are legitimate (schema evolution shortens a column) and
+    /// answer `Default`, but a decode failure is corrupt data and must surface:
+    /// a gather either answers exactly one value per set bit or returns `Err`.
     fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> Result<()>
     where
         Self: Default,
     {
-        for_each_set_bit(mask, |index| match Self::get(reader, index) {
-            Ok(Some(v)) => out.push(v),
-            Ok(None) | Err(_) => out.push(Self::default()),
-        });
-        Ok(())
+        gather_via_get(reader, mask, out)
     }
 
     /// True when a compressed column blob's write-time bounds prefix proves no
@@ -502,9 +519,9 @@ impl Filter {
 /// Dispatch trait for `Vec<T>`, serializing inner elements via `T::write()`
 /// for optimal per-field compression.
 ///
-/// `Default` is a supertrait because a survivor's gather over a truncated blob
-/// must still push exactly one row per mask bit: absent spans and short inner
-/// reads yield an empty `Vec`, which only `Default` can build generically.
+/// `Default` is a supertrait because `gather_vec` moves rows through the
+/// inner column's `gather`, whose bound requires it, and absent or
+/// before-cursor spans must still push exactly one empty `Vec` per mask bit.
 pub trait VecPackable: PcoSerde + Default {
     type VecWriter: Default;
     type VecReader;

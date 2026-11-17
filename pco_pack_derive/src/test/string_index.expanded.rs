@@ -671,7 +671,10 @@ const _: () = {
             let count = row_count;
             let mut results: Vec<StringIndex> = Vec::with_capacity(count);
             let mut col_temperature: Vec<i64> = Vec::with_capacity(count);
-            reader.temperature.gather_into(&mask, &mut col_temperature)?;
+            reader
+                .temperature
+                .gather_into(&mask, &mut col_temperature)
+                .with_context(|| "reading field 'temperature'")?;
             let mut iter_temperature = col_temperature.into_iter();
             for _ in 0..count {
                 results
@@ -732,7 +735,10 @@ const _: () = {
             let count = matches.count_ones();
             let mut results: Vec<StringIndex> = Vec::with_capacity(count);
             let mut col_temperature: Vec<i64> = Vec::with_capacity(count);
-            reader.temperature.gather_into(&matches, &mut col_temperature)?;
+            reader
+                .temperature
+                .gather_into(&matches, &mut col_temperature)
+                .with_context(|| "reading field 'temperature'")?;
             let mut iter_temperature = col_temperature.into_iter();
             for _ in 0..count {
                 results
@@ -1517,7 +1523,10 @@ const _: () = {
             let count = row_count;
             let mut results: Vec<SmolStrIndex> = Vec::with_capacity(count);
             let mut col_temperature: Vec<i64> = Vec::with_capacity(count);
-            reader.temperature.gather_into(&mask, &mut col_temperature)?;
+            reader
+                .temperature
+                .gather_into(&mask, &mut col_temperature)
+                .with_context(|| "reading field 'temperature'")?;
             let mut iter_temperature = col_temperature.into_iter();
             for _ in 0..count {
                 results
@@ -1578,7 +1587,10 @@ const _: () = {
             let count = matches.count_ones();
             let mut results: Vec<SmolStrIndex> = Vec::with_capacity(count);
             let mut col_temperature: Vec<i64> = Vec::with_capacity(count);
-            reader.temperature.gather_into(&matches, &mut col_temperature)?;
+            reader
+                .temperature
+                .gather_into(&matches, &mut col_temperature)
+                .with_context(|| "reading field 'temperature'")?;
             let mut iter_temperature = col_temperature.into_iter();
             for _ in 0..count {
                 results

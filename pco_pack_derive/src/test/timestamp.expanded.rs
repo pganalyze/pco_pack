@@ -963,9 +963,18 @@ const _: () = {
             let mut col_collected_at: Vec<i64> = Vec::with_capacity(count);
             let mut col_database_id: Vec<i64> = Vec::with_capacity(count);
             let mut col_value: Vec<f64> = Vec::with_capacity(count);
-            reader.collected_at.gather_into(&mask, &mut col_collected_at)?;
-            reader.database_id.gather_into(&mask, &mut col_database_id)?;
-            reader.value.gather_into(&mask, &mut col_value)?;
+            reader
+                .collected_at
+                .gather_into(&mask, &mut col_collected_at)
+                .with_context(|| "reading field 'collected_at'")?;
+            reader
+                .database_id
+                .gather_into(&mask, &mut col_database_id)
+                .with_context(|| "reading field 'database_id'")?;
+            reader
+                .value
+                .gather_into(&mask, &mut col_value)
+                .with_context(|| "reading field 'value'")?;
             let mut iter_collected_at = col_collected_at.into_iter();
             let mut iter_database_id = col_database_id.into_iter();
             let mut iter_value = col_value.into_iter();
@@ -1058,9 +1067,18 @@ const _: () = {
             let mut col_collected_at: Vec<i64> = Vec::with_capacity(count);
             let mut col_database_id: Vec<i64> = Vec::with_capacity(count);
             let mut col_value: Vec<f64> = Vec::with_capacity(count);
-            reader.collected_at.gather_into(&matches, &mut col_collected_at)?;
-            reader.database_id.gather_into(&matches, &mut col_database_id)?;
-            reader.value.gather_into(&matches, &mut col_value)?;
+            reader
+                .collected_at
+                .gather_into(&matches, &mut col_collected_at)
+                .with_context(|| "reading field 'collected_at'")?;
+            reader
+                .database_id
+                .gather_into(&matches, &mut col_database_id)
+                .with_context(|| "reading field 'database_id'")?;
+            reader
+                .value
+                .gather_into(&matches, &mut col_value)
+                .with_context(|| "reading field 'value'")?;
             let mut iter_collected_at = col_collected_at.into_iter();
             let mut iter_database_id = col_database_id.into_iter();
             let mut iter_value = col_value.into_iter();

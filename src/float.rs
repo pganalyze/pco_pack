@@ -117,7 +117,8 @@ impl PcoSerde for half::f16 {
                             .map(|&v| half::f16::from_f64(float_round::unround_float(v, *decimals as u32)))
                             .unwrap_or_default(),
                     );
-                });
+                    Ok(())
+                })?;
             }
         }
         Ok(())
@@ -332,7 +333,8 @@ impl PcoSerde for f32 {
                             .map(|&v| float_round::unround_float(v, *decimals as u32) as f32)
                             .unwrap_or_default(),
                     );
-                });
+                    Ok(())
+                })?;
             }
         }
         Ok(())
@@ -542,7 +544,8 @@ impl PcoSerde for f64 {
                     out.push(
                         values.get(index).map(|&v| float_round::unround_float(v, *decimals as u32)).unwrap_or_default(),
                     );
-                });
+                    Ok(())
+                })?;
             }
         }
         Ok(())

@@ -120,14 +120,15 @@ pub(crate) mod helpers {
     ///
     /// `cached`/`cached_row_start` mirror the reader's forward-cursor state;
     /// `pos` must point at the byte start of the chunk after `cached` (or at
-    /// 0 with no cache). Survivors at or past `total_rows`, or any survivor
-    /// once the chunk stream runs dry, push `Default`, matching `get` and
-    /// `pop_inner` exactly.
+    /// 0 with no cache). Survivors at or past `total_rows` push `Default`,
+    /// matching `get` and `pop_inner` for legitimately short columns, but a
+    /// chunk that fails to decode or a stream that runs dry while a row below
+    /// `total_rows` is still demanded is corrupt data and returns `Err`.
     #[inline]
     pub(crate) fn gather_chunked<T: serde::de::DeserializeOwned + Default>(
         data: &[u8], total_rows: usize, cached: Option<Vec<T>>, cached_row_start: usize, mut pos: usize,
         mask_words: &[u64], out: &mut Vec<T>,
-    ) {
+    ) -> anyhow::Result<()> {
         let mut bits = MaskBits::new(mask_words);
         out.reserve(bits.count_remaining());
 
@@ -156,23 +157,19 @@ pub(crate) mod helpers {
                 Some(row) if row < total_rows => row,
                 Some(_) | None => {
                     out.extend((0..bits.count_remaining()).map(|_| T::default()));
-                    return;
+                    return Ok(());
                 }
             };
             if first >= scan_row_start + CHUNK_SIZE {
                 if skip_chunk(data, &mut pos).is_none() {
-                    out.extend((0..bits.count_remaining()).map(|_| T::default()));
-                    return;
+                    return Err(corrupt_stream_error::<T>("skip", first, total_rows, pos));
                 }
                 scan_row_start += std::cmp::min(CHUNK_SIZE, total_rows.saturating_sub(scan_row_start));
                 continue;
             }
             let mut chunk = match deserialize_chunk::<T>(data, &mut pos) {
                 Some(chunk) => chunk,
-                None => {
-                    out.extend((0..bits.count_remaining()).map(|_| T::default()));
-                    return;
-                }
+                None => return Err(corrupt_stream_error::<T>("read", first, total_rows, pos)),
             };
             let end = scan_row_start + chunk.len();
             while let Some(row) = bits.peek() {
@@ -184,6 +181,17 @@ pub(crate) mod helpers {
             }
             scan_row_start = end;
         }
+    }
+
+    /// Error for a chunk the column header promised but the byte stream
+    /// cannot deliver. The type name identifies the column kind; the row and
+    /// byte offsets say where the stream died.
+    fn corrupt_stream_error<T>(action: &str, row: usize, total_rows: usize, pos: usize) -> anyhow::Error {
+        anyhow::anyhow!(
+            "lazy-msgpack column <{}> is corrupt: failed to {action} the chunk holding row {row} \
+             (column claims {total_rows} rows, stream broke at byte {pos})",
+            std::any::type_name::<T>()
+        )
     }
 }
 
@@ -415,7 +423,9 @@ macro_rules! impl_lazy_msgpack {
             /// Chunk-major survivor gather: text is the dominant cost in the
             /// row-at-a-time fallback (`cache.get().clone()` per survivor),
             /// so this skips untouched chunks outright and moves survivors out
-            /// of each deserialized chunk instead of cloning them.
+            /// of each deserialized chunk instead of cloning them. A corrupt
+            /// or truncated chunk stream returns `Err`; rows past `total_rows`
+            /// still answer `Default`.
             fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()>
             where
                 Self: Default,
@@ -423,15 +433,14 @@ macro_rules! impl_lazy_msgpack {
                 // Fallback readers keep every row decoded; clone per
                 // survivor, matching `get` byte for byte.
                 if let Some(values) = reader.predecoded.clone() {
-                    for_each_set_bit(mask, |i| out.push(values.get(i).cloned().unwrap_or_default()));
+                    for_each_set_bit(mask, |i| {
+                        out.push(values.get(i).cloned().unwrap_or_default());
+                        Ok(())
+                    })?;
                     return Ok(());
                 }
                 if reader.format_version != self::FORMAT_VERSION_CHUNKED || reader.msgpack_bytes.is_empty() {
-                    for_each_set_bit(mask, |i| match <Self as super::PcoSerde>::get(reader, i) {
-                        Ok(Some(v)) => out.push(v),
-                        Ok(None) | Err(_) => out.push(Self::default()),
-                    });
-                    return Ok(());
+                    return super::gather_via_get::<$ty>(reader, mask, out);
                 }
                 let total_rows = reader.total_rows;
                 let cached = reader.cached_chunk.take();
@@ -447,7 +456,7 @@ macro_rules! impl_lazy_msgpack {
                     data_pos,
                     &words,
                     out,
-                );
+                )?;
                 // Rewind the cursor to its freshly-read state: survivors were
                 // moved out of the drained chunks, so leaving a stale `pos`
                 // without a cache would make a later `get` mis-align row

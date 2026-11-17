@@ -161,9 +161,8 @@ where
     /// it produced, so the per-survivor clone `get` paid out of the cached
     /// chunk is gone. Absent rows, rows past the column, and rows the
     /// forward cursor has already passed read `None` exactly as `get`
-    /// answers; a corrupt inner stream may yield a `Default` value where
-    /// `get` would have answered `None`, matching the inner column's own
-    /// gather contract.
+    /// answers; a corrupt inner stream surfaces as an error through the
+    /// inner column's own gather contract.
     fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()>
     where
         Self: Default,
@@ -177,7 +176,7 @@ where
         for_each_set_bit(mask, |row| {
             if row >= reader.total_rows || row < reader.current_idx {
                 present.push(false);
-                return;
+                return Ok(());
             }
             while p < inner_count && (reader.presence_indices[p] as usize) < row {
                 p += 1;
@@ -191,7 +190,8 @@ where
                 present.push(false);
             }
             last_row = Some(row);
-        });
+            Ok(())
+        })?;
         let mut inner: Vec<T> = Vec::new();
         // An all-`None` survivor set projects no bits: skip the inner gather
         // entirely so a cursor-advancing inner reader is left untouched.

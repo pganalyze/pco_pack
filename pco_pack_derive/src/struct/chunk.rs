@@ -237,8 +237,11 @@ pub fn generate(sg: &StructGen) -> TokenStream2 {
             let ty = &fi.ty;
             let col = Ident::new(&format!("col_{ident}"), span);
             let iter = Ident::new(&format!("iter_{ident}"), span);
+            // Decode failures must say which column died. The message is a
+            // literal so the closure allocates nothing on the success path.
+            let context = syn::LitStr::new(&format!("reading field '{ident}'"), span);
             col_decls.push(quote! { let mut #col: Vec<#ty> = Vec::with_capacity(count); });
-            gather_calls.push(quote! { reader.#ident.gather_into(#mask_expr, &mut #col)?; });
+            gather_calls.push(quote! { reader.#ident.gather_into(#mask_expr, &mut #col).with_context(|| #context)?; });
             iter_decls.push(quote! { let mut #iter = #col.into_iter(); });
             payload_asgns.push(quote! { #ident: #iter.next().unwrap_or_default(), });
         }

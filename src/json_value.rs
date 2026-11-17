@@ -294,18 +294,13 @@ impl super::PcoSerde for serde_json::Value {
     /// clone of the whole tree, so the row-at-a-time fallback doubles the
     /// allocation cost of every survivor; this deserializes each chunk once,
     /// skips chunks with no survivor outright, and moves survivors out.
+    /// A corrupt or truncated chunk stream returns `Err`.
     fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()>
     where
         Self: Default,
     {
         if reader.format_version != FORMAT_VERSION_CHUNKED || reader.msgpack_bytes.is_empty() {
-            // `serde_json::Value` has an inherent `get`, so the trait method
-            // must be named explicitly.
-            for_each_set_bit(mask, |i| match <Self as super::PcoSerde>::get(reader, i) {
-                Ok(Some(v)) => out.push(v),
-                Ok(None) | Err(_) => out.push(Self::default()),
-            });
-            return Ok(());
+            return super::gather_via_get::<serde_json::Value>(reader, mask, out);
         }
         let total_rows = reader.total_rows;
         let cached = reader.cached_chunk.take();
@@ -321,7 +316,7 @@ impl super::PcoSerde for serde_json::Value {
             data_pos,
             &words,
             out,
-        );
+        )?;
         // Rewind the cursor to its freshly-read state; see the lazy-msgpack
         // gather for why a drained cache must not be paired with a stale
         // `data_pos`.

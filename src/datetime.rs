@@ -34,10 +34,13 @@ impl PcoSerde for chrono::DateTime<chrono::Utc> {
     fn gather(reader: &mut Self::Reader, mask: &FilterMask, out: &mut Vec<Self>) -> anyhow::Result<()> {
         let values = &reader.values;
         out.reserve(mask.count_ones().saturating_sub(out.len()));
-        for_each_set_bit(mask, |index| match values.get(index).copied() {
-            Some(m) => out.push(Self::from_timestamp_micros(m).unwrap_or(Self::UNIX_EPOCH)),
-            None => out.push(Self::default()),
-        });
+        for_each_set_bit(mask, |index| {
+            match values.get(index).copied() {
+                Some(m) => out.push(Self::from_timestamp_micros(m).unwrap_or(Self::UNIX_EPOCH)),
+                None => out.push(Self::default()),
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 

@@ -1054,8 +1054,14 @@ const _: () = {
                 count,
             );
             let mut col_fingerprint: Vec<i64> = Vec::with_capacity(count);
-            reader.collected_at.gather_into(&mask, &mut col_collected_at)?;
-            reader.fingerprint.gather_into(&mask, &mut col_fingerprint)?;
+            reader
+                .collected_at
+                .gather_into(&mask, &mut col_collected_at)
+                .with_context(|| "reading field 'collected_at'")?;
+            reader
+                .fingerprint
+                .gather_into(&mask, &mut col_fingerprint)
+                .with_context(|| "reading field 'fingerprint'")?;
             let mut iter_collected_at = col_collected_at.into_iter();
             let mut iter_fingerprint = col_fingerprint.into_iter();
             for _ in 0..count {
@@ -1141,8 +1147,14 @@ const _: () = {
                 count,
             );
             let mut col_fingerprint: Vec<i64> = Vec::with_capacity(count);
-            reader.collected_at.gather_into(&matches, &mut col_collected_at)?;
-            reader.fingerprint.gather_into(&matches, &mut col_fingerprint)?;
+            reader
+                .collected_at
+                .gather_into(&matches, &mut col_collected_at)
+                .with_context(|| "reading field 'collected_at'")?;
+            reader
+                .fingerprint
+                .gather_into(&matches, &mut col_fingerprint)
+                .with_context(|| "reading field 'fingerprint'")?;
             let mut iter_collected_at = col_collected_at.into_iter();
             let mut iter_fingerprint = col_fingerprint.into_iter();
             for _ in 0..count {

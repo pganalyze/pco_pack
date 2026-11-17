@@ -709,8 +709,14 @@ const _: () = {
             let mut results: Vec<Outer> = Vec::with_capacity(count);
             let mut col_name: Vec<String> = Vec::with_capacity(count);
             let mut col_inner: Vec<Inner> = Vec::with_capacity(count);
-            reader.name.gather_into(&mask, &mut col_name)?;
-            reader.inner.gather_into(&mask, &mut col_inner)?;
+            reader
+                .name
+                .gather_into(&mask, &mut col_name)
+                .with_context(|| "reading field 'name'")?;
+            reader
+                .inner
+                .gather_into(&mask, &mut col_inner)
+                .with_context(|| "reading field 'inner'")?;
             let mut iter_name = col_name.into_iter();
             let mut iter_inner = col_inner.into_iter();
             for _ in 0..count {
@@ -778,8 +784,14 @@ const _: () = {
             let mut results: Vec<Outer> = Vec::with_capacity(count);
             let mut col_name: Vec<String> = Vec::with_capacity(count);
             let mut col_inner: Vec<Inner> = Vec::with_capacity(count);
-            reader.name.gather_into(&matches, &mut col_name)?;
-            reader.inner.gather_into(&matches, &mut col_inner)?;
+            reader
+                .name
+                .gather_into(&matches, &mut col_name)
+                .with_context(|| "reading field 'name'")?;
+            reader
+                .inner
+                .gather_into(&matches, &mut col_inner)
+                .with_context(|| "reading field 'inner'")?;
             let mut iter_name = col_name.into_iter();
             let mut iter_inner = col_inner.into_iter();
             for _ in 0..count {
@@ -1606,8 +1618,14 @@ const _: () = {
             let mut results: Vec<Inner> = Vec::with_capacity(count);
             let mut col_x: Vec<i32> = Vec::with_capacity(count);
             let mut col_label: Vec<String> = Vec::with_capacity(count);
-            reader.x.gather_into(&mask, &mut col_x)?;
-            reader.label.gather_into(&mask, &mut col_label)?;
+            reader
+                .x
+                .gather_into(&mask, &mut col_x)
+                .with_context(|| "reading field 'x'")?;
+            reader
+                .label
+                .gather_into(&mask, &mut col_label)
+                .with_context(|| "reading field 'label'")?;
             let mut iter_x = col_x.into_iter();
             let mut iter_label = col_label.into_iter();
             for _ in 0..count {
@@ -1675,8 +1693,14 @@ const _: () = {
             let mut results: Vec<Inner> = Vec::with_capacity(count);
             let mut col_x: Vec<i32> = Vec::with_capacity(count);
             let mut col_label: Vec<String> = Vec::with_capacity(count);
-            reader.x.gather_into(&matches, &mut col_x)?;
-            reader.label.gather_into(&matches, &mut col_label)?;
+            reader
+                .x
+                .gather_into(&matches, &mut col_x)
+                .with_context(|| "reading field 'x'")?;
+            reader
+                .label
+                .gather_into(&matches, &mut col_label)
+                .with_context(|| "reading field 'label'")?;
             let mut iter_x = col_x.into_iter();
             let mut iter_label = col_label.into_iter();
             for _ in 0..count {

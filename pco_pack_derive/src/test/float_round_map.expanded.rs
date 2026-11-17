@@ -734,8 +734,14 @@ const _: () = {
             let mut results: Vec<MetricRecord> = Vec::with_capacity(count);
             let mut col_id: Vec<i64> = Vec::with_capacity(count);
             let mut col_metrics: Vec<HashMap<String, f64>> = Vec::with_capacity(count);
-            reader.id.gather_into(&mask, &mut col_id)?;
-            reader.metrics.gather_into(&mask, &mut col_metrics)?;
+            reader
+                .id
+                .gather_into(&mask, &mut col_id)
+                .with_context(|| "reading field 'id'")?;
+            reader
+                .metrics
+                .gather_into(&mask, &mut col_metrics)
+                .with_context(|| "reading field 'metrics'")?;
             let mut iter_id = col_id.into_iter();
             let mut iter_metrics = col_metrics.into_iter();
             for _ in 0..count {
@@ -808,8 +814,14 @@ const _: () = {
             let mut results: Vec<MetricRecord> = Vec::with_capacity(count);
             let mut col_id: Vec<i64> = Vec::with_capacity(count);
             let mut col_metrics: Vec<HashMap<String, f64>> = Vec::with_capacity(count);
-            reader.id.gather_into(&matches, &mut col_id)?;
-            reader.metrics.gather_into(&matches, &mut col_metrics)?;
+            reader
+                .id
+                .gather_into(&matches, &mut col_id)
+                .with_context(|| "reading field 'id'")?;
+            reader
+                .metrics
+                .gather_into(&matches, &mut col_metrics)
+                .with_context(|| "reading field 'metrics'")?;
             let mut iter_id = col_id.into_iter();
             let mut iter_metrics = col_metrics.into_iter();
             for _ in 0..count {
@@ -1683,8 +1695,14 @@ const _: () = {
             let mut col_metrics: Vec<HashMap<String, (f64, i32)>> = Vec::with_capacity(
                 count,
             );
-            reader.id.gather_into(&mask, &mut col_id)?;
-            reader.metrics.gather_into(&mask, &mut col_metrics)?;
+            reader
+                .id
+                .gather_into(&mask, &mut col_id)
+                .with_context(|| "reading field 'id'")?;
+            reader
+                .metrics
+                .gather_into(&mask, &mut col_metrics)
+                .with_context(|| "reading field 'metrics'")?;
             let mut iter_id = col_id.into_iter();
             let mut iter_metrics = col_metrics.into_iter();
             for _ in 0..count {
@@ -1759,8 +1777,14 @@ const _: () = {
             let mut col_metrics: Vec<HashMap<String, (f64, i32)>> = Vec::with_capacity(
                 count,
             );
-            reader.id.gather_into(&matches, &mut col_id)?;
-            reader.metrics.gather_into(&matches, &mut col_metrics)?;
+            reader
+                .id
+                .gather_into(&matches, &mut col_id)
+                .with_context(|| "reading field 'id'")?;
+            reader
+                .metrics
+                .gather_into(&matches, &mut col_metrics)
+                .with_context(|| "reading field 'metrics'")?;
             let mut iter_id = col_id.into_iter();
             let mut iter_metrics = col_metrics.into_iter();
             for _ in 0..count {
@@ -2625,8 +2649,14 @@ const _: () = {
             let mut col_metrics: Vec<Option<HashMap<String, (f32, i32)>>> = Vec::with_capacity(
                 count,
             );
-            reader.id.gather_into(&mask, &mut col_id)?;
-            reader.metrics.gather_into(&mask, &mut col_metrics)?;
+            reader
+                .id
+                .gather_into(&mask, &mut col_id)
+                .with_context(|| "reading field 'id'")?;
+            reader
+                .metrics
+                .gather_into(&mask, &mut col_metrics)
+                .with_context(|| "reading field 'metrics'")?;
             let mut iter_id = col_id.into_iter();
             let mut iter_metrics = col_metrics.into_iter();
             for _ in 0..count {
@@ -2701,8 +2731,14 @@ const _: () = {
             let mut col_metrics: Vec<Option<HashMap<String, (f32, i32)>>> = Vec::with_capacity(
                 count,
             );
-            reader.id.gather_into(&matches, &mut col_id)?;
-            reader.metrics.gather_into(&matches, &mut col_metrics)?;
+            reader
+                .id
+                .gather_into(&matches, &mut col_id)
+                .with_context(|| "reading field 'id'")?;
+            reader
+                .metrics
+                .gather_into(&matches, &mut col_metrics)
+                .with_context(|| "reading field 'metrics'")?;
             let mut iter_id = col_id.into_iter();
             let mut iter_metrics = col_metrics.into_iter();
             for _ in 0..count {
@@ -3565,8 +3601,14 @@ const _: () = {
             let mut col_batches: Vec<Vec<HashMap<String, (half::f16, i32)>>> = Vec::with_capacity(
                 count,
             );
-            reader.id.gather_into(&mask, &mut col_id)?;
-            reader.batches.gather_into(&mask, &mut col_batches)?;
+            reader
+                .id
+                .gather_into(&mask, &mut col_id)
+                .with_context(|| "reading field 'id'")?;
+            reader
+                .batches
+                .gather_into(&mask, &mut col_batches)
+                .with_context(|| "reading field 'batches'")?;
             let mut iter_id = col_id.into_iter();
             let mut iter_batches = col_batches.into_iter();
             for _ in 0..count {
@@ -3641,8 +3683,14 @@ const _: () = {
             let mut col_batches: Vec<Vec<HashMap<String, (half::f16, i32)>>> = Vec::with_capacity(
                 count,
             );
-            reader.id.gather_into(&matches, &mut col_id)?;
-            reader.batches.gather_into(&matches, &mut col_batches)?;
+            reader
+                .id
+                .gather_into(&matches, &mut col_id)
+                .with_context(|| "reading field 'id'")?;
+            reader
+                .batches
+                .gather_into(&matches, &mut col_batches)
+                .with_context(|| "reading field 'batches'")?;
             let mut iter_id = col_id.into_iter();
             let mut iter_batches = col_batches.into_iter();
             for _ in 0..count {

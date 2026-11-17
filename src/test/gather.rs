@@ -36,10 +36,17 @@ fn random_mask(rows: usize, pct: u64, rng: &mut Rng) -> FilterMask {
 fn expected_via_get<T: PcoSerde + Default>(reader: &mut T::Reader, mask: &FilterMask) -> Vec<T> {
     let mut out = Vec::new();
     for_each_set_bit(mask, |i| match T::get(reader, i) {
-        Ok(Some(v)) => out.push(v),
-        Ok(None) => out.push(T::default()),
+        Ok(Some(v)) => {
+            out.push(v);
+            Ok(())
+        }
+        Ok(None) => {
+            out.push(T::default());
+            Ok(())
+        }
         Err(e) => panic!("get failed on well-formed data: {e}"),
-    });
+    })
+    .unwrap();
     out
 }
 
@@ -204,7 +211,9 @@ fn gather_text_match_get_after_cursor_prime() {
         // `get` answers None there and the gather pushes `Default`.
         let value = if row < 128 { String::new() } else { strings.get(row).cloned().unwrap_or_default() };
         expected.push(value);
-    });
+        Ok(())
+    })
+    .unwrap();
     assert_eq!(gathered, expected);
     // Sanity: the mask really selects rows below, inside, and past chunk 1.
     let below = mask.as_raw_slice()[..2].iter().map(|w| w.count_ones()).sum::<u32>();
@@ -230,6 +239,60 @@ fn gather_text_past_row_count_defaults_like_get() {
     assert_eq!(gathered.len(), 3);
     assert_eq!(&gathered[..2], &["v1".to_string(), "v3".to_string()]);
     assert_eq!(gathered[2..], [String::new()]);
+}
+
+/// Cutting the decompressed msgpack stream mid-chunk-1 keeps chunk 0 fully
+/// readable while any survivor that needs the missing region is corrupt data:
+/// the gather must return `Err`, not zero-fill the survivors.
+#[test]
+fn gather_text_stream_truncation_errors() {
+    let strings: Vec<String> = (0..300).map(|i| format!("v{i}")).collect();
+    let bytes = String::write(strings, 0, Default::default()).unwrap();
+    let total_rows = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+    let compressed_len = u64::from_le_bytes(bytes[8..16].try_into().unwrap()) as usize;
+    let raw = zstd::decode_all(Cursor::new(&bytes[16..16 + compressed_len])).unwrap();
+    // Halving the payload keeps the version byte and chunk 0 (rows 0..128)
+    // and dies partway into chunk 1 (rows 128..256).
+    let raw = &raw[..raw.len() / 2];
+    let compressed = zstd::encode_all(raw, 3).unwrap();
+    let mut blob = Vec::new();
+    blob.extend_from_slice(&total_rows.to_le_bytes());
+    blob.extend_from_slice(&(compressed.len() as u64).to_le_bytes());
+    blob.extend_from_slice(&compressed);
+
+    let read_column = || <String as PcoSerde>::read(&mut Cursor::new(&blob[..]), 0, Default::default()).unwrap();
+
+    // Chunk 0 survived the cut, so rows below it still read exactly.
+    let mut bits = vec![false; 300];
+    bits[10] = true;
+    bits[127] = true;
+    let mask = FilterMask::from_bool_slice(&bits);
+    let mut gathered = Vec::new();
+    <String as PcoSerde>::gather(&mut read_column(), &mask, &mut gathered).unwrap();
+    assert_eq!(gathered, vec!["v10".to_string(), "v127".to_string()]);
+
+    // A survivor inside the truncated chunk fails the gather.
+    let mut bits = vec![false; 300];
+    bits[150] = true;
+    let mask = FilterMask::from_bool_slice(&bits);
+    let mut gathered = Vec::new();
+    let err = <String as PcoSerde>::gather(&mut read_column(), &mask, &mut gathered).unwrap_err();
+    assert!(err.to_string().contains("is corrupt"), "{err}");
+
+    // Skipping past the truncated chunk toward a later row fails too.
+    let mut bits = vec![false; 300];
+    bits[260] = true;
+    let mask = FilterMask::from_bool_slice(&bits);
+    let mut gathered = Vec::new();
+    let err = <String as PcoSerde>::gather(&mut read_column(), &mask, &mut gathered).unwrap_err();
+    assert!(err.to_string().contains("is corrupt"), "{err}");
+
+    // An all-set mask fails on its first survivor past the cut rather than
+    // zero-filling the tail.
+    let mask = FilterMask::ones(300);
+    let mut gathered = Vec::new();
+    let err = <String as PcoSerde>::gather(&mut read_column(), &mask, &mut gathered).unwrap_err();
+    assert!(err.to_string().contains("is corrupt"), "{err}");
 }
 
 #[test]

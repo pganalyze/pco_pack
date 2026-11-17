@@ -806,8 +806,14 @@ const _: () = {
             let mut results: Vec<DeviceTelemetry> = Vec::with_capacity(count);
             let mut col_temperature: Vec<i64> = Vec::with_capacity(count);
             let mut col_humidity: Vec<i64> = Vec::with_capacity(count);
-            reader.temperature.gather_into(&mask, &mut col_temperature)?;
-            reader.humidity.gather_into(&mask, &mut col_humidity)?;
+            reader
+                .temperature
+                .gather_into(&mask, &mut col_temperature)
+                .with_context(|| "reading field 'temperature'")?;
+            reader
+                .humidity
+                .gather_into(&mask, &mut col_humidity)
+                .with_context(|| "reading field 'humidity'")?;
             let mut iter_temperature = col_temperature.into_iter();
             let mut iter_humidity = col_humidity.into_iter();
             for _ in 0..count {
@@ -886,8 +892,14 @@ const _: () = {
             let mut results: Vec<DeviceTelemetry> = Vec::with_capacity(count);
             let mut col_temperature: Vec<i64> = Vec::with_capacity(count);
             let mut col_humidity: Vec<i64> = Vec::with_capacity(count);
-            reader.temperature.gather_into(&matches, &mut col_temperature)?;
-            reader.humidity.gather_into(&matches, &mut col_humidity)?;
+            reader
+                .temperature
+                .gather_into(&matches, &mut col_temperature)
+                .with_context(|| "reading field 'temperature'")?;
+            reader
+                .humidity
+                .gather_into(&matches, &mut col_humidity)
+                .with_context(|| "reading field 'humidity'")?;
             let mut iter_temperature = col_temperature.into_iter();
             let mut iter_humidity = col_humidity.into_iter();
             for _ in 0..count {

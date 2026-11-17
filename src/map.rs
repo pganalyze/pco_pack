@@ -206,19 +206,22 @@ where
         let mut vit = values.into_iter();
         let mut next = spans.into_iter();
         let mut pending = next.next();
-        for_each_set_bit(mask, |row| match pending {
-            Some((span_row, count)) if span_row == row => {
-                let mut map = BTreeMap::new();
-                for _ in 0..count {
-                    if let (Some(k), Some(v)) = (kit.next(), vit.next()) {
-                        map.insert(k, v);
+        for_each_set_bit(mask, |row| {
+            match pending {
+                Some((span_row, count)) if span_row == row => {
+                    let mut map = BTreeMap::new();
+                    for _ in 0..count {
+                        if let (Some(k), Some(v)) = (kit.next(), vit.next()) {
+                            map.insert(k, v);
+                        }
                     }
+                    out.push(map);
+                    pending = next.next();
                 }
-                out.push(map);
-                pending = next.next();
+                Some(_) | None => out.push(BTreeMap::new()),
             }
-            Some(_) | None => out.push(BTreeMap::new()),
-        });
+            Ok(())
+        })?;
         Ok(())
     }
 }
@@ -362,19 +365,22 @@ where
         let mut vit = values.into_iter();
         let mut next = spans.into_iter();
         let mut pending = next.next();
-        for_each_set_bit(mask, |row| match pending {
-            Some((span_row, count)) if span_row == row => {
-                let mut map = HashMap::with_capacity(count);
-                for _ in 0..count {
-                    if let (Some(k), Some(v)) = (kit.next(), vit.next()) {
-                        map.insert(k, v);
+        for_each_set_bit(mask, |row| {
+            match pending {
+                Some((span_row, count)) if span_row == row => {
+                    let mut map = HashMap::with_capacity(count);
+                    for _ in 0..count {
+                        if let (Some(k), Some(v)) = (kit.next(), vit.next()) {
+                            map.insert(k, v);
+                        }
                     }
+                    out.push(map);
+                    pending = next.next();
                 }
-                out.push(map);
-                pending = next.next();
+                Some(_) | None => out.push(HashMap::new()),
             }
-            Some(_) | None => out.push(HashMap::new()),
-        });
+            Ok(())
+        })?;
         Ok(())
     }
 }
