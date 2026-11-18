@@ -50,20 +50,19 @@ This data model is dominated by large Postgres EXPLAIN plans represented as JSON
 | Metric        | text     | JSON     | JSON lossy | arena    | arena lossy |
 |---------------|----------|----------|------------|----------|-------------|
 | Size          | 91.7 MB  | 82.0 MB  | 76.0 MB    | 57.7 MB  | 55.5 MB     |
-| Serialize     | 1.3 s    | 3.0 s    | 3.1 s      | 3.9 s    | 3.8 s       |
-| Deserialize   | 643.2 ms | 5.5 s    | 5.5 s      | 1.8 s    | 1.8 s       |
-| Filter 0.55%  | 534.8 ms | 1.6 s    | 1.6 s      | 500.0 ms | 489.8 ms    |
-| Filter 12.48% | 534.3 ms | 4.2 s    | 4.2 s      | 741.8 ms | 735.0 ms    |
-| Filter 12.97% | 18.0 ms  | 130.2 ms | 130.4 ms   | 42.2 ms  | 42.0 ms     |
-| Text miss     | 4.3 ms   | 3.8 ms   | 3.5 ms     | 2.7 ms   | 2.6 ms      |
-| Reduce 0.55%  | 2.8 ms   | 2.8 ms   | 2.6 ms     | 2.2 ms   | 2.3 ms      |
-| Reduce 12.48% | 2.6 ms   | 2.4 ms   | 2.2 ms     | 2.0 ms   | 1.9 ms      |
+| Serialize     | 1.3 s    | 3.1 s    | 3.0 s      | 3.9 s    | 3.7 s       |
+| Deserialize   | 644.0 ms | 5.5 s    | 5.5 s      | 1.9 s    | 1.9 s       |
+| Filter 0.55%  | 542.2 ms | 1.6 s    | 1.6 s      | 509.0 ms | 494.1 ms    |
+| Filter 12.48% | 537.1 ms | 4.2 s    | 4.2 s      | 752.9 ms | 738.3 ms    |
+| Filter 12.97% | 17.9 ms  | 128.5 ms | 129.4 ms   | 41.9 ms  | 41.7 ms     |
+| Text miss     | 4.2 ms   | 3.7 ms   | 3.4 ms     | 2.7 ms   | 2.6 ms      |
+| Reduce 0.55%  | 2.8 ms   | 2.6 ms   | 2.9 ms     | 2.2 ms   | 2.3 ms      |
+| Reduce 12.48% | 2.6 ms   | 2.4 ms   | 2.3 ms     | 2.1 ms   | 1.9 ms      |
 
 - PcoPack outperforms competitors even when storing the JSON as text. When storing JSON, PcoPack reduces compressed size but much more time is spent serializing.
 - JSON lossy uses `float_round = 2, time_round = 1s` to cut ~7%
 - The arena (AKA struct of arrays) replaces the JSON tree with a flat arena of typed fields. Arena is ~30% smaller than JSON, and lossy arena trims ~4% more. Arena deserialization is ~4x faster than JSON, and filters are 3-6x faster
 - The whole capture fits one chunk, so chunk min/max bounds exclude nothing and selective filters decode every column (Filter 0.55% costs ~540 ms text / ~1.7 s JSON); dynamic chunk size by data volume is a possible future escape hatch
-- The `error` column is an `Option<String>`; this capture holds no errors, so every row folds to `None` and the column's value body stays empty
 
 #### Other crates
 
