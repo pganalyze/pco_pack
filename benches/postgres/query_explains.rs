@@ -39,7 +39,7 @@ pub struct QueryExplain {
     pub query_fingerprint: i64,
     pub format: i32,
     pub source: i32,
-    pub error: String,
+    pub error: Option<String>,
     pub seen_at: DateTime<Utc>,
     pub runtime_ms: f32,
     pub total_cost: Option<f32>,
@@ -67,7 +67,7 @@ pub struct QueryExplainString {
     pub query_fingerprint: i64,
     pub format: i32,
     pub source: i32,
-    pub error: String,
+    pub error: Option<String>,
     pub seen_at: DateTime<Utc>,
     pub runtime_ms: f32,
     pub total_cost: Option<f32>,
@@ -129,7 +129,7 @@ pub struct QueryExplainLossy {
     pub query_fingerprint: i64,
     pub format: i32,
     pub source: i32,
-    pub error: String,
+    pub error: Option<String>,
     pub seen_at: DateTime<Utc>,
     pub runtime_ms: f32,
     pub total_cost: Option<f32>,
@@ -234,7 +234,7 @@ pub struct QueryExplainArena {
     pub query_fingerprint: i64,
     pub format: i32,
     pub source: i32,
-    pub error: String,
+    pub error: Option<String>,
     pub seen_at: DateTime<Utc>,
     pub runtime_ms: f32,
     pub total_cost: Option<f32>,
@@ -300,7 +300,7 @@ pub struct QueryExplainArenaLossy {
     pub query_fingerprint: i64,
     pub format: i32,
     pub source: i32,
-    pub error: String,
+    pub error: Option<String>,
     pub seen_at: DateTime<Utc>,
     pub runtime_ms: f32,
     pub total_cost: Option<f32>,
@@ -444,7 +444,7 @@ impl Ek {
             Ek::Time(a, b) => *a <= us && us <= *b,
             Ek::Slow => r.runtime_ms >= 10_000.0,
             Ek::Server(id) => r.server_id == *id,
-            Ek::Error(e) => r.error == *e,
+            Ek::Error(e) => r.error.as_deref() == Some(e.as_str()),
         }
     }
 
@@ -458,7 +458,7 @@ impl Ek {
             }
             Ek::Slow => common::round_f32(r.runtime_ms, 2) >= 10_000.0,
             Ek::Server(id) => r.server_id == *id,
-            Ek::Error(e) => r.error == *e,
+            Ek::Error(e) => r.error.as_deref() == Some(e.as_str()),
         }
     }
 }
@@ -480,7 +480,14 @@ pub fn bench() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn bench_explains(rows: Vec<QueryExplain>) {
+fn bench_explains(mut rows: Vec<QueryExplain>) {
+    // The capture encodes "no error" as the empty string. Fold it to None so
+    // the column stores the sparsity it actually has.
+    for r in &mut rows {
+        if r.error.as_deref().unwrap_or("").is_empty() {
+            r.error = None;
+        }
+    }
     let n = rows.len();
     let last_us = rows.iter().map(|r| r.seen_at.timestamp_micros()).max().unwrap();
     let srv0 = rows[0].server_id;
@@ -491,8 +498,8 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     // shape that charges pure guard cost.
     let mut err_counts: HashMap<&str, u64> = HashMap::new();
     for r in &rows {
-        if !r.error.is_empty() {
-            *err_counts.entry(r.error.as_str()).or_default() += 1;
+        if let Some(err) = r.error.as_deref() {
+            *err_counts.entry(err).or_default() += 1;
         }
     }
     let err0 = err_counts
@@ -1002,7 +1009,7 @@ impl From<&QueryExplain> for QueryExplainCol {
             query_fingerprint: r.query_fingerprint,
             format: r.format,
             source: r.source,
-            error: r.error.clone(),
+            error: r.error.clone().unwrap_or_default(),
             seen_at: r.seen_at.timestamp_micros(),
             runtime_ms: r.runtime_ms,
             total_cost: r.total_cost,
@@ -1072,7 +1079,7 @@ mod explains_sc {
                 seen_at: r.seen_at.timestamp_micros(),
                 format: r.format,
                 source: r.source,
-                error: r.error.clone(),
+                error: r.error.clone().unwrap_or_default(),
                 server_id: r.server_id,
                 database_id: r.database_id,
                 postgres_role_id: r.postgres_role_id,

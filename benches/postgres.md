@@ -50,33 +50,34 @@ This data model is dominated by large Postgres EXPLAIN plans represented as JSON
 | Metric        | text     | JSON     | JSON lossy | arena    | arena lossy |
 |---------------|----------|----------|------------|----------|-------------|
 | Size          | 91.7 MB  | 82.0 MB  | 76.0 MB    | 57.7 MB  | 55.5 MB     |
-| Serialize     | 1.2 s    | 3.0 s    | 3.0 s      | 3.8 s    | 3.7 s       |
-| Deserialize   | 624.8 ms | 5.4 s    | 5.4 s      | 1.8 s    | 1.8 s       |
-| Filter 0.55%  | 519.2 ms | 1.6 s    | 1.6 s      | 494.1 ms | 488.3 ms    |
-| Filter 12.48% | 519.6 ms | 4.1 s    | 4.1 s      | 728.2 ms | 725.5 ms    |
-| Filter 12.97% | 17.6 ms  | 126.9 ms | 127.9 ms   | 41.1 ms  | 41.1 ms     |
-| Text miss     | 5.3 ms   | 5.0 ms   | 4.7 ms     | 4.1 ms   | 4.0 ms      |
-| Reduce 0.55%  | 2.7 ms   | 2.5 ms   | 2.6 ms     | 2.2 ms   | 2.3 ms      |
-| Reduce 12.48% | 2.5 ms   | 2.3 ms   | 2.2 ms     | 1.9 ms   | 1.8 ms      |
+| Serialize     | 1.3 s    | 3.0 s    | 3.1 s      | 3.9 s    | 3.8 s       |
+| Deserialize   | 643.2 ms | 5.5 s    | 5.5 s      | 1.8 s    | 1.8 s       |
+| Filter 0.55%  | 534.8 ms | 1.6 s    | 1.6 s      | 500.0 ms | 489.8 ms    |
+| Filter 12.48% | 534.3 ms | 4.2 s    | 4.2 s      | 741.8 ms | 735.0 ms    |
+| Filter 12.97% | 18.0 ms  | 130.2 ms | 130.4 ms   | 42.2 ms  | 42.0 ms     |
+| Text miss     | 4.3 ms   | 3.8 ms   | 3.5 ms     | 2.7 ms   | 2.6 ms      |
+| Reduce 0.55%  | 2.8 ms   | 2.8 ms   | 2.6 ms     | 2.2 ms   | 2.3 ms      |
+| Reduce 12.48% | 2.6 ms   | 2.4 ms   | 2.2 ms     | 2.0 ms   | 1.9 ms      |
 
 - PcoPack outperforms competitors even when storing the JSON as text. When storing JSON, PcoPack reduces compressed size but much more time is spent serializing.
 - JSON lossy uses `float_round = 2, time_round = 1s` to cut ~7%
 - The arena (AKA struct of arrays) replaces the JSON tree with a flat arena of typed fields. Arena is ~30% smaller than JSON, and lossy arena trims ~4% more. Arena deserialization is ~4x faster than JSON, and filters are 3-6x faster
 - The whole capture fits one chunk, so chunk min/max bounds exclude nothing and selective filters decode every column (Filter 0.55% costs ~540 ms text / ~1.7 s JSON); dynamic chunk size by data volume is a possible future escape hatch
+- The `error` column is an `Option<String>`; this capture holds no errors, so every row folds to `None` and the column's value body stays empty
 
 #### Other crates
 
 | Metric        | Vortex   | columnar | serde_columnar | msgpack  |
 |---------------|----------|----------|----------------|----------|
 | Size          | 122.5 MB | 127.1 MB | 123.3 MB       | 110.3 MB |
-| Serialize     | 5.0 s    | 1.6 s    | 1.6 s          | 2.1 s    |
-| Deserialize   | 695.8 ms | 542.1 ms | 745.2 ms       | 5.0 s    |
-| Filter 0.55%  | 17.1 ms  | 539.7 ms | 763.5 ms       | 6.2 s    |
-| Filter 12.48% | 533.0 ms | 538.3 ms | 762.0 ms       | 6.2 s    |
-| Filter 12.97% | 458.3 ms | 537.4 ms | 750.8 ms       | 6.2 s    |
-| Text miss     | 0.2 ms   | 537.9 ms | 748.9 ms       | 6.2 s    |
-| Reduce 0.55%  | 0.2 ms   | 543.7 ms | 749.6 ms       | 6.2 s    |
-| Reduce 12.48% | 1.4 ms   | 540.4 ms | 811.5 ms       | 6.1 s    |
+| Serialize     | 4.9 s    | 1.5 s    | 1.5 s          | 2.0 s    |
+| Deserialize   | 677.1 ms | 522.4 ms | 701.9 ms       | 4.7 s    |
+| Filter 0.55%  | 16.9 ms  | 520.8 ms | 705.4 ms       | 5.9 s    |
+| Filter 12.48% | 525.2 ms | 521.6 ms | 703.1 ms       | 5.9 s    |
+| Filter 12.97% | 446.2 ms | 521.8 ms | 701.8 ms       | 5.8 s    |
+| Text miss     | 0.2 ms   | 522.6 ms | 705.7 ms       | 5.9 s    |
+| Reduce 0.55%  | 0.1 ms   | 521.6 ms | 703.0 ms       | 5.8 s    |
+| Reduce 12.48% | 1.3 ms   | 522.1 ms | 706.0 ms       | 5.8 s    |
 
 - Vortex, columnar, and serde_columnar store the JSON as text; the same as the PcoPack text scenario.
 
