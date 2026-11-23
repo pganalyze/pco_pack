@@ -23,6 +23,8 @@ macro_rules! impl_pco_number {
             type Writer = NumberWriter<$t>;
             type Reader = NumberReader<$t>;
 
+            const HAS_BOUNDS_HEADER: bool = true;
+
             fn write(data: Vec<$t>, _float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
                 let config = pco_util::config();
                 let body = pco::standalone::simple_compress(&data, &config)?;

@@ -22,8 +22,12 @@ use std::time::Instant;
 
 /// Repeat count for a measured dataset op. A minimum needs several runs to
 /// mean anything; this honors `$BENCH_ITERS` so a full run can dial
-/// stability up or runtime down per machine.
+/// stability up or runtime down per machine, and collapses to one pass in
+/// `--verify` mode.
 pub fn ds_iters() -> usize {
+    if crate::verify_mode() {
+        return 1;
+    }
     std::env::var("BENCH_ITERS").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(DS_ITERATIONS).max(1)
 }
 

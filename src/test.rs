@@ -4,6 +4,7 @@
 
 mod bool;
 mod bool_range_filter;
+mod bounds_hoist_framing;
 mod bytes;
 mod chunk_row_count;
 mod collection_coercion;

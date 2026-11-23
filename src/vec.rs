@@ -12,6 +12,11 @@ where
     // shallow, so cheapness is inherited from the element type.
     const CHEAP_TO_CLONE: bool = T::CHEAP_TO_CLONE;
 
+    /// `write_vec` always fronts the blob with a 20-byte header (the inner's
+    /// or `NO_BOUNDS_HEADER`), so the wrapper's own prefix contract holds
+    /// for every element type.
+    const HAS_BOUNDS_HEADER: bool = true;
+
     fn write(data: Vec<Vec<T>>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let mut writer = <T as VecPackable>::VecWriter::default();
         for v in data {

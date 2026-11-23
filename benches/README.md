@@ -20,3 +20,4 @@ PcoPack is less effective in some scenarios:
 - `cargo bench` takes ~70 minutes, peaking near 50 GB of memory
 - `cargo bench -- --crates pco_pack` runs benchmarks for a single crate
 - `cargo bench --bench datasets -- taxi` runs a single scenario inside a larger benchmark
+- `cargo bench -- --verify` (or `BENCH_VERIFY=1`) checks for roundtrip data corruption

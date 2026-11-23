@@ -25,6 +25,8 @@ impl PcoSerde for half::f16 {
     type Writer = NumberWriter<half::f16>;
     type Reader = FloatReader<half::f16>;
 
+    const HAS_BOUNDS_HEADER: bool = true;
+
     fn write(data: Vec<half::f16>, float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let config = pco_util::config();
         if float_round > 0 {
@@ -247,6 +249,8 @@ impl PcoSerde for f32 {
     type Writer = NumberWriter<f32>;
     type Reader = FloatReader<f32>;
 
+    const HAS_BOUNDS_HEADER: bool = true;
+
     fn write(data: Vec<f32>, float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let config = pco_util::config();
         if float_round > 0 {
@@ -459,6 +463,8 @@ impl PcoFilter for f32 {
 impl PcoSerde for f64 {
     type Writer = NumberWriter<f64>;
     type Reader = FloatReader<f64>;
+
+    const HAS_BOUNDS_HEADER: bool = true;
 
     fn write(data: Vec<f64>, float_round: u32, _time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let config = pco_util::config();

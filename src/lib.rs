@@ -342,6 +342,13 @@ pub trait PcoSerde: Sized + Clone {
     /// per element. Expensive types override the default.
     const CHEAP_TO_CLONE: bool = true;
 
+    /// Whether `write`'s output starts with the 20-byte bounds header that
+    /// Option and Vec hoist to their blob front. Headerless writers (lazy
+    /// msgpack, struct frames, JSON) must stay false: their framing length
+    /// prefixes can begin with `BOUNDS_MAGIC`, and hoisting then slices 20
+    /// bytes off the body. Set true only where `write` pushes a header.
+    const HAS_BOUNDS_HEADER: bool = false;
+
     /// Write a column over borrowed values. The default clones and
     /// delegates to `write`; expensive types override to encode from the
     /// references, which is what lets struct writes skip payload clones.

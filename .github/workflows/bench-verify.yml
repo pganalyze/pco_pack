@@ -1,0 +1,74 @@
+name: Bench verify
+
+# Runs the bench binaries in `--verify` mode to check for roundtrip data corruption.
+# Scenario cost varies widely, so parallel workers are used.
+#
+# TODO: add CI access to the pco_pack_bench_data private repo so query_explains can be tested.
+
+on:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
+    name: ${{ matrix.name }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: synthetic+air_quality
+            lfs: false
+            data: air_quality
+            commands: |
+              cargo bench --bench synthetic -- --verify --crates pco_pack
+              cargo bench --bench datasets -- --verify --crates pco_pack air_quality
+          - name: taxi
+            runner: ubuntu-latest-16-cores
+            lfs: false
+            data: taxi
+            commands: |
+              cargo bench --bench datasets -- --verify --crates pco_pack taxi
+          - name: osm
+            runner: ubuntu-latest-16-cores
+            lfs: false
+            data: osm
+            commands: |
+              cargo bench --bench datasets -- --verify --crates pco_pack osm
+          - name: openalex
+            runner: ubuntu-latest-16-cores
+            lfs: false
+            data: openalex
+            commands: |
+              cargo bench --bench datasets -- --verify --crates pco_pack openalex
+          - name: backends
+            lfs: true
+            commands: |
+              cargo bench --bench postgres -- --verify --crates pco_pack backends
+          - name: query_stats
+            lfs: true
+            commands: |
+              cargo bench --bench postgres -- --verify --crates pco_pack query_stats
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: ${{ matrix.lfs }}
+      - uses: Swatinem/rust-cache@27b8ea9368cf428f0bfe41b0876b1a7e809d9844
+      # One entry per dataset scenario: workers downloading disjoint files
+      # under a shared key would race, and first-save-wins would leave the
+      # losers re-downloading forever. The key hashes the pinned dataset defs,
+      # so only a pin change forces a re-download. A partial or stale restore
+      # is safe: the bench re-checks size/md5 and re-fetches what it can't
+      # trust.
+      - uses: actions/cache@v6
+        if: ${{ matrix.data != '' }}
+        with:
+          path: tmp
+          key: bench-data-${{ runner.os }}-${{ matrix.data }}-${{ hashFiles('benches/datasets/*.rs') }}
+          restore-keys: bench-data-${{ runner.os }}-${{ matrix.data }}-
+      - name: ${{ matrix.name }}
+        run: ${{ matrix.commands }}

@@ -46,7 +46,7 @@ pub struct BackendSnapshot {
 /// The TimeRound model (see `query_stats::QueryStatTimeRound`): this is the
 /// `PcoPack time_round` column. Rounding the us timestamps shrinks the
 /// timestamp columns.
-#[derive(Clone, Debug, Default, PartialEq, PcoPack)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, PcoPack)]
 #[pco_pack(
     index = [server_id, granularity],
     timestamp = collected_at,
@@ -96,6 +96,17 @@ impl From<&BackendSnapshot> for BackendSnapshotTimeRound {
 
 /// Everything but `collected_at`: two snapshots with equal keys are the
 /// same backend state seen at different ticks and dedup to one row.
+/// The exact row a `time_round = 1s` write stores: every `DateTime` column
+/// rounded to the nearest second, all other columns verbatim.
+fn expected_time_round(r: &BackendSnapshot) -> BackendSnapshotTimeRound {
+    const SEC: i64 = 1_000_000;
+    let mut x = BackendSnapshotTimeRound::from(r);
+    x.collected_at = common::ts_rounded(&x.collected_at, SEC);
+    x.backend_start = common::ts_rounded(&x.backend_start, SEC);
+    x.query_start = common::ts_rounded(&x.query_start, SEC);
+    x
+}
+
 #[derive(Hash, PartialEq, Eq)]
 pub struct BackendSnapshotKey {
     pub server_id: i64,
@@ -402,8 +413,19 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
         .map(|k| fold_fp_counts(rows.iter().filter(|r| k.matches_time_round(r)).filter_map(|r| r.query_fingerprint)))
         .collect();
 
-    let (mut pco_time_round, tr_bytes) =
-        common::bench_pco_pack_full(&time_round_rows, &time_round_filters, |_back, _off| {}, || {});
+    let (mut pco_time_round, tr_bytes) = common::bench_pco_pack_full(
+        &time_round_rows,
+        &time_round_filters,
+        |back, off| {
+            crate::verify_multiset(
+                &rows[off..off + back.len()],
+                back,
+                |r| crate::digest(&expected_time_round(r)),
+                crate::digest,
+            )
+        },
+        || {},
+    );
     drop(time_round_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
@@ -581,7 +603,12 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
         .collect();
     let tl_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_tl.iter()).map(|(q, (_, e))| (q, *e)).collect();
-    let (mut pco_timeline, tl_bytes) = common::bench_pco_pack_full(&tl_rows, &tl_filters, |_back, _off| {}, || {});
+    let (mut pco_timeline, tl_bytes) = common::bench_pco_pack_full(
+        &tl_rows,
+        &tl_filters,
+        |back, off| crate::verify_multiset(&tl_rows[off..off + back.len()], back, crate::digest, crate::digest),
+        || {},
+    );
     drop(tl_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
@@ -633,8 +660,12 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
         .collect();
     let tl10_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_tl10.iter()).map(|(q, (_, e))| (q, *e)).collect();
-    let (mut pco_timeline10, tl10_bytes) =
-        common::bench_pco_pack_full(&tl_rows10, &tl10_filters, |_back, _off| {}, || {});
+    let (mut pco_timeline10, tl10_bytes) = common::bench_pco_pack_full(
+        &tl_rows10,
+        &tl10_filters,
+        |back, off| crate::verify_multiset(&tl_rows10[off..off + back.len()], back, crate::digest, crate::digest),
+        || {},
+    );
     drop(tl_rows10);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
@@ -662,7 +693,12 @@ fn bench_backends(rows: Vec<BackendSnapshot>) {
         drop(tl10_bytes);
     }
 
-    let (mut pco, pco_bytes) = common::bench_pco_pack_full(&rows, &pco_filters, |_back, _off| {}, || {});
+    let (mut pco, pco_bytes) = common::bench_pco_pack_full(
+        &rows,
+        &pco_filters,
+        |back, off| crate::verify_multiset(&rows[off..off + back.len()], back, crate::digest, crate::digest),
+        || {},
+    );
     drop(rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 pub use crate::ds_common::{
     CodecMetrics, ScStore, bench_columnar, bench_msgpack, bench_pco_pack_full, bench_serde_columnar, bench_vortex_ds,
     ds_iters, filter_label, min_pass, reduce_columnar, reduce_label, reduce_msgpack, reduce_serde_columnar,
-    reduce_vortex_ds, round_f32, text_filter_label, ts_rounded,
+    reduce_vortex_ds, round_f32, round_f64, text_filter_label, ts_rounded,
 };
 
 // ---- Captures: neutral msgpack+zstd inputs ----

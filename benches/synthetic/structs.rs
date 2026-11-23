@@ -35,6 +35,11 @@ pub fn bench() {
             assert_eq!(results.len(), data.len());
         });
         let pco_size_bytes = pco_buf.len();
+        // The timed passes only count rows; check the values once, as a
+        // multiset: the `index` attribute regroups rows at write time.
+        let compressed = Record::from_bytes(&pco_buf).unwrap();
+        let results = Record::filter(&compressed, json!({}), &[]).unwrap();
+        verify_multiset(&data, &results, digest, digest);
         (pco_serial_ms, pco_buf, pco_size_bytes, pco_deserial_ms)
     } else {
         (f64::NAN, Vec::new(), usize::MAX, f64::NAN)

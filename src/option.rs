@@ -55,6 +55,11 @@ where
 
     const CHEAP_TO_CLONE: bool = T::CHEAP_TO_CLONE;
 
+    /// The wrapper always prepends a header of its own (the inner's, hoisted
+    /// only when the inner writer really pushed one), so it satisfies the
+    /// prefix contract for any `T`.
+    const HAS_BOUNDS_HEADER: bool = true;
+
     fn write(data: Vec<Option<T>>, float_round: u32, time_round: chrono::Duration) -> Result<Vec<u8>> {
         let total_rows = data.len();
         let mut presence_indices = Vec::with_capacity(data.len());
@@ -71,7 +76,7 @@ where
         // and the inner body stays the blob's last region.
         presence_indices.push(total_rows as u32);
         let presence_bytes = pco::standalone::simple_compress::<u32>(&presence_indices, &config)?;
-        let (header, body) = bounds::split_header(T::write(inner_values, float_round, time_round)?);
+        let (header, body) = bounds::split_header::<T>(T::write(inner_values, float_round, time_round)?);
         let mut out = Vec::with_capacity(bounds::BOUNDS_PREFIX_LEN + presence_bytes.len() + body.len());
         out.extend_from_slice(&header);
         out.extend_from_slice(&presence_bytes);
@@ -92,7 +97,7 @@ where
         let config = pco_util::config();
         presence_indices.push(total_rows as u32);
         let presence_bytes = pco::standalone::simple_compress::<u32>(&presence_indices, &config)?;
-        let (header, body) = bounds::split_header(T::write_borrowed(&inner_values, float_round, time_round)?);
+        let (header, body) = bounds::split_header::<T>(T::write_borrowed(&inner_values, float_round, time_round)?);
         let mut out = Vec::with_capacity(bounds::BOUNDS_PREFIX_LEN + presence_bytes.len() + body.len());
         out.extend_from_slice(&header);
         out.extend_from_slice(&presence_bytes);
