@@ -1,13 +1,15 @@
 //! Write-time value bounds that let filters skip a column without reading it.
 //!
 //! A bounds prefix on a column blob lets `metadata_excludes` rule the blob out
-//! without parsing pco headers or decompressing anything. Prefix bytes cannot
-//! collide with a legacy blob's first byte: pco standalone streams always
-//! start with their magic (`pco!`, 0x70) and float_round blobs with
-//! FLOAT_ROUND_MAGIC (0xFE). The skip checks also require the byte after the
-//! prefix to be one of those body magics, so a foreign blob that merely
-//! begins with BOUNDS_MAGIC (msgpack uint16 values, Option row-count
-//! framing) must match the full prefix framing, not just its first byte.
+//! without parsing pco headers or decompressing anything. Whether a blob has a
+//! prefix is a property of the writer, not a byte to sniff: pco streams start
+//! with their magic (`pco!`, 0x70) and float_round blobs with
+//! FLOAT_ROUND_MAGIC (0xFE), but length-prefixed bodies (lazy msgpack, struct
+//! frames) can start with any byte, including this prefix's magic, for one
+//! value count in 256. `PcoSerde::HAS_BOUNDS_HEADER` records which writers
+//! push a prefix, and wrappers consult it before hoisting. The skip checks
+//! still require the byte after the prefix to be one of the body magics, so
+//! foreign or corrupt prefixes fail closed.
 //!
 //! Layout: `[BOUNDS_MAGIC][kind][exact][min i64 LE][max i64 LE][decimals]`.
 //! The prefix length is identical for every type because schema evolution
@@ -62,9 +64,13 @@ pub(crate) const NO_BOUNDS_HEADER: [u8; BOUNDS_PREFIX_LEN] = {
 /// consult the bounds at a fixed offset without locating the inner column,
 /// and the inner body stays the blob's last region (pco streams are
 /// self-terminating; zstd and msgpack bodies are not). Writers without a
-/// prefix get `NO_BOUNDS_HEADER` and an unchanged body.
-pub(crate) fn split_header(inner: Vec<u8>) -> ([u8; BOUNDS_PREFIX_LEN], Vec<u8>) {
-    if inner.len() >= BOUNDS_PREFIX_LEN && inner[0] == BOUNDS_MAGIC {
+/// prefix get `NO_BOUNDS_HEADER` and an unchanged body. The decision must
+/// come from `T::HAS_BOUNDS_HEADER`, never from sniffing `inner[0]`: headerless
+/// inner bodies (lazy msgpack, struct frames) start with a row or record
+/// count whose low byte collides with `BOUNDS_MAGIC` for one count in 256,
+/// and slicing those 20 bytes corrupts the body beyond recovery.
+pub(crate) fn split_header<T: crate::PcoSerde>(inner: Vec<u8>) -> ([u8; BOUNDS_PREFIX_LEN], Vec<u8>) {
+    if T::HAS_BOUNDS_HEADER && inner.len() >= BOUNDS_PREFIX_LEN && inner[0] == BOUNDS_MAGIC {
         let mut inner = inner;
         let body = inner.split_off(BOUNDS_PREFIX_LEN);
         (inner.try_into().unwrap(), body)

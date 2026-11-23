@@ -43,6 +43,8 @@ where
 
     const CHEAP_TO_CLONE: bool = T1::CHEAP_TO_CLONE && T2::CHEAP_TO_CLONE;
 
+    const HAS_BOUNDS_HEADER: bool = T1::HAS_BOUNDS_HEADER;
+
     fn write(data: Vec<(T1, T2)>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let (mut c0, mut c1) = (Vec::with_capacity(data.len()), Vec::with_capacity(data.len()));
         for (v0, v1) in data {
@@ -188,6 +190,8 @@ where
     type Reader = (T1::Reader, T2::Reader, T3::Reader);
 
     const CHEAP_TO_CLONE: bool = T1::CHEAP_TO_CLONE && T2::CHEAP_TO_CLONE && T3::CHEAP_TO_CLONE;
+
+    const HAS_BOUNDS_HEADER: bool = T1::HAS_BOUNDS_HEADER;
 
     fn write(data: Vec<(T1, T2, T3)>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let (mut c0, mut c1, mut c2) =
@@ -367,6 +371,8 @@ where
     type Reader = (T1::Reader, T2::Reader, T3::Reader, T4::Reader);
 
     const CHEAP_TO_CLONE: bool = T1::CHEAP_TO_CLONE && T2::CHEAP_TO_CLONE && T3::CHEAP_TO_CLONE && T4::CHEAP_TO_CLONE;
+
+    const HAS_BOUNDS_HEADER: bool = T1::HAS_BOUNDS_HEADER;
 
     fn write(data: Vec<(T1, T2, T3, T4)>, float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let (mut c0, mut c1, mut c2, mut c3) = (
@@ -598,6 +604,8 @@ where
 
     const CHEAP_TO_CLONE: bool =
         T1::CHEAP_TO_CLONE && T2::CHEAP_TO_CLONE && T3::CHEAP_TO_CLONE && T4::CHEAP_TO_CLONE && T5::CHEAP_TO_CLONE;
+
+    const HAS_BOUNDS_HEADER: bool = T1::HAS_BOUNDS_HEADER;
 
     fn write(
         data: Vec<(T1, T2, T3, T4, T5)>, float_round: u32, time_round: chrono::Duration,
@@ -868,6 +876,8 @@ where
         && T4::CHEAP_TO_CLONE
         && T5::CHEAP_TO_CLONE
         && T6::CHEAP_TO_CLONE;
+
+    const HAS_BOUNDS_HEADER: bool = T1::HAS_BOUNDS_HEADER;
 
     fn write(
         data: Vec<(T1, T2, T3, T4, T5, T6)>, float_round: u32, time_round: chrono::Duration,

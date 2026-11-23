@@ -51,7 +51,7 @@ where
         let config = pco_util::config();
         let cl = pco::standalone::simple_compress::<u32>(&writer.lengths, &config)?;
         let all_data: Vec<T> = writer.raw_data.into_iter().flatten().collect();
-        let (header, body) = bounds::split_header(T::write(all_data, float_round, time_round)?);
+        let (header, body) = bounds::split_header::<T>(T::write(all_data, float_round, time_round)?);
         out.reserve(bounds::BOUNDS_PREFIX_LEN + cl.len() + body.len());
         out.extend_from_slice(&header);
         out.extend_from_slice(&cl);

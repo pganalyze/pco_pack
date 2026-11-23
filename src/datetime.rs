@@ -4,6 +4,8 @@ impl PcoSerde for chrono::DateTime<chrono::Utc> {
     type Writer = NumberWriter<i64>;
     type Reader = NumberReader<i64>;
 
+    const HAS_BOUNDS_HEADER: bool = true;
+
     fn write(data: Vec<Self>, _float_round: u32, time_round: chrono::Duration) -> anyhow::Result<Vec<u8>> {
         let micros: Vec<i64> =
             data.into_iter().map(|dt| round_timestamp_us(dt.timestamp_micros(), time_round)).collect();
