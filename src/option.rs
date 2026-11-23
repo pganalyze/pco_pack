@@ -219,6 +219,10 @@ where
     T::Reader: Clone + Default,
 {
     fn filter_bulk(reader: &mut Self::Reader, field: usize, filter: &Filter, matches: &mut FilterMask) -> Result<()> {
+        if reader.presence_indices.is_empty() {
+            matches.fill(false);
+            return Ok(());
+        }
         let total_rows = reader.total_rows;
         let inner_count = reader.presence_indices.len();
         // Build a mask over the compressed inner data (only Some values)
@@ -245,6 +249,10 @@ where
     fn filter_nested(
         reader: &mut Self::Reader, path: &[usize], filter: &Filter, matches: &mut FilterMask,
     ) -> Result<()> {
+        if reader.presence_indices.is_empty() {
+            matches.fill(false);
+            return Ok(());
+        }
         let total_rows = reader.total_rows;
         let inner_count = reader.presence_indices.len();
         let mut inner_matches = FilterMask::ones(inner_count);

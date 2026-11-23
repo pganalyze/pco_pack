@@ -49,6 +49,20 @@ fn empty_option_column() {
     assert!(result.is_empty());
 }
 
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
+struct OptString {
+    field: Option<String>,
+}
+
+#[test]
+fn filtered_reader_option_all_none() {
+    let data: Vec<OptString> = (0..10).map(|_| OptString { field: None }).collect();
+    let bytes = OptString::serialize(data).unwrap();
+    let query = serde_json::json!({"field": "missing"});
+    let result = OptString::filter_bytes(&bytes, query, &[]).unwrap();
+    assert!(result.is_empty());
+}
+
 #[test]
 fn filtered_reader_option_i32() {
     let data: Vec<OptI32> = vec![
