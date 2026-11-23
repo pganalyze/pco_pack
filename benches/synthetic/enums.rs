@@ -45,6 +45,13 @@ pub fn bench() {
             assert_eq!(results.len(), data.len());
         });
         let pco_size_bytes = pco_buf.len();
+        // The timed passes only count rows; check the values once.
+        let compressed = Event::from_bytes(&pco_buf).unwrap();
+        let results = Event::filter(&compressed, json!({}), &[]).unwrap();
+        assert_eq!(results.len(), data.len(), "synthetic enums roundtrip row count");
+        for (i, (r, d)) in results.iter().zip(data.iter()).enumerate() {
+            assert!(r == d, "synthetic enums roundtrip: first mismatch at {i}: stored {r:?}, expected {d:?}");
+        }
         (pco_serial_ms, pco_buf, pco_size_bytes, pco_deserial_ms)
     } else {
         (f64::NAN, Vec::new(), usize::MAX, f64::NAN)

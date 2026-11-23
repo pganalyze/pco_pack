@@ -41,7 +41,56 @@ pub const CHUNK_ROWS: usize = 262_144;
 /// Repeat count for the synthetic benches, taken from `ITERATIONS`;
 /// `$BENCH_ITERS` overrides.
 pub fn synth_iters() -> usize {
+    if verify_mode() {
+        return 1;
+    }
     std::env::var("BENCH_ITERS").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(ITERATIONS).max(1)
+}
+
+/// Set by `--verify` or `$BENCH_VERIFY`: the binary acts as a data-integrity
+/// gate instead of a timer. Every op runs once, the scenario asserts are the
+/// deliverable, and the printed table is incidental. CI runs the bench
+/// binaries in this mode (`.github/workflows/bench-verify.yml`) so a
+/// write/read corruption fails the build instead of a local bench run.
+static VERIFY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+pub fn verify_mode() -> bool {
+    *VERIFY.get_or_init(|| std::env::var_os("BENCH_VERIFY").is_some())
+}
+
+/// Zero-data-loss gate that survives PcoPack's write layout: the writer
+/// stable-sorts rows by the schema timestamp within each `index` group, and
+/// the groups land in nondeterministic HashMap order. Verify therefore
+/// compares row digests as multisets instead of positions. A digest must
+/// cover exactly the values the write stores, so lossy scenarios digest an
+/// expected row with the rounding applied; 128-bit width makes collisions
+/// irrelevant at bench scale.
+pub fn verify_multiset<A, B>(src: &[A], back: &[B], src_digest: impl Fn(&A) -> u128, back_digest: impl Fn(&B) -> u128) {
+    assert_eq!(back.len(), src.len(), "pco_pack roundtrip row count");
+    let mut a: Vec<u128> = src.iter().map(src_digest).collect();
+    let mut b: Vec<u128> = back.iter().map(back_digest).collect();
+    a.sort_unstable();
+    b.sort_unstable();
+    if a != b {
+        let pos = a.iter().zip(&b).position(|(x, y)| x != y).unwrap();
+        panic!("pco_pack roundtrip digest mismatch at sorted position {pos}");
+    }
+}
+
+/// 128-bit multiset digest of a row through its msgpack serialization: two
+/// keyed passes over the encoded bytes. The digest rides on bytes rather
+/// than the `Hash` trait (floats have no `Hash` in this workspace's
+/// toolchain), and equal rows encode to equal bytes, so a decoded row
+/// digests identically to what was written.
+pub fn digest<T: serde::Serialize>(row: &T) -> u128 {
+    use std::hash::{Hasher, DefaultHasher};
+    let bytes = pco_pack::rmp_serde::to_vec(row).expect("row serializes");
+    let mut h1 = DefaultHasher::new();
+    h1.write(&bytes);
+    let mut h2 = DefaultHasher::new();
+    h2.write_u64(0x9e37_79b9_7f4a_7c15);
+    h2.write(&bytes);
+    ((h1.finish() as u128) << 64) | h2.finish() as u128
 }
 
 /// Codec names accepted by `--crates`; the dash-separated spellings match
@@ -57,6 +106,7 @@ static CRATE_FILTER: std::sync::OnceLock<Option<std::collections::HashSet<String
 pub fn init_crate_filter() -> Vec<String> {
     let mut names: Option<Vec<String>> = None;
     let mut positional = Vec::new();
+    let mut verify = false;
     let mut argv = std::env::args().skip(1);
     while let Some(arg) = argv.next() {
         if let Some(v) = arg.strip_prefix("--crates=") {
@@ -64,6 +114,8 @@ pub fn init_crate_filter() -> Vec<String> {
         } else if arg == "--crates" {
             let v = argv.next().expect("--crates needs a comma-separated list of crate names");
             names = Some(split_crates(&v));
+        } else if arg == "--verify" {
+            verify = true;
         } else if arg.starts_with('-') {
             // cargo passes harness flags (e.g. `--bench`) to every bench
             // binary; scenario dispatch matches names only, so ignore them.
@@ -72,6 +124,10 @@ pub fn init_crate_filter() -> Vec<String> {
         }
     }
 
+    let _ = VERIFY.set(verify || std::env::var_os("BENCH_VERIFY").is_some());
+    if verify_mode() {
+        eprintln!("verify mode (timings are meaningless)");
+    }
     let filter = match names {
         Some(names) => Some(validate_crates(names)),
         None => std::env::var("BENCH_CRATES").ok().map(|v| validate_crates(split_crates(&v))),

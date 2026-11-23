@@ -34,7 +34,7 @@ pub struct QueryStat {
 /// The TimeRound model: pco_store persists this table rounded,
 /// `time_round = 1 s` on the timestamps and `float_round = 2` on the
 /// aggregate f64s. This is the `PcoPack time_round` column.
-#[derive(Clone, Debug, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Serialize, PcoPack)]
 #[pco_pack(
     timestamp = collected_at,
     index = [database_id, granularity],
@@ -57,6 +57,18 @@ pub struct QueryStatTimeRound {
     pub shared_blks_read: i64,
     pub temp_blks_read: i64,
     pub temp_blks_written: i64,
+}
+
+/// The exact row a `time_round = 1s, float_round = 2` write stores:
+/// `collected_at` to the nearest second, `total_time`/`io_time` to hundredths,
+/// every other column verbatim.
+fn expected_time_round(r: &QueryStat) -> QueryStatTimeRound {
+    const SEC: i64 = 1_000_000;
+    let mut x = QueryStatTimeRound::from(r);
+    x.collected_at = common::ts_rounded(&x.collected_at, SEC);
+    x.total_time = common::round_f64(x.total_time, 2);
+    x.io_time = common::round_f64(x.io_time, 2);
+    x
 }
 
 impl From<&QueryStat> for QueryStatTimeRound {
@@ -178,8 +190,19 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
         keys.iter().map(|k| (*k, rows.iter().filter(|r| k.matches_time_round(r)).count())).collect();
     let time_round_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_time_round.iter()).map(|(q, (_, e))| (q, *e)).collect();
-    let (mut pco_time_round, tr_bytes) =
-        common::bench_pco_pack_full(&time_round_rows, &time_round_filters, |_back, _off| {}, || {});
+    let (mut pco_time_round, tr_bytes) = common::bench_pco_pack_full(
+        &time_round_rows,
+        &time_round_filters,
+        |back, off| {
+            crate::verify_multiset(
+                &rows[off..off + back.len()],
+                back,
+                |r| crate::digest(&expected_time_round(r)),
+                crate::digest,
+            )
+        },
+        || {},
+    );
     drop(time_round_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
@@ -364,7 +387,12 @@ fn bench_stats(name: &str, rows: Vec<QueryStat>) {
     }
     drop(mp_buf);
 
-    let (mut pco, pco_bytes) = common::bench_pco_pack_full(&rows, &pco_filters, |_back, _off| {}, || {});
+    let (mut pco, pco_bytes) = common::bench_pco_pack_full(
+        &rows,
+        &pco_filters,
+        |back, off| crate::verify_multiset(&rows[off..off + back.len()], back, crate::digest, crate::digest),
+        || {},
+    );
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
             let (project_ms, fold) = common::min_pass(common::ds_iters(), || {

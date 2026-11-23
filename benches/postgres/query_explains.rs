@@ -58,7 +58,7 @@ pub struct QueryExplain {
 
 /// The string mirror (`text` column): `output_json` and `node_insights`
 /// ride as plain strings, the way Vortex's arrow schema carries the payload.
-#[derive(Clone, Debug, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Serialize, PcoPack)]
 #[pco_pack(index = [server_id], timestamp = seen_at)]
 pub struct QueryExplainString {
     pub server_id: i64,
@@ -115,7 +115,7 @@ impl From<&QueryExplain> for QueryExplainString {
 /// The lossy model (`JSON lossy` column): `time_round = 1 s` on
 /// seen_at, `float_round = 2` on the EXPLAIN millisecond floats (rounding
 /// at the hundredths-of-ms level).
-#[derive(Clone, Debug, PartialEq, PcoPack)]
+#[derive(Clone, Debug, PartialEq, Serialize, PcoPack)]
 #[pco_pack(
     index = [server_id],
     timestamp = seen_at,
@@ -172,6 +172,53 @@ impl From<&QueryExplain> for QueryExplainLossy {
             node_insights: r.node_insights.clone(),
         }
     }
+}
+
+/// Mirror of `src/json_value.rs` rounding for the expected-side digest: a
+/// `float_round = 2` write rounds every float inside JSON payloads exactly
+/// this way (integers pass through, non-finite results degrade to `0`).
+fn round_json_value(value: &mut serde_json::Value, decimals: u32) {
+    if decimals == 0 {
+        return;
+    }
+    let scale = 10i64.pow(decimals) as f64;
+    match value {
+        serde_json::Value::Number(n) => {
+            let integral = n.as_i64().is_some() && n.as_f64().unwrap_or(0.0).fract().abs() <= f64::EPSILON;
+            if !integral && let Some(f) = n.as_f64() {
+                let rounded = ((f * scale).round()) / scale;
+                *n = serde_json::Number::from_f64(rounded).unwrap_or_else(|| serde_json::Number::from(0));
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for v in map.values_mut() {
+                round_json_value(v, decimals);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                round_json_value(v, decimals);
+            }
+        }
+        _ => (),
+    }
+}
+
+/// The exact row a `time_round = 1s, float_round = 2` write stores: `seen_at`
+/// to the nearest second, the EXPLAIN millisecond floats to hundredths
+/// (inside the JSON payloads too), and every other column verbatim.
+fn expected_lossy(r: &QueryExplain) -> QueryExplainLossy {
+    const SEC: i64 = 1_000_000;
+    let mut x = QueryExplainLossy::from(r);
+    x.seen_at = common::ts_rounded(&x.seen_at, SEC);
+    x.runtime_ms = common::round_f32(x.runtime_ms, 2);
+    x.total_cost = x.total_cost.map(|v| common::round_f32(v, 2));
+    x.total_blk_read_time = x.total_blk_read_time.map(|v| common::round_f32(v, 2));
+    x.total_blk_write_time = x.total_blk_write_time.map(|v| common::round_f32(v, 2));
+    for payload in [&mut x.output_json, &mut x.node_insights].into_iter().flatten() {
+        round_json_value(payload, 2);
+    }
+    x
 }
 
 /// The arena model: the same table with `output_json` replaced by the
@@ -486,7 +533,12 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     let expected_structure: Vec<u64> = rows.iter().map(|r| fingerprint_structure(&r.output_json)).collect();
 
     let string_rows: Vec<QueryExplainString> = rows.iter().map(QueryExplainString::from).collect();
-    let (mut pco_text, text_bytes) = common::bench_pco_pack_full(&string_rows, &pco_filters, |_back, _off| {}, || {});
+    let (mut pco_text, text_bytes) = common::bench_pco_pack_full(
+        &string_rows,
+        &pco_filters,
+        |back, off| crate::verify_multiset(&string_rows[off..off + back.len()], back, crate::digest, crate::digest),
+        || {},
+    );
     drop(string_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
@@ -518,8 +570,19 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     let lossy_rows: Vec<QueryExplainLossy> = rows.iter().map(QueryExplainLossy::from).collect();
     let lossy_filters: Vec<(&serde_json::Value, usize)> =
         queries.iter().zip(kf_lossy.iter()).map(|(q, (_, e))| (q, *e)).collect();
-    let (mut pco_lossy, lossy_bytes) =
-        common::bench_pco_pack_full(&lossy_rows, &lossy_filters, |_back, _off| {}, || {});
+    let (mut pco_lossy, lossy_bytes) = common::bench_pco_pack_full(
+        &lossy_rows,
+        &lossy_filters,
+        |back, off| {
+            crate::verify_multiset(
+                &rows[off..off + back.len()],
+                back,
+                |r| crate::digest(&expected_lossy(r)),
+                crate::digest,
+            )
+        },
+        || {},
+    );
     drop(lossy_rows);
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
@@ -792,7 +855,12 @@ fn bench_explains(rows: Vec<QueryExplain>) {
     }
     drop(mp_buf);
 
-    let (mut pco, pco_bytes) = common::bench_pco_pack_full(&rows, &pco_filters, |_back, _off| {}, || {});
+    let (mut pco, pco_bytes) = common::bench_pco_pack_full(
+        &rows,
+        &pco_filters,
+        |back, off| crate::verify_multiset(&rows[off..off + back.len()], back, crate::digest, crate::digest),
+        || {},
+    );
     if crate::enabled("pco_pack") {
         for i in 0..reduce_keys.len() {
             let (ms_pco, fold_pco) = common::min_pass(common::ds_iters(), || {
