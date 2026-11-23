@@ -38,6 +38,18 @@ struct OptFrameRow {
     inner: Option<FrameInner>,
 }
 
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
+struct OptTupleRow {
+    id: i64,
+    pair: Option<(String, i64)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, PcoPack)]
+struct OptVecTextRow {
+    id: i64,
+    tags: Option<Vec<String>>,
+}
+
 fn roundtrip<T>(rows: Vec<T>)
 where
     T: PcoPack + PartialEq + std::fmt::Debug,
@@ -141,6 +153,30 @@ fn numeric_option_still_hoists() {
     }
     let got = OptNumRow::filter(&chunks, serde_json::json!({"n": 1}), &[]).unwrap();
     assert!(got.is_empty());
+    roundtrip(rows);
+}
+
+#[test]
+fn option_tuple_fd_low_byte_roundtrips() {
+    // The tuple's blob front is its first column's bytes: 253 tuple rows
+    // lead the msgpack body with 0xFD, one hoist deeper than the direct
+    // Option<String> collision. Under the sniff this sliced the tuple's
+    // 20 framing bytes; the const classifies the tuple by its first column.
+    let rows: Vec<OptTupleRow> = (0..254)
+        .map(|i| OptTupleRow { id: i, pair: if i < 253 { Some((format!("p{i}"), i)) } else { None } })
+        .collect();
+    roundtrip(rows);
+}
+
+#[test]
+fn option_vec_string_fd_low_byte_roundtrips() {
+    // Two hoists deep: the Option lifts the Vec's NO_BOUNDS_HEADER, and the
+    // 253-element flat msgpack body the Vec wraps leads with 0xFD. The old
+    // sniff sliced at the Vec layer and the Option's hoist compounded it.
+    let mut rows: Vec<OptVecTextRow> =
+        (0..126).map(|r| OptVecTextRow { id: r, tags: Some((0..2).map(|e| format!("r{r}e{e}")).collect()) }).collect();
+    rows.push(OptVecTextRow { id: 126, tags: Some(vec!["x".to_string()]) });
+    assert_eq!(rows.iter().map(|r| r.tags.as_ref().unwrap().len()).sum::<usize>(), 253);
     roundtrip(rows);
 }
 

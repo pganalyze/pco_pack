@@ -63,14 +63,17 @@ pub(crate) const NO_BOUNDS_HEADER: [u8; BOUNDS_PREFIX_LEN] = {
 /// wrapper (Option, Vec) can hoist the header to the blob front. Filters then
 /// consult the bounds at a fixed offset without locating the inner column,
 /// and the inner body stays the blob's last region (pco streams are
-/// self-terminating; zstd and msgpack bodies are not). Writers without a
-/// prefix get `NO_BOUNDS_HEADER` and an unchanged body. The decision must
-/// come from `T::HAS_BOUNDS_HEADER`, never from sniffing `inner[0]`: headerless
-/// inner bodies (lazy msgpack, struct frames) start with a row or record
-/// count whose low byte collides with `BOUNDS_MAGIC` for one count in 256,
-/// and slicing those 20 bytes corrupts the body beyond recovery.
+/// self-terminating; zstd and msgpack bodies are not). The decision is purely
+/// `T::HAS_BOUNDS_HEADER`: a writer marked true must front every `write` and
+/// `write_borrowed` output with exactly one header, and writers without a
+/// prefix get `NO_BOUNDS_HEADER` and an unchanged body. Sniffing cannot
+/// substitute for the classification: headerless inner bodies (lazy msgpack,
+/// struct frames) start with a row or record count whose low byte collides
+/// with `BOUNDS_MAGIC` for one count in 256, and slicing those 20 bytes
+/// corrupts the body beyond recovery.
 pub(crate) fn split_header<T: crate::PcoSerde>(inner: Vec<u8>) -> ([u8; BOUNDS_PREFIX_LEN], Vec<u8>) {
-    if T::HAS_BOUNDS_HEADER && inner.len() >= BOUNDS_PREFIX_LEN && inner[0] == BOUNDS_MAGIC {
+    if T::HAS_BOUNDS_HEADER {
+        debug_assert!(inner.len() >= BOUNDS_PREFIX_LEN, "a header-emitting writer must front a full 20-byte prefix");
         let mut inner = inner;
         let body = inner.split_off(BOUNDS_PREFIX_LEN);
         (inner.try_into().unwrap(), body)
